@@ -1,0 +1,8 @@
+{
+  "name": "Trac",
+  "description": "Tractor business management app for partners to track job earnings, expenses, withdrawals, and customer credit dues with PDF statements and offline-sync support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
