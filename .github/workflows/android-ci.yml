@@ -9,6 +9,7 @@ on:
     branches:
       - main
       - master
+  workflow_dispatch:
 
 jobs:
   static-checks:
@@ -59,11 +60,13 @@ jobs:
           cache: 'gradle'
 
       - name: Run Unit & Robolectric Tests
-        run: ./gradlew testDebugUnitTest
+        run: ./gradlew testDebugUnitTest --info
 
       - name: Upload Test Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-reports
-          path: app/build/reports/tests/testDebugUnitTest/
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
