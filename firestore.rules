@@ -1,0 +1,167 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isWorkspaceOwner(wsId) {
+      return request.auth != null && (
+        (exists(/databases/$(database)/documents/workspaces/$(wsId)) &&
+         get(/databases/$(database)/documents/workspaces/$(wsId)).data.get('ownerUid', '') == request.auth.uid) ||
+        (exists(/databases/$(database)/documents/collaborationGroups/$(wsId)) &&
+         get(/databases/$(database)/documents/collaborationGroups/$(wsId)).data.get('ownerUid', '') == request.auth.uid) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('workspaceId', '') == wsId &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') in ['owner', 'OWNER', 'Owner', '']) ||
+        (exists(/databases/$(database)/documents/userWorkspaceMemberships/$(request.auth.uid)/workspaces/$(wsId)) &&
+         get(/databases/$(database)/documents/userWorkspaceMemberships/$(request.auth.uid)/workspaces/$(wsId)).data.get('role', '') in ['owner', 'OWNER', 'Owner']) ||
+        (exists(/databases/$(database)/documents/userCollaborationGroups/$(request.auth.uid)/groups/$(wsId)) &&
+         get(/databases/$(database)/documents/userCollaborationGroups/$(request.auth.uid)/groups/$(wsId)).data.get('role', '') in ['owner', 'OWNER', 'Owner'])
+      );
+    }
+
+    function isWorkspaceMember(wsId) {
+      return request.auth != null && (
+        isWorkspaceOwner(wsId) ||
+        exists(/databases/$(database)/documents/workspaces/$(wsId)/members/$(request.auth.uid)) ||
+        exists(/databases/$(database)/documents/collaborationGroups/$(wsId)/members/$(request.auth.uid)) ||
+        exists(/databases/$(database)/documents/userWorkspaceMemberships/$(request.auth.uid)/workspaces/$(wsId)) ||
+        exists(/databases/$(database)/documents/userCollaborationGroups/$(request.auth.uid)/groups/$(wsId)) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('workspaceId', '') == wsId ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('currentWorkspaceId', '') == wsId ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('personalWorkspaceId', '') == wsId))
+      );
+    }
+
+    function isOperatorInWorkspace(wsId) {
+      return request.auth != null && (
+        (exists(/databases/$(database)/documents/workspaces/$(wsId)/members/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/workspaces/$(wsId)/members/$(request.auth.uid)).data.get('role', '') in ['operator', 'OPERATOR', 'Operator']) ||
+        (exists(/databases/$(database)/documents/collaborationGroups/$(wsId)/members/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/collaborationGroups/$(wsId)/members/$(request.auth.uid)).data.get('role', '') in ['operator', 'OPERATOR', 'Operator'])
+      );
+    }
+
+    function isEligibleWorkspaceTarget(wsId, targetUid) {
+      return targetUid == request.auth.uid ||
+        (exists(/databases/$(database)/documents/workspaces/$(wsId)/members/$(targetUid)) &&
+         !(get(/databases/$(database)/documents/workspaces/$(wsId)/members/$(targetUid)).data.get('role', '') in ['operator', 'OPERATOR', 'Operator'])) ||
+        (exists(/databases/$(database)/documents/collaborationGroups/$(wsId)/members/$(targetUid)) &&
+         !(get(/databases/$(database)/documents/collaborationGroups/$(wsId)/members/$(targetUid)).data.get('role', '') in ['operator', 'OPERATOR', 'Operator']));
+    }
+
+    function isCallerPhone(raw, norm) {
+      return (request.auth.token.phone_number != null &&
+              (raw == request.auth.token.phone_number || norm == request.auth.token.phone_number)) ||
+             (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+              (raw == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone ||
+               norm == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone));
+    }
+
+    function hasPendingInvitation(grpId) {
+      return request.auth != null && (
+        (request.auth.token.phone_number != null &&
+         exists(/databases/$(database)/documents/collaborationGroups/$(grpId)/pendingPhones/$(request.auth.token.phone_number))) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         exists(/databases/$(database)/documents/collaborationGroups/$(grpId)/pendingPhones/$(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone)))
+      );
+    }
+
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /phoneDirectory/{phone} {
+      allow get: if request.auth != null;
+      allow list: if false;
+      allow create, update: if request.auth != null && request.resource.data.uid == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+    }
+
+    match /userWorkspaceMemberships/{uid}/workspaces/{wsId} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isWorkspaceMember(wsId));
+      allow create, update: if request.auth != null && (isWorkspaceOwner(wsId) || isWorkspaceMember(wsId) || request.auth.uid == uid || (request.auth.uid == uid && hasPendingInvitation(wsId)));
+      allow delete: if request.auth != null && (isWorkspaceOwner(wsId) || request.auth.uid == uid);
+    }
+
+    match /userCollaborationGroups/{uid}/groups/{grpId} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isWorkspaceMember(grpId));
+      allow create, update: if request.auth != null && (isWorkspaceOwner(grpId) || isWorkspaceMember(grpId) || request.auth.uid == uid || (request.auth.uid == uid && hasPendingInvitation(grpId)));
+      allow delete: if request.auth != null && (isWorkspaceOwner(grpId) || request.auth.uid == uid);
+    }
+
+    match /{path=**}/pendingPhones/{phone} {
+      allow read, delete: if request.auth != null && isCallerPhone(phone, resource.data.normalizedPhone);
+    }
+
+    match /collaborationGroups/{grpId} {
+      allow get: if request.auth != null;
+      allow list: if isWorkspaceMember(grpId);
+      allow create: if request.auth != null && (request.resource.data.get('ownerUid', '') == request.auth.uid || isWorkspaceOwner(grpId));
+      allow update, delete: if isWorkspaceOwner(grpId);
+
+      match /members/{targetUid} {
+        allow read: if isWorkspaceMember(grpId) || (request.auth != null && request.auth.uid == targetUid);
+        allow create, update: if request.auth != null && (isWorkspaceOwner(grpId) || isWorkspaceMember(grpId) || (request.auth.uid == targetUid && request.resource.data.get('uid', '') == request.auth.uid && hasPendingInvitation(grpId)));
+        allow delete: if isWorkspaceOwner(grpId);
+      }
+
+      match /pendingPhones/{phone} {
+        allow get: if request.auth != null && (isWorkspaceMember(grpId) || isCallerPhone(phone, resource.data.normalizedPhone));
+        allow list: if isWorkspaceMember(grpId);
+        allow create, update: if isWorkspaceOwner(grpId) || (request.auth != null && request.resource.data.addedByUid == request.auth.uid);
+        allow delete: if isWorkspaceOwner(grpId) || (request.auth != null && resource.data.addedByUid == request.auth.uid) || isCallerPhone(phone, resource.data.normalizedPhone);
+      }
+
+      match /{subcollection}/{docId} {
+        allow read, write: if isWorkspaceMember(grpId) &&
+          subcollection in ['expenses', 'customers', 'tractors', 'settings', 'payments', 'entries', 'withdrawals', 'extensions', 'partnerPermissions', 'attendees', 'members'];
+      }
+    }
+
+    match /workspaces/{wsId} {
+      allow get: if request.auth != null && (resource == null || isWorkspaceMember(wsId));
+      allow list: if isWorkspaceMember(wsId);
+      allow create: if request.auth != null && (request.resource.data.get('ownerUid', '') == request.auth.uid || isWorkspaceOwner(wsId));
+      allow update, delete: if isWorkspaceOwner(wsId);
+
+      match /members/{targetUid} {
+        allow read: if isWorkspaceMember(wsId) || (request.auth != null && request.auth.uid == targetUid);
+        allow create, update: if request.auth != null && (isWorkspaceOwner(wsId) || isWorkspaceMember(wsId) || (request.auth.uid == targetUid && request.resource.data.get('uid', '') == request.auth.uid));
+        allow delete: if isWorkspaceOwner(wsId);
+      }
+
+      match /attendees/{attendeeId} {
+        allow read: if isWorkspaceMember(wsId) || hasPendingInvitation(wsId);
+        allow create, delete: if isWorkspaceOwner(wsId);
+        allow update: if isWorkspaceMember(wsId) || (request.auth != null && request.resource.data.get('partnerUid', '') == request.auth.uid && hasPendingInvitation(wsId));
+      }
+
+      match /entries/{docId} {
+        allow read, create: if isWorkspaceMember(wsId);
+        allow update: if isWorkspaceOwner(wsId) || (isWorkspaceMember(wsId) && resource.data.get('createdByUid', '') == request.auth.uid);
+        allow delete: if isWorkspaceOwner(wsId) || (isWorkspaceMember(wsId) && resource.data.get('createdByUid', '') == request.auth.uid);
+      }
+
+      match /payments/{docId} {
+        allow read, create: if isWorkspaceMember(wsId);
+        allow update: if isWorkspaceOwner(wsId) || (isWorkspaceMember(wsId) && resource.data.get('collectedByUid', '') == request.auth.uid);
+        allow delete: if isWorkspaceOwner(wsId) || (isWorkspaceMember(wsId) && resource.data.get('collectedByUid', '') == request.auth.uid);
+      }
+
+      match /withdrawals/{docId} {
+        allow read: if isWorkspaceMember(wsId);
+        allow create, update: if isWorkspaceMember(wsId) &&
+          request.auth != null &&
+          request.resource.data.get('createdByUid', '') == request.auth.uid && (
+            (isWorkspaceOwner(wsId) && isEligibleWorkspaceTarget(wsId, request.resource.data.get('targetPartnerUid', ''))) ||
+            (!isOperatorInWorkspace(wsId) && request.resource.data.get('targetPartnerUid', '') == request.auth.uid)
+          );
+        allow delete: if isWorkspaceOwner(wsId);
+      }
+
+      match /{subcollection}/{docId} {
+        allow read, write: if isWorkspaceMember(wsId) &&
+          subcollection in ['expenses', 'customers', 'tractors', 'settings', 'entries', 'withdrawals', 'extensions', 'partnerPermissions', 'attendees', 'members'];
+      }
+    }
+  }
+}
