@@ -274,4 +274,212 @@ class PartnerWithdrawalsProfitShareTest {
         assertEquals(500.0, updatedStatuses.find { it.partnerUid == "owner_uid" }!!.totalShare, 0.01)
         assertEquals(9500.0, updatedStatuses.find { it.partnerUid == "partner_uid" }!!.totalShare, 0.01)
     }
+
+    @Test
+    fun testInvestmentAttributionByUidAndViewerIndependence() {
+        // TWO different investment records in the SAME workspace:
+        // Owner: ₹14,000 (paidByUid = "owner_uid")
+        // Partner: ₹4,000 (paidByUid = "partner_uid")
+        val ownerExp = ExpenseEntity(
+            id = 101L,
+            expenseType = "Investment",
+            amount = 14000.0,
+            tractorLabel = "Tractor 1",
+            addedByPartner = "Owner of 89",
+            paidBy = "I Paid",
+            paidByUid = "owner_uid",
+            paidByPartner = "Owner of 89",
+            createdByUid = "owner_uid",
+            createdAt = System.currentTimeMillis()
+        )
+        val partnerExp = ExpenseEntity(
+            id = 102L,
+            expenseType = "Investment",
+            amount = 4000.0,
+            tractorLabel = "Tractor 1",
+            addedByPartner = "Test Partner",
+            paidBy = "I Paid",
+            paidByUid = "partner_uid",
+            paidByPartner = "Test Partner",
+            createdByUid = "partner_uid",
+            createdAt = System.currentTimeMillis()
+        )
+
+        val expenses = listOf(ownerExp, partnerExp)
+
+        val members = listOf(
+            WorkspaceMember(uid = "owner_uid", role = "owner", displayName = "Owner of 89", status = "active"),
+            WorkspaceMember(uid = "partner_uid", role = "partner", displayName = "Test Partner", status = "active")
+        )
+
+        val statuses = FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+            jobs = emptyList(),
+            expenses = expenses,
+            withdrawals = emptyList(),
+            workspaceMembers = members,
+            businessName = "AIDHUNT Trac"
+        )
+
+        assertEquals(2, statuses.size)
+        val ownerStatus = statuses.find { it.partnerUid == "owner_uid" }
+        val partnerStatus = statuses.find { it.partnerUid == "partner_uid" }
+
+        assertNotNull(ownerStatus)
+        assertNotNull(partnerStatus)
+
+        // Strict UID-based attribution regardless of viewer or order
+        assertEquals(14000.0, ownerStatus!!.totalInvestment, 0.01)
+        assertEquals(4000.0, partnerStatus!!.totalInvestment, 0.01)
+        assertEquals(18000.0, ownerStatus.totalInvestment + partnerStatus.totalInvestment, 0.01)
+    }
+
+    @Test
+    fun testInvestmentAttributionFocusedScenarios() {
+        val ownerMember = WorkspaceMember(uid = "owner_uid", role = "owner", displayName = "Owner of 89", status = "active")
+        val partner1Member = WorkspaceMember(uid = "partner_1_uid", role = "partner", displayName = "Partner One", status = "active")
+        val partner2Member = WorkspaceMember(uid = "partner_2_uid", role = "partner", displayName = "Partner Two", status = "active")
+        val sameNamePartner = WorkspaceMember(uid = "partner_diff_uid", role = "partner", displayName = "Owner of 89", status = "active")
+
+        val ownerExp = ExpenseEntity(
+            id = 1L,
+            expenseType = "Investment",
+            amount = 14000.0,
+            tractorLabel = "Tractor 1",
+            addedByPartner = "Owner of 89",
+            paidBy = "I Paid",
+            paidByUid = "owner_uid",
+            createdByUid = "owner_uid",
+            createdAt = 1000L
+        )
+
+        val partner1Exp = ExpenseEntity(
+            id = 2L,
+            expenseType = "Investment",
+            amount = 4000.0,
+            tractorLabel = "Tractor 1",
+            addedByPartner = "Partner One",
+            paidBy = "I Paid",
+            paidByUid = "partner_1_uid",
+            createdByUid = "partner_1_uid",
+            createdAt = 2000L
+        )
+
+        val partner2Exp = ExpenseEntity(
+            id = 3L,
+            expenseType = "Investment",
+            amount = 6000.0,
+            tractorLabel = "Tractor 1",
+            addedByPartner = "Partner Two",
+            paidBy = "I Paid",
+            paidByUid = "partner_2_uid",
+            createdByUid = "partner_2_uid",
+            createdAt = 3000L
+        )
+
+        // Scenario A: Owner-only investment
+        val ownerOnlyStatuses = FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+            jobs = emptyList(),
+            expenses = listOf(ownerExp),
+            withdrawals = emptyList(),
+            workspaceMembers = listOf(ownerMember, partner1Member),
+            businessName = "AIDHUNT Trac"
+        )
+        assertEquals(14000.0, ownerOnlyStatuses.find { it.partnerUid == "owner_uid" }!!.totalInvestment, 0.01)
+        assertEquals(0.0, ownerOnlyStatuses.find { it.partnerUid == "partner_1_uid" }!!.totalInvestment, 0.01)
+
+        // Scenario B: Partner-only investment
+        val partnerOnlyStatuses = FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+            jobs = emptyList(),
+            expenses = listOf(partner1Exp),
+            withdrawals = emptyList(),
+            workspaceMembers = listOf(ownerMember, partner1Member),
+            businessName = "AIDHUNT Trac"
+        )
+        assertEquals(0.0, partnerOnlyStatuses.find { it.partnerUid == "owner_uid" }!!.totalInvestment, 0.01)
+        assertEquals(4000.0, partnerOnlyStatuses.find { it.partnerUid == "partner_1_uid" }!!.totalInvestment, 0.01)
+
+        // Scenario C: Owner ₹14,000 + Partner ₹4,000 -> Total = ₹18,000
+        val combinedStatuses = FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+            jobs = emptyList(),
+            expenses = listOf(ownerExp, partner1Exp),
+            withdrawals = emptyList(),
+            workspaceMembers = listOf(ownerMember, partner1Member),
+            businessName = "AIDHUNT Trac"
+        )
+        val combinedOwner = combinedStatuses.find { it.partnerUid == "owner_uid" }!!
+        val combinedPartner = combinedStatuses.find { it.partnerUid == "partner_1_uid" }!!
+        assertEquals(14000.0, combinedOwner.totalInvestment, 0.01)
+        assertEquals(4000.0, combinedPartner.totalInvestment, 0.01)
+        assertEquals(18000.0, combinedOwner.totalInvestment + combinedPartner.totalInvestment, 0.01)
+
+        // Scenario D & E: Viewer Independence (calculation engine has no viewer bias)
+        // Reverse member order or expense order produces identical attribution
+        val reversedOrderStatuses = FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+            jobs = emptyList(),
+            expenses = listOf(partner1Exp, ownerExp),
+            withdrawals = emptyList(),
+            workspaceMembers = listOf(partner1Member, ownerMember),
+            businessName = "AIDHUNT Trac"
+        )
+        assertEquals(14000.0, reversedOrderStatuses.find { it.partnerUid == "owner_uid" }!!.totalInvestment, 0.01)
+        assertEquals(4000.0, reversedOrderStatuses.find { it.partnerUid == "partner_1_uid" }!!.totalInvestment, 0.01)
+
+        // Scenario F: Multiple Partners
+        val multiPartnerStatuses = FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+            jobs = emptyList(),
+            expenses = listOf(ownerExp, partner1Exp, partner2Exp),
+            withdrawals = emptyList(),
+            workspaceMembers = listOf(ownerMember, partner1Member, partner2Member),
+            businessName = "AIDHUNT Trac"
+        )
+        assertEquals(14000.0, multiPartnerStatuses.find { it.partnerUid == "owner_uid" }!!.totalInvestment, 0.01)
+        assertEquals(4000.0, multiPartnerStatuses.find { it.partnerUid == "partner_1_uid" }!!.totalInvestment, 0.01)
+        assertEquals(6000.0, multiPartnerStatuses.find { it.partnerUid == "partner_2_uid" }!!.totalInvestment, 0.01)
+
+        // Scenario G: Same-name members with distinct UIDs remain separate
+        val sameNameExp = ExpenseEntity(
+            id = 4L,
+            expenseType = "Investment",
+            amount = 3000.0,
+            tractorLabel = "Tractor 1",
+            addedByPartner = "Owner of 89",
+            paidBy = "I Paid",
+            paidByUid = "partner_diff_uid",
+            createdByUid = "partner_diff_uid",
+            createdAt = 4000L
+        )
+        val sameNameStatuses = FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+            jobs = emptyList(),
+            expenses = listOf(ownerExp, sameNameExp),
+            withdrawals = emptyList(),
+            workspaceMembers = listOf(ownerMember, sameNamePartner),
+            businessName = "AIDHUNT Trac"
+        )
+        assertEquals(14000.0, sameNameStatuses.find { it.partnerUid == "owner_uid" }!!.totalInvestment, 0.01)
+        assertEquals(3000.0, sameNameStatuses.find { it.partnerUid == "partner_diff_uid" }!!.totalInvestment, 0.01)
+
+        // Scenario H: Unresolved investor identity does NOT get assigned to Owner
+        val unassignedExp = ExpenseEntity(
+            id = 5L,
+            expenseType = "Investment",
+            amount = 5000.0,
+            tractorLabel = "Tractor 1",
+            addedByPartner = "Unknown Person",
+            paidBy = "I Paid",
+            paidByUid = "unresolved_uid",
+            createdByUid = "unresolved_uid",
+            paidByPartner = "Unknown Person",
+            createdAt = 5000L
+        )
+        val unassignedStatuses = FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+            jobs = emptyList(),
+            expenses = listOf(ownerExp, unassignedExp),
+            withdrawals = emptyList(),
+            workspaceMembers = listOf(ownerMember, partner1Member),
+            businessName = "AIDHUNT Trac"
+        )
+        // Owner must still only have ₹14,000, NOT ₹19,000
+        assertEquals(14000.0, unassignedStatuses.find { it.partnerUid == "owner_uid" }!!.totalInvestment, 0.01)
+        assertEquals(0.0, unassignedStatuses.find { it.partnerUid == "partner_1_uid" }!!.totalInvestment, 0.01)
+    }
 }
