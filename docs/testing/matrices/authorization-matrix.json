@@ -1,0 +1,54 @@
+{
+  "matrix_name": "AIDHUNT Trac Role Authorization Matrix",
+  "roles": ["OWNER", "PARTNER", "OPERATOR"],
+  "rules": [
+    {
+      "operation": "add-member",
+      "permissions": {
+        "OWNER": "ALLOW",
+        "PARTNER": "DENY",
+        "OPERATOR": "DENY"
+      }
+    },
+    {
+      "operation": "add-tractor",
+      "permissions": {
+        "OWNER": "ALLOW",
+        "PARTNER": "ALLOW",
+        "OPERATOR": "DENY"
+      }
+    },
+    {
+      "operation": "delete-payment-own-under-24h",
+      "permissions": {
+        "OWNER": "ALLOW",
+        "PARTNER": "ALLOW",
+        "OPERATOR": "DENY"
+      }
+    },
+    {
+      "operation": "delete-payment-own-over-24h",
+      "permissions": {
+        "OWNER": "ALLOW",
+        "PARTNER": "DENY",
+        "OPERATOR": "DENY"
+      }
+    },
+    {
+      "operation": "delete-payment-other",
+      "permissions": {
+        "OWNER": "ALLOW",
+        "PARTNER": "DENY",
+        "OPERATOR": "DENY"
+      }
+    },
+    {
+      "operation": "view-withdrawals",
+      "permissions": {
+        "OWNER": "ALLOW",
+        "PARTNER": "ALLOW",
+        "OPERATOR": "DENY"
+      }
+    }
+  ]
+}

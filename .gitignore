@@ -18,3 +18,5 @@ local.properties
 debug.keystore
 keystore.properties
 trac-release-key.jks
+/ci-reports/
+

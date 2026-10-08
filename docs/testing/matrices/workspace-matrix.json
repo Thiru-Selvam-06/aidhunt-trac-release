@@ -1,0 +1,21 @@
+{
+  "matrix_name": "Workspace Tenant Partition Integrity",
+  "entities": ["CustomerEntity", "JobEntryEntity", "ExpenseEntity", "PaymentEntity", "WithdrawalEntity"],
+  "rules": [
+    {
+      "check": "primary-key-uniqueness",
+      "mechanism": "Auto-incrementing Room Long/UID",
+      "satisfied": true
+    },
+    {
+      "check": "foreign-key-tenancy",
+      "mechanism": "workspaceId String column on all rows",
+      "satisfied": true
+    },
+    {
+      "check": "query-enforcement",
+      "mechanism": "DAO SELECT queries strictly filtered by active workspaceId",
+      "satisfied": true
+    }
+  ]
+}

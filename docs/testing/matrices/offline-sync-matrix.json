@@ -1,0 +1,37 @@
+{
+  "matrix_name": "Multi-User Network Sync Matrix",
+  "cases": [
+    {
+      "case_id": "SYNC-001",
+      "name": "CASE A",
+      "owner_state": "ONLINE",
+      "partner_state": "ONLINE",
+      "convergence_time": "IMMEDIATE",
+      "verified_metrics": ["record-duplication", "visibility", "balance-convergence"]
+    },
+    {
+      "case_id": "SYNC-002",
+      "name": "CASE B",
+      "owner_state": "ONLINE",
+      "partner_state": "OFFLINE",
+      "convergence_time": "POST-RECONNECT",
+      "verified_metrics": ["local-queue-isSynced", "reconnect-publication"]
+    },
+    {
+      "case_id": "SYNC-003",
+      "name": "CASE C",
+      "owner_state": "OFFLINE",
+      "partner_state": "ONLINE",
+      "convergence_time": "POST-RECONNECT",
+      "verified_metrics": ["local-queue-isSynced", "reconnect-publication"]
+    },
+    {
+      "case_id": "SYNC-004",
+      "name": "CASE D",
+      "owner_state": "OFFLINE",
+      "partner_state": "OFFLINE",
+      "convergence_time": "MUTUAL-RECONNECT",
+      "verified_metrics": ["independent-queues", "two-way-reconciliation"]
+    }
+  ]
+}

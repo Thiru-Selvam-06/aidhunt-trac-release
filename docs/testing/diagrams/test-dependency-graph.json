@@ -1,0 +1,17 @@
+{
+  "graph_id": "test-dependency-graph",
+  "dependencies": [
+    {
+      "source_module": "Room SQLite DB Schema",
+      "target_dependency": "DAO Select / Mutations"
+    },
+    {
+      "source_module": "DAO Select / Mutations",
+      "target_dependency": "FinancialCalculationEngine"
+    },
+    {
+      "source_module": "FinancialCalculationEngine",
+      "target_dependency": "UI Reporting / Summaries"
+    }
+  ]
+}

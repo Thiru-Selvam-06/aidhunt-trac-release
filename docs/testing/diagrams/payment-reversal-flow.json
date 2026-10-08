@@ -1,0 +1,12 @@
+{
+  "diagram_id": "payment-reversal-flow",
+  "nodes": [
+    {"id": "del_pay", "label": "Payment Deletion Triggered", "type": "InputEvent"},
+    {"id": "inv_restore", "label": "LIFO Outstanding Balances RESTORED", "type": "CalculationStep"},
+    {"id": "history_log", "label": "Reversal Logged in Collection History", "type": "StorageAction"}
+  ],
+  "edges": [
+    {"from": "del_pay", "to": "inv_restore", "relationship": "recalculates"},
+    {"from": "inv_restore", "to": "history_log", "relationship": "records"}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "matrix_name": "Financial Integrity Matrix",
+  "invariants": [
+    {
+      "invariant_id": "FIN-INV-001",
+      "formula": "Total Recorded - Total Outstanding Due == Total Collected",
+      "checked_by": "testFinancialInvariantTotals"
+    },
+    {
+      "invariant_id": "FIN-INV-002",
+      "formula": "Investment Share is viewer independent based on stable paidByUid",
+      "checked_by": "testOwnerPartnerFinancialAttribution"
+    }
+  ]
+}

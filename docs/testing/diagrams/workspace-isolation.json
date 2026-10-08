@@ -1,0 +1,12 @@
+{
+  "diagram_id": "workspace-isolation",
+  "nodes": [
+    {"id": "db", "label": "AppDatabase (SQLite)", "type": "Database"},
+    {"id": "ws_a", "label": "Workspace A Partition", "type": "LogicalPartition"},
+    {"id": "ws_b", "label": "Workspace B Partition", "type": "LogicalPartition"}
+  ],
+  "edges": [
+    {"from": "ws_a", "to": "db", "relationship": "isolates-by-workspaceId"},
+    {"from": "ws_b", "to": "db", "relationship": "isolates-by-workspaceId"}
+  ]
+}

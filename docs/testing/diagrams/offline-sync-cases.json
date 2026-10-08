@@ -1,0 +1,12 @@
+{
+  "diagram_id": "offline-sync-cases",
+  "states": [
+    {"id": "device_local", "label": "Local Database (SQLite) State: isSynced = false"},
+    {"id": "sync_queue", "label": "Active Pending Queue"},
+    {"id": "cloud_store", "label": "Central Document Store (Firebase Firestore)"}
+  ],
+  "transitions": [
+    {"from": "device_local", "to": "sync_queue", "event": "offline-save"},
+    {"from": "sync_queue", "to": "cloud_store", "event": "reconnect-network-trigger"}
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "diagram_id": "authorization-flow",
+  "nodes": [
+    {"id": "user", "label": "Active User Session", "type": "Actor"},
+    {"id": "auth_mgr", "label": "AuthorizationManager", "type": "RuleEngine"},
+    {"id": "action", "label": "Edit / Delete Action", "type": "Mutation"},
+    {"id": "owner_gate", "label": "Is Owner?", "type": "DecisionGate"},
+    {"id": "time_gate", "label": "Created within 24 Hours?", "type": "DecisionGate"},
+    {"id": "creator_gate", "label": "Is Creator?", "type": "DecisionGate"}
+  ],
+  "edges": [
+    {"from": "user", "to": "action", "relationship": "triggers"},
+    {"from": "action", "to": "auth_mgr", "relationship": "validates"},
+    {"from": "auth_mgr", "to": "owner_gate", "relationship": "evaluates"},
+    {"from": "owner_gate", "to": "ALLOW", "condition": "YES"},
+    {"from": "owner_gate", "to": "creator_gate", "condition": "NO"},
+    {"from": "creator_gate", "to": "time_gate", "condition": "YES"},
+    {"from": "creator_gate", "to": "DENY", "condition": "NO"},
+    {"from": "time_gate", "to": "ALLOW", "condition": "YES"},
+    {"from": "time_gate", "to": "DENY", "condition": "NO"}
+  ]
+}

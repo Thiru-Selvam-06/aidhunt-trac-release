@@ -1,0 +1,15 @@
+{
+  "matrix_name": "Payment Allocation Reversal Matrix",
+  "states": [
+    {
+      "action": "Collect Payment",
+      "allocation_order": "FIFO (Oldest jobs reduced first)",
+      "due_reduction": "IMMEDIATE"
+    },
+    {
+      "action": "Reverse Payment",
+      "allocation_order": "LIFO (Newest jobs outstanding restored first)",
+      "due_restoration": "IMMEDIATE"
+    }
+  ]
+}
