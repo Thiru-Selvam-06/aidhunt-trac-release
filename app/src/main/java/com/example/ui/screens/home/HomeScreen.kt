@@ -28,7 +28,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.ui.draw.rotate
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -139,10 +138,12 @@ fun HomeScreen(
     totalExpenses: Double = 0.0,
     availableBalance: Double = 0.0,
     recentJobs: List<JobEntryEntity>,
+    recordedJobCount: Int = recentJobs.size,
     isOnline: Boolean = true,
     isSyncing: Boolean = false,
     unsyncedCount: Int = 0,
     syncMessage: String = "",
+    retainedOperationWarning: String = "",
     isOwner: Boolean = true,
     currentUid: String = "",
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
@@ -161,9 +162,6 @@ fun HomeScreen(
     val isTamil = settings.language.equals("TA", ignoreCase = true)
 
     var pendingPdfJob by remember { mutableStateOf<JobEntryEntity?>(null) }
-    val displayedRecentJobs = remember(recentJobs) {
-        recentJobs.sortedWith(compareByDescending<JobEntryEntity> { it.createdAt }.thenByDescending { it.id }).take(20)
-    }
     val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { _ ->
@@ -181,7 +179,12 @@ fun HomeScreen(
         }
     }
 
+    fun requirePdfAccess(job: JobEntryEntity) {
+        val role = com.example.data.auth.RoleUtils.normalizeRole(authenticatedUserRole)
+        require(role in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER) && currentUid.isNotBlank() && job.workspaceId == settings.workspaceId) { "PDF export requires authorized workspace access" }
+    }
     val triggerJobPdfDownload: (JobEntryEntity) -> Unit = { j ->
+        requirePdfAccess(j)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
             androidx.core.content.ContextCompat.checkSelfPermission(
                 context,
@@ -204,6 +207,12 @@ fun HomeScreen(
     }
 
     val responsive = com.example.ui.theme.rememberResponsiveDimensions()
+
+    val displayJobs = remember(recentJobs) {
+        recentJobs.filter { !it.isHistorical && com.example.ui.util.isRecentJobToday(it) }
+            .sortedWith(com.example.ui.util.RecentJobOrder)
+         .take(20)
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -295,13 +304,13 @@ fun HomeScreen(
                         .height(androidx.compose.foundation.layout.IntrinsicSize.Min),
                     horizontalArrangement = Arrangement.spacedBy(if (responsive.isSmallPhone) 8.dp else 12.dp)
                 ) {
-                    val effectiveTotalRecorded = if (totalRecorded > 0.0) totalRecorded else if (totalReceived > 0.0) totalReceived else recentJobs.sumOf { if (it.totalAmount > 0.0) it.totalAmount else (it.amountReceived + it.pendingAmount) }
-                    val effectiveTotalDue = if (totalCustomerDue > 0.0) totalCustomerDue else if (totalPending > 0.0) totalPending else recentJobs.sumOf { if (it.pendingAmount > 0.0) it.pendingAmount else maxOf(0.0, it.totalAmount - it.amountReceived) }
+                    val effectiveTotalRecorded = totalRecorded
+                    val effectiveTotalDue = totalCustomerDue
 
                     MetricCard(
                         title = if (isTamil) "மொத்த பதிவு" else "Total Recorded",
                         amount = effectiveTotalRecorded,
-                        subtitle = if (isTamil) "${recentJobs.size} பதிவு செய்யப்பட்டவை" else "${recentJobs.size} Recorded Jobs",
+                        subtitle = if (isTamil) "${recordedJobCount} பதிவு செய்யப்பட்டவை" else "${recordedJobCount} Recorded Jobs (all time)",
                         icon = Icons.Default.CheckCircle,
                         containerColor = SuccessPaidGreenBg,
                         contentColor = SuccessPaidGreen,
@@ -329,8 +338,14 @@ fun HomeScreen(
                 }
             }
 
-            // 3. Available Business Balance
-            item {
+            if (retainedOperationWarning.isNotBlank()) item {
+                Card(colors = CardDefaults.cardColors(containerColor = AlertDueRedBg), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    Text(retainedOperationWarning, color = AlertDueRed, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
+                }
+            }
+
+            // Business cash requires the complete authorized financial dataset.
+            if (com.example.data.auth.AuthorizationManager.canViewExpenses(isOwner, role = authenticatedUserRole)) item {
                 Card(
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = AppTheme.colors.cardBg),
@@ -363,19 +378,18 @@ fun HomeScreen(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(horizontalAlignment = Alignment.End) {
-                            val effectiveAvailable = maxOf(0.0, availableBalance)
                             Text(
-                                text = formatInr(effectiveAvailable, settings.currency),
+                                text = formatInr(availableBalance, settings.currency),
                                 fontSize = if (responsive.isSmallPhone) 16.sp else if (responsive.isLargePhone) 20.sp else 18.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = DeepSageGreen,
+                                color = if (availableBalance < 0) AlertDueRed else DeepSageGreen,
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
-                            if (availableBalance < 0 && totalExpenses > 0) {
+                            if (availableBalance < 0) {
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "${if (isTamil) "செலவு: " else "Expense: "}${formatInr(totalExpenses, settings.currency)}",
+                                    text = if (isTamil) "ரொக்கப் பற்றாக்குறை" else "Cash deficit",
                                     fontSize = if (responsive.isSmallPhone) 10.sp else 11.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = AlertDueRed,
@@ -398,14 +412,14 @@ fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isTamil) "சமீபத்திய வேலைப் பதிவுகள்" else "Recent Job Entries",
+                        text = if (isTamil) "சமீபத்திய வேலைப் பதிவுகள்" else "Today’s Job Entries",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = AppTheme.colors.textPrimary
                     )
 
                     Text(
-                        text = if (isTamil) "${displayedRecentJobs.size} பதிவுகள்" else "${displayedRecentJobs.size} Entries",
+                        text = if (isTamil) "${displayJobs.size} பதிவுகள்" else "${displayJobs.size} Entries",
                         fontSize = 12.sp,
                         color = SageAccent,
                         fontWeight = FontWeight.Medium
@@ -414,7 +428,7 @@ fun HomeScreen(
             }
 
             // 5. Job List
-            if (displayedRecentJobs.isEmpty()) {
+            if (displayJobs.isEmpty()) {
                 item {
                     Card(
                         shape = RoundedCornerShape(16.dp),
@@ -436,13 +450,13 @@ fun HomeScreen(
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = if (isTamil) "வேலைப் பதிவுகள் எதுவும் இல்லை" else "No tractor job entries yet",
+                                text = if (isTamil) "வேலைப் பதிவுகள் எதுவும் இல்லை" else "No job entries today",
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = AppTheme.colors.textPrimary
                             )
                             Text(
-                                text = if (isTamil) "உங்கள் முதல் வேலையை பதிவு செய்ய '+ புதிய வேலை' என்பதைத் தொடவும்" else "Tap '+ New Job' to record your first field work",
+                                text = if (isTamil) "உங்கள் முதல் வேலையை பதிவு செய்ய '+ புதிய வேலை' என்பதைத் தொடவும்" else "Jobs recorded today appear here",
                                 fontSize = 12.sp,
                                 color = AppTheme.colors.textSecondary
                             )
@@ -450,7 +464,7 @@ fun HomeScreen(
                     }
                 }
             } else {
-                items(displayedRecentJobs, key = { it.id }) { job ->
+                items(displayJobs, key = { it.id }) { job ->
                     JobEntryItemCard(
                         job = job,
                         settings = settings,
@@ -530,6 +544,7 @@ fun HomeScreen(
                 sendWhatsAppMessage(context, job.customerPhone, msg)
             },
             onSharePdf = {
+                requirePdfAccess(job)
                 val file = PdfGeneratorHelper.generateJobReceiptPdf(
                     context = context,
                     settings = settings,
@@ -568,9 +583,9 @@ fun HomeScreen(
             text = {
                 Text(
                     text = if (isTamil) {
-                        "வாடிக்கையாளர் '${job.customerName}'-க்கான வேலைப் பதிவை (${formatInr(job.totalAmount, settings.currency)}) நிச்சயமாக நீக்க விரும்புகிறீர்களா?\n\nஇது வாடிக்கையாளரின் நிலுவைத் தொகையையும் தானாகப் புதுப்பிக்கும்."
+                        "வாடிக்கையாளர் '${job.customerName}'-க்கான வேலைப் பதிவை (${formatInr(job.totalAmount, settings.currency)}) நிச்சயமாக நீக்க விரும்புகிறீர்களா?\n\nஇணைக்கப்பட்ட செலவுகளும் அனுமதி இருந்தால் சேர்த்து நீக்கப்படும். செயலில் உள்ள வசூல் இருந்தால் முதலில் அதைத் திரும்பப் பெறவும்."
                     } else {
-                        "Are you sure you want to delete job entry for '${job.customerName}' (${formatInr(job.totalAmount, settings.currency)})?\n\nThis will update the customer's balance due automatically."
+                        "Delete the Entry for '${job.customerName}' (${formatInr(job.totalAmount, settings.currency)}) and its eligible linked Expenses? Active Collections must be reversed first. The customer's due updates after confirmation."
                     }
                 )
             },
@@ -626,10 +641,8 @@ private fun getCustomerAvatarColor(name: String): CustomerAvatarColor {
 
 private fun isJobHistorical(job: JobEntryEntity): Boolean {
     // Explicit old/historical entry indicator according to existing entry logic
-    val isExplicitOld = job.notes.contains("Old", ignoreCase = true) ||
-            job.customerName.contains("old", ignoreCase = true) ||
-            job.notes.contains("Historical", ignoreCase = true) ||
-            job.workType.contains("Old", ignoreCase = true)
+    val isExplicitOld = job.isHistorical
+
 
     return isExplicitOld
 }
@@ -647,6 +660,7 @@ fun JobEntryItemCard(
     val responsive = com.example.ui.theme.rememberResponsiveDimensions()
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     val isPaid = (job.amountReceived >= job.totalAmount && job.pendingAmount <= 0.0) || job.pendingAmount <= 0.0
+    val archived = workspaceMembers.any { it.workspaceId == job.workspaceId && it.uid in setOf(job.createdByUid, job.entryForUid, job.financialAttributionUid) && it.status.equals("removed", true) }
     val isHistorical = isJobHistorical(job)
     val isOldAndDue = isHistorical && !isPaid
     val avatarColor = getCustomerAvatarColor(job.customerName)
@@ -661,7 +675,7 @@ fun JobEntryItemCard(
 
     Card(
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = cardBg),
+        colors = CardDefaults.cardColors(containerColor = if (archived) Color(0xFFE9E9E9) else cardBg),
         border = BorderStroke(1.dp, cardBorder),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier
@@ -780,51 +794,36 @@ fun JobEntryItemCard(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Right Column: Billed amount & Due/Paid status badge/pill with Arrow and Due amount below
-            val billedAmount = if (job.totalAmount > 0.0) job.totalAmount else job.amountReceived
+            // Right Column: Amount on top, Status Badge & Chevron right underneath
             Column(
-                modifier = Modifier.width(IntrinsicSize.Max),
                 horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // 1. Billed label & Amount on the same horizontal row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (isTamil) "கட்டணம்" else "Billed",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF6B7280),
-                        modifier = Modifier.padding(end = 12.dp)
-                    )
-                    Text(
-                        text = formatInr(billedAmount, settings.currency),
-                        fontSize = 16.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF111827),
-                        maxLines = 1
-                    )
-                }
+                // Amount on the right
+                val displayAmount = if (job.totalAmount > 0.0) job.totalAmount else job.amountReceived
+                Text(
+                    text = formatInr(displayAmount, settings.currency),
+                    fontSize = 17.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF111827),
+                    maxLines = 1
+                )
 
-                // 2. Status badge/pill & Arrow row (grouped together, slightly inset from right edge)
+                // Paid/Due Status Badge & Right-facing Chevron
                 Row(
-                    modifier = Modifier.padding(end = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     when {
                         isPaid -> {
                             Surface(
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(8.dp),
                                 color = Color(0xFFDCFCE7)
                             ) {
                                 Text(
                                     text = if (isTamil) "செலுத்தப்பட்டது" else "Paid",
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    fontSize = 11.5.sp,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+                                    fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF15803D)
                                 )
@@ -832,24 +831,24 @@ fun JobEntryItemCard(
                         }
                         isOldAndDue -> {
                             Surface(
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(8.dp),
                                 color = Color(0xFF7F1D1D),
                                 border = BorderStroke(1.dp, Color(0xFFF59E0B))
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .size(5.dp)
+                                            .size(6.dp)
                                             .clip(CircleShape)
                                             .background(Color(0xFFFCD34D))
                                     )
                                     Text(
                                         text = if (isTamil) "பாக்கி" else "Due",
-                                        fontSize = 11.5.sp,
+                                        fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFFFEF08A)
                                     )
@@ -858,13 +857,13 @@ fun JobEntryItemCard(
                         }
                         else -> {
                             Surface(
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(8.dp),
                                 color = Color(0xFFFFE2E2)
                             ) {
                                 Text(
                                     text = if (isTamil) "பாக்கி" else "Due",
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    fontSize = 11.5.sp,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+                                    fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFFDC2626)
                                 )
@@ -875,21 +874,8 @@ fun JobEntryItemCard(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                         contentDescription = "View Details",
-                        tint = Color(0xFF9CA3AF),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-
-                // 3. Due/remaining amount below the Due pill
-                if (!isPaid && job.pendingAmount > 0.0) {
-                    val dueColor = if (isOldAndDue) Color(0xFF991B1B) else Color(0xFFDC2626)
-                    Text(
-                        text = formatInr(job.pendingAmount, settings.currency),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = dueColor,
-                        maxLines = 1,
-                        modifier = Modifier.padding(end = 16.dp)
+                        tint = Color(0xFF6B7280),
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -921,16 +907,17 @@ fun CustomerSummaryPopup(
     } else {
         settings.activePartnerName
     }
+    val sourceReadOnly = workspaceMembers.any { it.workspaceId == job.workspaceId && it.uid in setOf(job.createdByUid, job.entryForUid, job.financialAttributionUid) && it.status.equals("removed", true) }
     val currentMember = workspaceMembers.find { it.uid == currentUid }
-    val currentRole = if (isOwner) com.example.data.auth.RoleUtils.ROLE_OWNER else (currentMember?.role?.takeIf { it.isNotBlank() }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) } ?: com.example.data.auth.RoleUtils.ROLE_PARTNER)
-    val canEdit = com.example.data.auth.AuthorizationManager.canEditEntry(
+    val currentRole = if (isOwner) com.example.data.auth.RoleUtils.ROLE_OWNER else (currentMember?.role?.takeIf { it.isNotBlank() }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) } ?: "")
+    val canEdit = !sourceReadOnly && com.example.data.auth.AuthorizationManager.canEditEntry(
         job = job,
         isOwner = isOwner,
         currentActorName = currentActorName,
         currentUid = currentUid,
         role = currentRole
     )
-    val canDelete = com.example.data.auth.AuthorizationManager.canDeleteEntry(
+    val canDelete = (isOwner || !sourceReadOnly) && com.example.data.auth.AuthorizationManager.canDeleteEntry(
         job = job,
         isOwner = isOwner,
         currentActorName = currentActorName,
@@ -1008,6 +995,16 @@ fun CustomerSummaryPopup(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                                if (sourceReadOnly) {
+                                    Text(
+                                        text = if (isTamil) "முன்னாள் உறுப்பினர் பதிவு" else "Retained Historical Record",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFB45309),
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
 
@@ -1477,6 +1474,7 @@ fun CustomerSummaryPopup(
                     }
 
                     // 6. SHARE BUTTONS ROW (WhatsApp, Share PDF, Save PDF)
+                    if (currentRole in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1575,6 +1573,7 @@ fun CustomerSummaryPopup(
                         }
                     }
 
+                    }
                     // 7. DELETE BUTTON (Authorized only)
                     if (canDelete) {
                         OutlinedButton(

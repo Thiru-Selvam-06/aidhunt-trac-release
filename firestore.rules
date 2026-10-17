@@ -1,167 +1,272 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isWorkspaceOwner(wsId) {
-      return request.auth != null && (
-        (exists(/databases/$(database)/documents/workspaces/$(wsId)) &&
-         get(/databases/$(database)/documents/workspaces/$(wsId)).data.get('ownerUid', '') == request.auth.uid) ||
-        (exists(/databases/$(database)/documents/collaborationGroups/$(wsId)) &&
-         get(/databases/$(database)/documents/collaborationGroups/$(wsId)).data.get('ownerUid', '') == request.auth.uid) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('workspaceId', '') == wsId &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') in ['owner', 'OWNER', 'Owner', '']) ||
-        (exists(/databases/$(database)/documents/userWorkspaceMemberships/$(request.auth.uid)/workspaces/$(wsId)) &&
-         get(/databases/$(database)/documents/userWorkspaceMemberships/$(request.auth.uid)/workspaces/$(wsId)).data.get('role', '') in ['owner', 'OWNER', 'Owner']) ||
-        (exists(/databases/$(database)/documents/userCollaborationGroups/$(request.auth.uid)/groups/$(wsId)) &&
-         get(/databases/$(database)/documents/userCollaborationGroups/$(request.auth.uid)/groups/$(wsId)).data.get('role', '') in ['owner', 'OWNER', 'Owner'])
-      );
+    function signed() { return request.auth != null; }
+    // Firebase Auth signs this claim; a form's phone number is not OTP evidence.
+    function verifiedPhone() {
+      return signed() && request.auth.token.get('phone_number', '') is string &&
+        request.auth.token.get('phone_number', '') != '';
     }
-
-    function isWorkspaceMember(wsId) {
-      return request.auth != null && (
-        isWorkspaceOwner(wsId) ||
-        exists(/databases/$(database)/documents/workspaces/$(wsId)/members/$(request.auth.uid)) ||
-        exists(/databases/$(database)/documents/collaborationGroups/$(wsId)/members/$(request.auth.uid)) ||
-        exists(/databases/$(database)/documents/userWorkspaceMemberships/$(request.auth.uid)/workspaces/$(wsId)) ||
-        exists(/databases/$(database)/documents/userCollaborationGroups/$(request.auth.uid)/groups/$(wsId)) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('workspaceId', '') == wsId ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('currentWorkspaceId', '') == wsId ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('personalWorkspaceId', '') == wsId))
-      );
+    function memberPath(ws, uid) { return /databases/$(database)/documents/workspaces/$(ws)/members/$(uid); }
+    function active(ws, uid) {
+      return uid is string && uid != '' && exists(memberPath(ws, uid)) &&
+        get(memberPath(ws, uid)).data.status in ['ACTIVE', 'active'];
     }
-
-    function isOperatorInWorkspace(wsId) {
-      return request.auth != null && (
-        (exists(/databases/$(database)/documents/workspaces/$(wsId)/members/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/workspaces/$(wsId)/members/$(request.auth.uid)).data.get('role', '') in ['operator', 'OPERATOR', 'Operator']) ||
-        (exists(/databases/$(database)/documents/collaborationGroups/$(wsId)/members/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/collaborationGroups/$(wsId)/members/$(request.auth.uid)).data.get('role', '') in ['operator', 'OPERATOR', 'Operator'])
-      );
+    function member(ws) { return signed() && active(ws, request.auth.uid) && (owner(ws) || partner(ws) || operator(ws)); }
+    function role(ws, roles) {
+      return signed() && get(memberPath(ws, request.auth.uid)).data.status in ['ACTIVE', 'active'] &&
+        get(memberPath(ws, request.auth.uid)).data.role in roles;
     }
-
-    function isEligibleWorkspaceTarget(wsId, targetUid) {
-      return targetUid == request.auth.uid ||
-        (exists(/databases/$(database)/documents/workspaces/$(wsId)/members/$(targetUid)) &&
-         !(get(/databases/$(database)/documents/workspaces/$(wsId)/members/$(targetUid)).data.get('role', '') in ['operator', 'OPERATOR', 'Operator'])) ||
-        (exists(/databases/$(database)/documents/collaborationGroups/$(wsId)/members/$(targetUid)) &&
-         !(get(/databases/$(database)/documents/collaborationGroups/$(wsId)/members/$(targetUid)).data.get('role', '') in ['operator', 'OPERATOR', 'Operator']));
+    function owner(ws) {
+      return role(ws, ['OWNER', 'Owner', 'owner']) &&
+        get(/databases/$(database)/documents/workspaces/$(ws)).data.ownerUid == request.auth.uid;
     }
-
-    function isCallerPhone(raw, norm) {
-      return (request.auth.token.phone_number != null &&
-              (raw == request.auth.token.phone_number || norm == request.auth.token.phone_number)) ||
-             (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-              (raw == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone ||
-               norm == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone));
+    function partner(ws) { return role(ws, ['PARTNER', 'Partner', 'partner']); }
+    function operator(ws) { return role(ws, ['OPERATOR', 'Operator', 'operator']); }
+    function finance(ws) { return owner(ws) || partner(ws); }
+    function envelope(ws) {
+      return request.resource.data.protocolVersion == 2 && request.resource.data.operationType in ['UPSERT', 'DELETE'] && request.resource.data.dependencies is list && request.resource.data.dependencies.size() <= 100 &&
+        request.resource.data.workspaceId == ws && request.resource.data.actorUid == request.auth.uid &&
+        request.resource.data.operationId is string && request.resource.data.operationId != '' &&
+        request.resource.data.actionTime is int && request.resource.data.actionTime > 0 &&
+        request.resource.data.actionTime <= request.time.toMillis() && request.resource.data.isDeleted is bool &&
+        (request.resource.data.isDeleted
+          ? request.resource.data.get('authorizationDeletedAt', null) == request.time
+          : request.resource.data.get('authorizationDeletedAt', null) == null);
     }
-
-    function hasPendingInvitation(grpId) {
-      return request.auth != null && (
-        (request.auth.token.phone_number != null &&
-         exists(/databases/$(database)/documents/collaborationGroups/$(grpId)/pendingPhones/$(request.auth.token.phone_number))) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         exists(/databases/$(database)/documents/collaborationGroups/$(grpId)/pendingPhones/$(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone)))
-      );
+    // Approved offline policy: client action time is not tamper-proof. createdAt is immutable.
+    function timely(createdAt) {
+      return createdAt is int && createdAt > 0 && request.resource.data.actionTime >= createdAt &&
+        request.resource.data.actionTime - createdAt < 86400000;
     }
-
-    match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+    function same(keys) { return !request.resource.data.diff(resource.data).affectedKeys().hasAny(keys); }
+    function original() { return same(['workspaceId', 'createdByUid', 'createdByRole', 'createdAt', 'authorizationCreatedAt', 'serverReceivedAt', 'authorizationTimeStatus']); }
+    function reviewedTime() { return resource.data.get('authorizationTimeStatus', '') in ['CLIENT_ORIGINAL_V2', 'VERIFIED']; }
+    function ownTimely() { return reviewedTime() && resource.data.createdByUid == request.auth.uid && reviewedTime() && timely(resource.data.get('createdAt', 0)); }
+    // The queued command remains durable until this physical delete is acknowledged.
+    function deleteEnvelope() {
+      return resource.data.get('protocolVersion', 0) == 2 && resource.data.get('operationType', '') in ['UPSERT', 'DELETE'] && resource.data.get('dependencies', null) is list && resource.data.get('isDeleted', false) == true && resource.data.actorUid == request.auth.uid &&
+        resource.data.operationId is string && resource.data.operationId != '' && resource.data.actionTime is int &&
+        resource.data.actionTime > 0 && resource.data.actionTime <= request.time.toMillis();
     }
-
-    match /phoneDirectory/{phone} {
-      allow get: if request.auth != null;
+    function deleteTimely() {
+      let created = resource.data.get('createdAt', 0);
+      let action = resource.data.actionTime;
+      return reviewedTime() && resource.data.createdByUid == request.auth.uid && created is int && created > 0 &&
+        action >= created && action - created < 86400000;
+    }
+    function notDeleted() { return resource.data.get('isDeleted', false) == false; }
+    function activeRecord(ws, targetField) {
+      return active(ws, resource.data.createdByUid) && active(ws, resource.data[targetField]);
+    }
+    function purge(ws, uid) {
+      return uid is string && uid != '' && owner(ws) &&
+        exists(/databases/$(database)/documents/workspaces/$(ws)/deletedUsers/$(uid)) &&
+        get(/databases/$(database)/documents/workspaces/$(ws)/deletedUsers/$(uid)).data.purgeState == 'PURGE_PENDING' &&
+        get(/databases/$(database)/documents/workspaces/$(ws)/deletedUsers/$(uid)).data.get('backupReady', false) == true;
+    }
+    function memberPurging(ws, uid) {
+      return uid is string && uid != '' && exists(/databases/$(database)/documents/workspaces/$(ws)/deletedUsers/$(uid)) &&
+        get(/databases/$(database)/documents/workspaces/$(ws)/deletedUsers/$(uid)).data.purgeState in ['PURGE_PENDING', 'PURGED'];
+    }
+    function validEntryAmounts(data) {
+      return data.totalAmount is number && data.totalAmount >= 0 && data.amountReceived is number &&
+        data.amountReceived >= 0 && data.pendingAmount is number && data.pendingAmount >= 0 &&
+        data.totalAmount == data.amountReceived + data.pendingAmount;
+    }
+    function reference(ws, collection, id) {
+      return id is int && id > 0 && exists(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))) &&
+        get(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))).data.get('isDeleted', false) == false &&
+        get(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))).data.workspaceId == ws;
+    }
+    function creationTime() {
+      return request.resource.data.createdAt is int && request.resource.data.createdAt > 0 &&
+        request.resource.data.createdAt <= request.resource.data.actionTime;
+    }
+    function timedCreationTime() {
+      return creationTime() && request.resource.data.authorizationTimeStatus == 'CLIENT_ORIGINAL_V2' && request.resource.data.authorizationCreatedAt is timestamp &&
+        request.resource.data.authorizationCreatedAt.toMillis() == request.resource.data.createdAt &&
+        request.resource.data.serverReceivedAt == request.time;
+    }
+    // Selected business collector is separate from the authenticated recorder (collectedByUid).
+    // Legacy queued self-collections without collector* retain their existing authorization.
+    function validCollectionCollector(ws, data) {
+      let uid = data.get('collectorUid', data.collectedByUid);
+      let target = get(memberPath(ws, uid)).data;
+      return uid is string && active(ws, uid) && target.workspaceId == ws && target.role in ['OWNER', 'Owner', 'owner', 'PARTNER', 'Partner', 'partner'] &&
+        (owner(ws) || uid == request.auth.uid) &&
+        (!data.keys().hasAny(['collectorUid', 'collectorName', 'collectorRole']) ||
+          (data.collectorUid == uid && data.collectorName == (target.get('displayName', null) == null ? '' : target.displayName) && data.collectorRole == target.role));
+    }
+    function validCollectionDate(ws, data) {
+      let source = get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(data.jobEntryId))).data;
+      // Fixed UTC+05:30 business calendar: same creation day is allowed, even at an earlier hour.
+      return source.createdAt is int && source.createdAt > 0 && data.collectedAt is int && data.collectedAt > 0 &&
+        timestamp.value(data.collectedAt + 19800000).date() >= timestamp.value(source.createdAt + 19800000).date();
+    }
+    function collectionEntryUpdate(ws, id) {
+      let cid = request.resource.data.get('collectionId', '');
+      let path = /databases/$(database)/documents/workspaces/$(ws)/collections/$(cid);
+      let next = getAfter(path).data;
+      let created = !exists(path);
+      let reversal = !created && get(path).data.status == 'ACTIVE' && next.status == 'REVERSED';
+      let delta = reversal ? -next.amount : next.amount;
+      return finance(ws) && cid != '' && (created || reversal) && next.jobEntryId == resource.data.id &&
+        next.operationId == request.resource.data.operationId && next.actorUid == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['protocolVersion', 'operationType', 'dependencies', 'amountReceived', 'pendingAmount', 'collectionId', 'operationId', 'actorUid', 'actionTime', 'isDeleted', 'updatedAt']) &&
+        request.resource.data.amountReceived == resource.data.amountReceived + delta &&
+        request.resource.data.pendingAmount == resource.data.pendingAmount - delta && validEntryAmounts(request.resource.data);
+    }
+    function collectionMatchesEntry(ws, id, reversal) {
+      let jobId = request.resource.data.jobEntryId;
+      let path = /databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId));
+      let before = get(path).data;
+      let after = getAfter(path).data;
+      let delta = reversal ? -request.resource.data.amount : request.resource.data.amount;
+      return before.workspaceId == ws && before.customerId == request.resource.data.customerId &&
+        before.get('isDeleted', false) == false && !memberPurging(ws, before.createdByUid) && !memberPurging(ws, before.entryForUid) &&
+        after.collectionId == id && after.operationId == request.resource.data.operationId &&
+        after.amountReceived == before.amountReceived + delta && after.pendingAmount == before.pendingAmount - delta &&
+        validEntryAmounts(after);
+    }
+    match /users/{uid} { allow read, write: if signed() && request.auth.uid == uid; }
+    // Directory is a server-maintained discovery aid, never authorization or OTP proof.
+    match /phoneDirectory/{phone} { allow get: if signed(); allow list, write: if false; }
+    match /userWorkspaceMemberships/{uid}/workspaces/{ws} {
+      allow read: if signed() && request.auth.uid == uid;
+      allow create, update: if owner(ws) && exists(memberPath(ws, uid));
+      allow delete: if owner(ws) || (signed() && request.auth.uid == uid);
+    }
+    match /workspaces/{ws} {
+      allow get: if member(ws) || (signed() && resource.data.ownerUid == request.auth.uid);
       allow list: if false;
-      allow create, update: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow create: if verifiedPhone() && request.resource.data.ownerUid == request.auth.uid && request.resource.data.workspaceId == ws;
+      allow update: if owner(ws) && same(['ownerUid', 'workspaceId', 'createdAt']);
+      allow delete: if false;
+      match /members/{uid} {
+        allow read: if member(ws) || (signed() && request.auth.uid == uid);
+        // First Owner bootstrap only. Subordinate membership is created by the trusted OTP service.
+        allow create: if signed() && uid == request.auth.uid && request.resource.data.uid == uid &&
+          request.resource.data.workspaceId == ws && request.resource.data.role in ['OWNER', 'Owner', 'owner'] &&
+          request.resource.data.status in ['ACTIVE', 'active'] &&
+          getAfter(/databases/$(database)/documents/workspaces/$(ws)).data.ownerUid == uid &&
+          !exists(/databases/$(database)/documents/workspaces/$(ws)/deletedUsers/$(uid));
+        allow update: if (owner(ws) && uid != request.auth.uid && same(['uid', 'workspaceId', 'role', 'joinedAt']) &&
+          resource.data.status in ['ACTIVE', 'active'] && request.resource.data.status == 'REMOVED' &&
+          existsAfter(/databases/$(database)/documents/workspaces/$(ws)/deletedUsers/$(uid))) ||
+          ((owner(ws) || (signed() && request.auth.uid == uid && member(ws))) &&
+           resource.data.status in ['ACTIVE', 'active'] &&
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'defaultHourlyRate', 'hourlyRate', 'updatedAt']));
+        allow delete: if false;
+      }
+      match /entries/{id} {
+        allow get: if finance(ws) || (operator(ws) && (!exists(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)) || resource.data.isHistorical == false));
+        allow list: if finance(ws) || (operator(ws) && resource.data.isHistorical == false);
+        allow create: if envelope(ws) && member(ws) && request.resource.data.createdByUid == request.auth.uid &&
+          timedCreationTime() && reference(ws, 'customers', request.resource.data.customerId) &&
+          (request.resource.data.get('tractorId', 0) == 0 || reference(ws, 'tractors', request.resource.data.tractorId)) &&
+          request.resource.data.isDeleted == false && request.resource.data.isHistorical is bool &&
+          active(ws, request.resource.data.entryForUid) && request.resource.data.financialAttributionUid == request.resource.data.entryForUid &&
+          validEntryAmounts(request.resource.data) && request.resource.data.amountReceived == 0 &&
+          (owner(ws) || ((partner(ws) || operator(ws)) && !request.resource.data.isHistorical && request.resource.data.entryForUid == request.auth.uid));
+        allow update: if envelope(ws) && !request.resource.data.isDeleted && notDeleted() && original() && same(['isHistorical', 'entryForUid', 'financialAttributionUid']) &&
+          (request.resource.data.customerId == resource.data.customerId || reference(ws, 'customers', request.resource.data.customerId)) &&
+          (request.resource.data.amountReceived != resource.data.amountReceived
+            ? (request.resource.data.get('purgeUid', '') != ''
+                ? (owner(ws) && purge(ws, request.resource.data.purgeUid) &&
+                   request.resource.data.operationType == 'UPSERT' &&
+                   request.resource.data.diff(resource.data).affectedKeys().hasOnly(['protocolVersion', 'operationType', 'dependencies', 'isDeleted', 'amountReceived', 'pendingAmount', 'purgeUid', 'actorUid', 'operationId', 'actionTime']) && validEntryAmounts(request.resource.data))
+                : collectionEntryUpdate(ws, id))
+            : (activeRecord(ws, 'entryForUid') && validEntryAmounts(request.resource.data) &&
+               (!request.resource.data.isDeleted || request.resource.data.amountReceived == 0) &&
+               (request.resource.data.get('tractorId', 0) == resource.data.get('tractorId', 0) || reference(ws, 'tractors', request.resource.data.tractorId)) &&
+               (owner(ws) || ((partner(ws) || operator(ws)) && !resource.data.isHistorical && ownTimely()))));
+        // Normal Entry deletion requires the trusted dependency transaction.
+        allow delete: if purge(ws, resource.data.createdByUid) || purge(ws, resource.data.entryForUid) || purge(ws, resource.data.financialAttributionUid);
+      }
+      match /expenses/{id} {
+        allow read: if finance(ws);
+        allow create: if envelope(ws) && finance(ws) && request.resource.data.createdByUid == request.auth.uid &&
+          timedCreationTime() && request.resource.data.amount is number && request.resource.data.amount > 0 && request.resource.data.isDeleted == false &&
+          active(ws, request.resource.data.expenseForUid) && request.resource.data.financialAttributionUid == request.resource.data.expenseForUid &&
+          (owner(ws) || request.resource.data.expenseForUid == request.auth.uid);
+        allow update: if envelope(ws) && original() && notDeleted() && activeRecord(ws, 'expenseForUid') &&
+          request.resource.data.amount is number && request.resource.data.amount > 0 &&
+          same(['expenseForUid', 'financialAttributionUid']) && (owner(ws) || (partner(ws) && ownTimely()));
+        allow delete: if (deleteEnvelope() && activeRecord(ws, 'expenseForUid') && (owner(ws) || (partner(ws) && deleteTimely()))) ||
+          purge(ws, resource.data.createdByUid) || purge(ws, resource.data.expenseForUid) || purge(ws, resource.data.financialAttributionUid);
+      }
+      match /withdrawals/{id} {
+        allow read: if finance(ws);
+        allow create: if envelope(ws) && finance(ws) && request.resource.data.createdByUid == request.auth.uid &&
+          timedCreationTime() && request.resource.data.amount is number && request.resource.data.amount > 0 && request.resource.data.isDeleted == false &&
+          active(ws, request.resource.data.targetPartnerUid) &&
+          (request.resource.data.targetPartnerUid == request.auth.uid || (owner(ws) &&
+           get(memberPath(ws, request.resource.data.targetPartnerUid)).data.role in ['PARTNER', 'Partner', 'partner']));
+        allow update: if envelope(ws) && original() && notDeleted() && activeRecord(ws, 'targetPartnerUid') && request.resource.data.isDeleted == true &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['protocolVersion', 'operationType', 'dependencies', 'isDeleted', 'authorizationDeletedAt', 'actorUid', 'operationId', 'actionTime', 'updatedAt']) &&
+          (owner(ws) || (partner(ws) && ownTimely() && resource.data.targetPartnerUid == request.auth.uid));
+        allow delete: if (deleteEnvelope() && activeRecord(ws, 'targetPartnerUid') &&
+          (owner(ws) || (partner(ws) && resource.data.targetPartnerUid == request.auth.uid && deleteTimely()))) ||
+          purge(ws, resource.data.createdByUid) || purge(ws, resource.data.targetPartnerUid);
+      }
+      match /collections/{id} {
+        allow read: if finance(ws);
+        allow create: if envelope(ws) && finance(ws) && request.resource.data.collectedByUid == request.auth.uid &&
+          request.resource.data.status == 'ACTIVE' && request.resource.data.isDeleted == false &&
+          request.resource.data.amount is number && request.resource.data.amount > 0 &&
+          timedCreationTime() && validCollectionCollector(ws, request.resource.data) && validCollectionDate(ws, request.resource.data) &&
+          request.resource.data.collectedAt is int && request.resource.data.createdAt is int && request.resource.data.createdAt > 0 && collectionMatchesEntry(ws, id, false);
+        allow update: if envelope(ws) && finance(ws) && resource.data.status == 'ACTIVE' && request.resource.data.status == 'REVERSED' &&
+          request.resource.data.reversedByUid == request.auth.uid && request.resource.data.isDeleted == false &&
+          same(['workspaceId', 'collectorUid', 'collectorName', 'collectorRole', 'collectedByUid', 'collectedByName', 'collectedByRole', 'collectedAt', 'createdAt', 'authorizationCreatedAt', 'serverReceivedAt', 'authorizationTimeStatus', 'amount', 'jobEntryId', 'customerId', 'allocationsJson', 'id']) &&
+          (owner(ws) || (partner(ws) && resource.data.collectedByUid == request.auth.uid && timely(resource.data.get('createdAt', 0)))) &&
+          collectionMatchesEntry(ws, id, true);
+        allow delete: if purge(ws, resource.data.collectedByUid) ||
+          purge(ws, get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(resource.data.jobEntryId))).data.createdByUid) ||
+          purge(ws, get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(resource.data.jobEntryId))).data.entryForUid);
+      }
+      match /customers/{id} {
+        allow read: if finance(ws);
+        allow create: if envelope(ws) && finance(ws) && creationTime() && request.resource.data.createdByUid == request.auth.uid && request.resource.data.isDeleted == false;
+        allow update: if envelope(ws) && original() && notDeleted() &&
+          ((finance(ws) && request.resource.data.isDeleted == false) || (owner(ws) && request.resource.data.isDeleted == true));
+        // A trusted command scans retained Entries/Collections transactionally before deleting a Customer.
+        allow delete: if false;
+      }
+      match /{asset}/{id} {
+        allow read: if asset in ['tractors', 'extensions'] && member(ws);
+        allow create: if asset in ['tractors', 'extensions'] && envelope(ws) && finance(ws) &&
+          creationTime() && request.resource.data.createdByUid == request.auth.uid && request.resource.data.isDeleted == false;
+        allow update: if asset in ['tractors', 'extensions'] && envelope(ws) && original() && notDeleted() && active(ws, resource.data.createdByUid) &&
+          (owner(ws) || (partner(ws) && resource.data.createdByUid == request.auth.uid));
+        allow delete: if asset in ['tractors', 'extensions'] &&
+          ((deleteEnvelope() && active(ws, resource.data.createdByUid) && (owner(ws) || (partner(ws) && resource.data.createdByUid == request.auth.uid))) ||
+           purge(ws, resource.data.createdByUid));
+      }
+      match /deletedUsers/{uid} {
+        match /backupChunks/{chunk} {
+          allow read: if owner(ws);
+          allow create: if owner(ws) && request.resource.data.workspaceId == ws && request.resource.data.memberUid == uid && request.resource.data.data is string &&
+            get(/databases/$(database)/documents/workspaces/$(ws)/deletedUsers/$(uid)).data.purgeState in ['ARCHIVED', 'PURGE_PENDING'];
+          allow update, delete: if false;
+        }
+        allow read: if owner(ws);
+        allow create: if owner(ws) && uid != request.auth.uid && request.resource.data.uid == uid && request.resource.data.workspaceId == ws &&
+          request.resource.data.removedByUid == request.auth.uid && request.resource.data.purgeState == 'ARCHIVED' &&
+          getAfter(memberPath(ws, uid)).data.status == 'REMOVED';
+        allow update: if owner(ws) && same(['uid', 'workspaceId', 'role', 'removedAt', 'removedByUid']) &&
+          ((resource.data.purgeState == 'ARCHIVED' && request.resource.data.purgeState == 'PURGE_PENDING' &&
+            request.resource.data.backupSha256 is string && request.resource.data.purgeManifest is list) ||
+           (resource.data.purgeState == 'PURGE_PENDING' && request.resource.data.purgeState in ['PURGE_PENDING', 'PURGED']));
+        allow delete: if false;
+      }
+      match /settings/{id} { allow read: if member(ws); allow create, update: if owner(ws); allow delete: if false; }
+      match /profitShareAllocations/{id} { allow read: if finance(ws); allow write: if owner(ws); }
+      match /attendees/{id} { allow read: if member(ws); allow write: if owner(ws); }
+      match /invitations/{id} { allow read: if owner(ws); allow write: if false; }
     }
-
-    match /userWorkspaceMemberships/{uid}/workspaces/{wsId} {
-      allow read: if request.auth != null && (request.auth.uid == uid || isWorkspaceMember(wsId));
-      allow create, update: if request.auth != null && (isWorkspaceOwner(wsId) || isWorkspaceMember(wsId) || request.auth.uid == uid || (request.auth.uid == uid && hasPendingInvitation(wsId)));
-      allow delete: if request.auth != null && (isWorkspaceOwner(wsId) || request.auth.uid == uid);
-    }
-
-    match /userCollaborationGroups/{uid}/groups/{grpId} {
-      allow read: if request.auth != null && (request.auth.uid == uid || isWorkspaceMember(grpId));
-      allow create, update: if request.auth != null && (isWorkspaceOwner(grpId) || isWorkspaceMember(grpId) || request.auth.uid == uid || (request.auth.uid == uid && hasPendingInvitation(grpId)));
-      allow delete: if request.auth != null && (isWorkspaceOwner(grpId) || request.auth.uid == uid);
-    }
-
-    match /{path=**}/pendingPhones/{phone} {
-      allow read, delete: if request.auth != null && isCallerPhone(phone, resource.data.normalizedPhone);
-    }
-
-    match /collaborationGroups/{grpId} {
-      allow get: if request.auth != null;
-      allow list: if isWorkspaceMember(grpId);
-      allow create: if request.auth != null && (request.resource.data.get('ownerUid', '') == request.auth.uid || isWorkspaceOwner(grpId));
-      allow update, delete: if isWorkspaceOwner(grpId);
-
-      match /members/{targetUid} {
-        allow read: if isWorkspaceMember(grpId) || (request.auth != null && request.auth.uid == targetUid);
-        allow create, update: if request.auth != null && (isWorkspaceOwner(grpId) || isWorkspaceMember(grpId) || (request.auth.uid == targetUid && request.resource.data.get('uid', '') == request.auth.uid && hasPendingInvitation(grpId)));
-        allow delete: if isWorkspaceOwner(grpId);
-      }
-
-      match /pendingPhones/{phone} {
-        allow get: if request.auth != null && (isWorkspaceMember(grpId) || isCallerPhone(phone, resource.data.normalizedPhone));
-        allow list: if isWorkspaceMember(grpId);
-        allow create, update: if isWorkspaceOwner(grpId) || (request.auth != null && request.resource.data.addedByUid == request.auth.uid);
-        allow delete: if isWorkspaceOwner(grpId) || (request.auth != null && resource.data.addedByUid == request.auth.uid) || isCallerPhone(phone, resource.data.normalizedPhone);
-      }
-
-      match /{subcollection}/{docId} {
-        allow read, write: if isWorkspaceMember(grpId) &&
-          subcollection in ['expenses', 'customers', 'tractors', 'settings', 'payments', 'entries', 'withdrawals', 'extensions', 'partnerPermissions', 'attendees', 'members'];
-      }
-    }
-
-    match /workspaces/{wsId} {
-      allow get: if request.auth != null && (resource == null || isWorkspaceMember(wsId));
-      allow list: if isWorkspaceMember(wsId);
-      allow create: if request.auth != null && (request.resource.data.get('ownerUid', '') == request.auth.uid || isWorkspaceOwner(wsId));
-      allow update, delete: if isWorkspaceOwner(wsId);
-
-      match /members/{targetUid} {
-        allow read: if isWorkspaceMember(wsId) || (request.auth != null && request.auth.uid == targetUid);
-        allow create, update: if request.auth != null && (isWorkspaceOwner(wsId) || isWorkspaceMember(wsId) || (request.auth.uid == targetUid && request.resource.data.get('uid', '') == request.auth.uid));
-        allow delete: if isWorkspaceOwner(wsId);
-      }
-
-      match /attendees/{attendeeId} {
-        allow read: if isWorkspaceMember(wsId) || hasPendingInvitation(wsId);
-        allow create, delete: if isWorkspaceOwner(wsId);
-        allow update: if isWorkspaceMember(wsId) || (request.auth != null && request.resource.data.get('partnerUid', '') == request.auth.uid && hasPendingInvitation(wsId));
-      }
-
-      match /entries/{docId} {
-        allow read, create: if isWorkspaceMember(wsId);
-        allow update: if isWorkspaceOwner(wsId) || (isWorkspaceMember(wsId) && resource.data.get('createdByUid', '') == request.auth.uid);
-        allow delete: if isWorkspaceOwner(wsId) || (isWorkspaceMember(wsId) && resource.data.get('createdByUid', '') == request.auth.uid);
-      }
-
-      match /payments/{docId} {
-        allow read, create: if isWorkspaceMember(wsId);
-        allow update: if isWorkspaceOwner(wsId) || (isWorkspaceMember(wsId) && resource.data.get('collectedByUid', '') == request.auth.uid);
-        allow delete: if isWorkspaceOwner(wsId) || (isWorkspaceMember(wsId) && resource.data.get('collectedByUid', '') == request.auth.uid);
-      }
-
-      match /withdrawals/{docId} {
-        allow read: if isWorkspaceMember(wsId);
-        allow create, update: if isWorkspaceMember(wsId) &&
-          request.auth != null &&
-          request.resource.data.get('createdByUid', '') == request.auth.uid && (
-            (isWorkspaceOwner(wsId) && isEligibleWorkspaceTarget(wsId, request.resource.data.get('targetPartnerUid', ''))) ||
-            (!isOperatorInWorkspace(wsId) && request.resource.data.get('targetPartnerUid', '') == request.auth.uid)
-          );
-        allow delete: if isWorkspaceOwner(wsId);
-      }
-
-      match /{subcollection}/{docId} {
-        allow read, write: if isWorkspaceMember(wsId) &&
-          subcollection in ['expenses', 'customers', 'tractors', 'settings', 'entries', 'withdrawals', 'extensions', 'partnerPermissions', 'attendees', 'members'];
-      }
-    }
+    // No legacy collaboration-group or global profile field can confer workspace authority.
+    match /{document=**} { allow read, write: if false; }
   }
 }

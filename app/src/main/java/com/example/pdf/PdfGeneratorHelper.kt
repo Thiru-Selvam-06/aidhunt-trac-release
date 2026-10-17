@@ -46,14 +46,17 @@ object PdfGeneratorHelper {
     }
 
     private fun checkPdfExportAllowed(context: Context, settings: AppSettingsEntity): Boolean {
-        if (!com.example.data.auth.AuthorizationManager.canExportPdf()) {
+        val actor = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+        val verified = context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE)
+        val ws = verified.getString("workspaceId", "").orEmpty()
+        val members = org.json.JSONArray(verified.getString("members", "[]"))
+        val member = (0 until members.length()).map { members.getJSONObject(it) }.firstOrNull {
+            it.optString("uid") == actor && it.optString("workspaceId") == ws
+        }
+        if (!com.example.data.auth.PdfExportAuthorization.permits(actor, verified.getString("uid", "").orEmpty(),
+                ws, settings.workspaceId, member?.optString("role").orEmpty(), member?.optString("status").orEmpty())) {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
-                val isTamil = settings.language == "TA"
-                android.widget.Toast.makeText(
-                    context,
-                    if (isTamil) "PDF ஏற்றுமதி நிர்வாகத்தால் முடக்கப்பட்டுள்ளது" else "PDF export is restricted by administration",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
+                Toast.makeText(context, "PDF export requires authorized workspace access", Toast.LENGTH_SHORT).show()
             }
             return false
         }
@@ -69,6 +72,7 @@ object PdfGeneratorHelper {
         job: JobEntryEntity
     ): File? {
         if (!checkPdfExportAllowed(context, settings)) return null
+        if (job.workspaceId != settings.workspaceId) return null
         val document = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4 size
         val page = document.startPage(pageInfo)
@@ -253,6 +257,7 @@ object PdfGeneratorHelper {
         jobs: List<JobEntryEntity>
     ): File? {
         if (!checkPdfExportAllowed(context, settings)) return null
+        if (customer.workspaceId != settings.workspaceId || jobs.any { it.workspaceId != settings.workspaceId }) return null
         val document = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4 size in points (72 dpi)
         val page = document.startPage(pageInfo)
@@ -446,6 +451,7 @@ object PdfGeneratorHelper {
         customers: List<CustomerEntity>
     ): File? {
         if (!checkPdfExportAllowed(context, settings)) return null
+        if (customers.any { it.workspaceId != settings.workspaceId }) return null
         val document = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
         val page = document.startPage(pageInfo)
@@ -542,6 +548,7 @@ object PdfGeneratorHelper {
         filterDescription: String
     ): File? {
         if (!checkPdfExportAllowed(context, settings)) return null
+        if (expenses.any { it.workspaceId != settings.workspaceId }) return null
         val document = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
         val page = document.startPage(pageInfo)
@@ -734,6 +741,7 @@ object PdfGeneratorHelper {
         withdrawals: List<WithdrawalEntity>
     ): File? {
         if (!checkPdfExportAllowed(context, settings)) return null
+        if (withdrawals.any { it.workspaceId != settings.workspaceId }) return null
         val document = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
         val page = document.startPage(pageInfo)

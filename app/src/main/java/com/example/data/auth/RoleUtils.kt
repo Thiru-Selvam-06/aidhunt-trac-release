@@ -12,23 +12,19 @@ object RoleUtils {
     const val ROLE_OPERATOR = "Operator"
 
     /**
-     * Normalizes any input role string into one of the four business roles:
-     * Owner, Co-Owner, Partner, or Operator.
+     * Normalizes the three supported roles. Unknown and legacy Co-Owner roles have no authority.
      */
     fun normalizeRole(roleInput: String?): String {
-        if (roleInput.isNullOrBlank()) return ROLE_PARTNER
-        val trimmed = roleInput.trim()
-        return when {
-            trimmed.contains("co", ignoreCase = true) || trimmed.contains("இணை", ignoreCase = true) -> ROLE_CO_OWNER
-            trimmed.contains("owner", ignoreCase = true) || trimmed.contains("உரிமையாளர்", ignoreCase = true) -> ROLE_OWNER
-            trimmed.contains("operator", ignoreCase = true) || trimmed.contains("இயக்குனர்", ignoreCase = true) || trimmed.contains("இயக்குபவர்", ignoreCase = true) -> ROLE_OPERATOR
-            else -> ROLE_PARTNER
+        return when (roleInput?.trim()?.lowercase()) {
+            "owner", "உரிமையாளர்" -> ROLE_OWNER
+            "partner", "பங்குதாரர்" -> ROLE_PARTNER
+            "operator", "இயக்குனர்", "இயக்குபவர்" -> ROLE_OPERATOR
+            else -> ""
         }
     }
 
     fun isOwner(roleInput: String?): Boolean {
-        val norm = normalizeRole(roleInput)
-        return norm == ROLE_OWNER || norm == ROLE_CO_OWNER
+        return normalizeRole(roleInput) == ROLE_OWNER
     }
 
     /**
@@ -39,7 +35,8 @@ object RoleUtils {
             ROLE_OWNER -> if (isTamil) "உரிமையாளர்" else "Owner"
             ROLE_CO_OWNER -> if (isTamil) "இணை உரிமையாளர்" else "Co-Owner"
             ROLE_OPERATOR -> if (isTamil) "இயக்குனர்" else "Operator"
-            else -> if (isTamil) "பங்குதாரர்" else "Partner"
+            ROLE_PARTNER -> if (isTamil) "பங்குதாரர்" else "Partner"
+            else -> if (isTamil) "சரிபார்க்கப்படாதது" else "Unverified"
         }
     }
 
@@ -50,7 +47,7 @@ object RoleUtils {
     fun formatRoleAndName(roleInput: String?, name: String, isTamil: Boolean): String {
         val roleLabel = getRoleDisplayName(roleInput, isTamil)
         val cleanName = name.trim()
-        return if (cleanName.isNotBlank()) "$roleLabel — $cleanName" else roleLabel
+        return if (normalizeRole(roleInput).isBlank()) cleanName.ifBlank { roleLabel } else if (cleanName.isNotBlank()) "$roleLabel — $cleanName" else roleLabel
     }
 
     /**
@@ -77,30 +74,9 @@ object RoleUtils {
             }
         }
 
-        // 3. Name match with owner
-        if (ownerName.isNotBlank() && creatorName.equals(ownerName.trim(), ignoreCase = true)) {
-            return Pair(ROLE_OWNER, creatorName)
-        }
+        val matchedPartner = partners.firstOrNull { it.firebaseUid.isNotBlank() && it.firebaseUid == job.createdByUid }
+        return Pair(matchedPartner?.role?.let(::normalizeRole).orEmpty(), creatorName)
 
-        // 4. Name match in workspaceMembers
-        val matchedMember = workspaceMembers.find {
-            it.displayName?.trim()?.equals(creatorName, ignoreCase = true) == true ||
-            it.phoneNumber?.filter { ch -> ch.isDigit() }?.takeLast(10) == creatorName.filter { ch -> ch.isDigit() }.takeLast(10)
-        }
-        if (matchedMember != null && matchedMember.role.isNotBlank()) {
-            return Pair(normalizeRole(matchedMember.role), creatorName)
-        }
-
-        // 5. Name match in local partners
-        val matchedPartner = partners.find { it.name.trim().equals(creatorName, ignoreCase = true) }
-        if (matchedPartner != null && matchedPartner.role.isNotBlank()) {
-            return Pair(normalizeRole(matchedPartner.role), creatorName)
-        }
-
-        // 6. Fallback: Default to Owner if name matches owner or is blank, otherwise Partner
-        val isDefaultOwner = creatorName.isBlank() || (ownerName.isNotBlank() && creatorName.equals(ownerName, ignoreCase = true))
-        val fallbackRole = if (isDefaultOwner) ROLE_OWNER else ROLE_PARTNER
-        return Pair(fallbackRole, creatorName)
     }
 
     /**
@@ -132,24 +108,9 @@ object RoleUtils {
         val entryForName = job.operatorName.trim()
         if (entryForName.isBlank()) return null
 
-        val entryForRole = when {
-            ownerName.isNotBlank() && entryForName.equals(ownerName.trim(), ignoreCase = true) -> ROLE_OWNER
-            else -> {
-                val member = workspaceMembers.find {
-                    it.displayName?.trim()?.equals(entryForName, ignoreCase = true) == true
-                }
-                if (member != null && member.role.isNotBlank()) {
-                    normalizeRole(member.role)
-                } else {
-                    val partner = partners.find { it.name.trim().equals(entryForName, ignoreCase = true) }
-                    if (partner != null && partner.role.isNotBlank()) {
-                        normalizeRole(partner.role)
-                    } else {
-                        ROLE_OPERATOR
-                    }
-                }
-            }
-        }
+        val entryForRole = workspaceMembers.firstOrNull { it.uid == job.entryForUid }?.role?.let(::normalizeRole)
+            ?: partners.firstOrNull { it.firebaseUid.isNotBlank() && it.firebaseUid == job.entryForUid }?.role?.let(::normalizeRole)
+            ?: ""
 
         val roleAndName = formatRoleAndName(entryForRole, entryForName, isTamil)
         val prefix = if (isTamil) "யாருக்காக" else "Entry For"

@@ -118,24 +118,16 @@ class CompleteRegressionPipelineTest {
         // Full authority: no 24h limit, can delete any member's collection
         assertTrue(
             "Owner can delete partner payment within 24h",
-            AuthorizationManager.canDeleteCollection(
-                collectionCreatedByUid = "partner_uid",
-                collectionCreatedAt = within24h,
-                isOwner = true,
-                currentUid = "owner_uid",
-                currentTimeMillis = now,
-                role = RoleUtils.ROLE_OWNER
+            AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceA, collectedByUid = "partner_uid", createdAt = within24h),
+                isOwner = true, uid = "owner_uid", actionTime = now, role = RoleUtils.ROLE_OWNER
             )
         )
         assertTrue(
             "Owner can delete partner payment even after 24h",
-            AuthorizationManager.canDeleteCollection(
-                collectionCreatedByUid = "partner_uid",
-                collectionCreatedAt = past24h,
-                isOwner = true,
-                currentUid = "owner_uid",
-                currentTimeMillis = now,
-                role = RoleUtils.ROLE_OWNER
+            AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceA, collectedByUid = "partner_uid", createdAt = past24h),
+                isOwner = true, uid = "owner_uid", actionTime = now, role = RoleUtils.ROLE_OWNER
             )
         )
         assertTrue("Owner can view business overview", AuthorizationManager.canViewBusinessOverview(isOwner = true))
@@ -146,37 +138,25 @@ class CompleteRegressionPipelineTest {
         // Can delete own collection within 24h
         assertTrue(
             "Partner can delete own payment within 24h",
-            AuthorizationManager.canDeleteCollection(
-                collectionCreatedByUid = "partner_uid",
-                collectionCreatedAt = within24h,
-                isOwner = false,
-                currentUid = "partner_uid",
-                currentTimeMillis = now,
-                role = RoleUtils.ROLE_PARTNER
+            AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceA, collectedByUid = "partner_uid", createdAt = within24h),
+                isOwner = false, uid = "partner_uid", actionTime = now, role = RoleUtils.ROLE_PARTNER
             )
         )
         // Cannot delete own payment after 24h
         assertFalse(
             "Partner CANNOT delete own payment after 24h",
-            AuthorizationManager.canDeleteCollection(
-                collectionCreatedByUid = "partner_uid",
-                collectionCreatedAt = past24h,
-                isOwner = false,
-                currentUid = "partner_uid",
-                currentTimeMillis = now,
-                role = RoleUtils.ROLE_PARTNER
+            AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceA, collectedByUid = "partner_uid", createdAt = past24h),
+                isOwner = false, uid = "partner_uid", actionTime = now, role = RoleUtils.ROLE_PARTNER
             )
         )
         // Cannot delete another user's collection
         assertFalse(
             "Partner CANNOT delete another user payment",
-            AuthorizationManager.canDeleteCollection(
-                collectionCreatedByUid = "other_partner_uid",
-                collectionCreatedAt = within24h,
-                isOwner = false,
-                currentUid = "partner_uid",
-                currentTimeMillis = now,
-                role = RoleUtils.ROLE_PARTNER
+            AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceA, collectedByUid = "other_partner_uid", createdAt = within24h),
+                isOwner = false, uid = "partner_uid", actionTime = now, role = RoleUtils.ROLE_PARTNER
             )
         )
         assertFalse("Partner cannot delete customer", AuthorizationManager.canDeleteCustomer(isOwner = false))
@@ -185,13 +165,9 @@ class CompleteRegressionPipelineTest {
         // Operator cannot delete collection under any circumstances
         assertFalse(
             "Operator CANNOT delete any collection",
-            AuthorizationManager.canDeleteCollection(
-                collectionCreatedByUid = "operator_uid",
-                collectionCreatedAt = within24h,
-                isOwner = false,
-                currentUid = "operator_uid",
-                currentTimeMillis = now,
-                role = RoleUtils.ROLE_OPERATOR
+            AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceA, collectedByUid = "operator_uid", createdAt = within24h),
+                isOwner = false, uid = "operator_uid", actionTime = now, role = RoleUtils.ROLE_OPERATOR
             )
         )
         assertFalse("Operator cannot delete customer", AuthorizationManager.canDeleteCustomer(isOwner = false))
@@ -255,8 +231,8 @@ class CompleteRegressionPipelineTest {
     // ─────────────────────────────────────────────────────────────────────────
     @Test
     fun testOwnerPartnerFinancialAttribution() {
-        val ownerMember = WorkspaceMember(uid = "owner_uid_1", role = "owner", displayName = "Owner One", status = "active")
-        val partnerMember = WorkspaceMember(uid = "partner_uid_2", role = "partner", displayName = "Partner Two", status = "active")
+        val ownerMember = WorkspaceMember(workspaceId = workspaceA, uid = "owner_uid_1", role = "owner", displayName = "Owner One", status = "active")
+        val partnerMember = WorkspaceMember(workspaceId = workspaceA, uid = "partner_uid_2", role = "partner", displayName = "Partner Two", status = "active")
 
         val ownerInvestment = ExpenseEntity(
             id = 11L,
@@ -333,8 +309,8 @@ class CompleteRegressionPipelineTest {
         paymentDao.insertPayment(paymentForB)
 
         // Verify payment is strictly attached to customerId 102L and never 101L
-        val paymentsForA = paymentDao.getPaymentsForCustomer(101L)
-        val paymentsForB = paymentDao.getPaymentsForCustomer(102L)
+        val paymentsForA = paymentDao.getPaymentsForCustomer(workspaceA, 101L)
+        val paymentsForB = paymentDao.getPaymentsForCustomer(workspaceA, 102L)
 
         assertEquals("Customer A must have 0 payments", 0, paymentsForA.size)
         assertEquals("Customer B must have exactly 1 payment", 1, paymentsForB.size)
@@ -378,24 +354,24 @@ class CompleteRegressionPipelineTest {
         paymentDao.insertPayment(paymentA)
         paymentDao.insertPayment(paymentB)
 
-        val payments = paymentDao.getPaymentsForCustomer(1L)
+        val payments = paymentDao.getPaymentsForCustomer(workspaceA, 1L)
         assertEquals("Must have 2 independent payment events", 2, payments.size)
         assertEquals(20000.0, payments[0].amount, 0.01)
         assertEquals(5000.0, payments[1].amount, 0.01)
 
         // Delete Payment B
-        paymentDao.deletePayment(paymentB.id)
+        paymentDao.deletePayment(workspaceA, paymentB.id)
         val updatedJob = job.copy(
             amountReceived = 5000.0,
             pendingAmount = 20000.0
         )
         jobDao.insertJob(updatedJob)
 
-        val paymentsAfterDelete = paymentDao.getPaymentsForCustomer(1L)
+        val paymentsAfterDelete = paymentDao.getPaymentsForCustomer(workspaceA, 1L)
         assertEquals(1, paymentsAfterDelete.size)
         assertEquals(1001L, paymentsAfterDelete[0].id)
 
-        val reloadedJob = jobDao.getJobById(10L)!!
+        val reloadedJob = jobDao.getJobById(workspaceA, 10L)!!
         assertEquals(20000.0, reloadedJob.pendingAmount, 0.01)
         assertEquals(5000.0, reloadedJob.amountReceived, 0.01)
     }
@@ -428,13 +404,13 @@ class CompleteRegressionPipelineTest {
         assertFalse(unsyncedBefore[0].isSynced)
 
         // 2. Simulate online sync: mark isSynced = true
-        paymentDao.markPaymentsSynced(listOf(offlinePayment.id))
+        paymentDao.markPaymentsSynced(workspaceA, listOf(offlinePayment.id))
         val unsyncedAfter = paymentDao.getUnsyncedPaymentsForWorkspace(workspaceA)
         assertEquals(0, unsyncedAfter.size)
 
         // 3. Simulate deletion after sync (tombstoned/deleted locally)
-        paymentDao.deletePayment(offlinePayment.id)
-        val paymentAfterDelete = paymentDao.getPaymentById(offlinePayment.id)
+        paymentDao.deletePayment(workspaceA, offlinePayment.id)
+        val paymentAfterDelete = paymentDao.getPaymentById(workspaceA, offlinePayment.id)
         assertNull("Payment must be removed", paymentAfterDelete)
 
         // 4. Repeated query confirms no resurrecting zombie record
@@ -526,7 +502,7 @@ class CompleteRegressionPipelineTest {
             val unsyncedPayments = device.database.paymentDao().getUnsyncedPaymentsForWorkspace(workspaceId)
             unsyncedPayments.forEach { pay ->
                 payments[pay.id] = pay.copy(isSynced = true)
-                device.database.paymentDao().markPaymentsSynced(listOf(pay.id))
+                device.database.paymentDao().markPaymentsSynced(workspaceId, listOf(pay.id))
             }
 
             // Push unsynced withdrawals
@@ -616,8 +592,8 @@ class CompleteRegressionPipelineTest {
 
         // Investment attribution on both devices
         val members = listOf(
-            WorkspaceMember(uid = "owner_uid", role = "owner", displayName = "Owner"),
-            WorkspaceMember(uid = "partner_uid", role = "partner", displayName = "Partner")
+            WorkspaceMember(workspaceId = workspaceA, uid = "owner_uid", role = "owner", status = "ACTIVE", displayName = "Owner"),
+            WorkspaceMember(workspaceId = workspaceA, uid = "partner_uid", role = "partner", status = "ACTIVE", displayName = "Partner")
         )
         val ownerStatuses = FinancialCalculationEngine.calculatePartnerShareAndInvestment(
             jobs = emptyList(), expenses = ownerExpenses, withdrawals = emptyList(), partners = emptyList(), workspaceMembers = members, businessName = "Farm"

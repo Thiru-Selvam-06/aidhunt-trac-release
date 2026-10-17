@@ -233,10 +233,16 @@ fun ExpensesTab(
     onAddExpense: (ExpenseEntity) -> Unit,
     onUpdateExpense: (ExpenseEntity) -> Unit,
     onDeleteExpense: (ExpenseEntity) -> Unit,
-    canDeleteExpense: (ExpenseEntity) -> Boolean = { true }
+    isOwner: Boolean = false,
+    actorName: String = "",
+    workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
+    currentUid: String = ""
 ) {
     var currentView by remember { mutableStateOf(ExpenseScreenView.REPORT_LIST) }
     var activeExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
+    val effectiveActorName = actorName.ifBlank { settings.activePartnerName.ifBlank { settings.ownerName } }
+    val effectiveUid = if (currentUid.isNotBlank()) currentUid else (com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "")
+
     // Intercept back button when in subview
     BackHandler(enabled = currentView != ExpenseScreenView.REPORT_LIST) {
         if (currentView == ExpenseScreenView.EDIT_EXPENSE && activeExpense != null) {
@@ -250,12 +256,12 @@ fun ExpensesTab(
         when (viewState) {
             ExpenseScreenView.REPORT_LIST -> {
                 ExpenseReportListScreen(
+                    workspaceMembers = workspaceMembers,
                     settings = settings,
                     expenses = expenses,
                     jobs = jobs,
                     tractors = tractors,
                     partners = partners,
-                    canDeleteExpense = canDeleteExpense,
                     onOpenAddExpense = {
                         activeExpense = null
                         currentView = ExpenseScreenView.ADD_EXPENSE
@@ -269,17 +275,31 @@ fun ExpensesTab(
                         currentView = ExpenseScreenView.EDIT_EXPENSE
                     },
                     onQuickDelete = { expense ->
-                        onDeleteExpense(expense)
-                    }
+                        if (!com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canDeleteExpense(
+                                expense = expense,
+                                isOwner = isOwner,
+                                currentActorName = effectiveActorName,
+                                currentUid = effectiveUid, role = com.example.data.auth.RoleUtils.normalizeRole(workspaceMembers.firstOrNull { it.uid == effectiveUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true) }?.role)
+                            )) {
+                            onDeleteExpense(expense)
+                        }
+                    },
+                    isOwner = isOwner,
+                    actorName = effectiveActorName,
+                    currentUid = effectiveUid
                 )
             }
             ExpenseScreenView.ADD_EXPENSE -> {
                 AddOrEditExpenseScreen(
+                    workspaceMembers = workspaceMembers,
                     isEditMode = false,
                     initialExpense = null,
                     tractors = tractors,
                     partners = partners,
                     settings = settings,
+                    isOwner = isOwner,
+                    actorName = effectiveActorName,
+                    currentUid = effectiveUid,
                     onBack = {
                         currentView = ExpenseScreenView.REPORT_LIST
                         activeExpense = null
@@ -293,11 +313,15 @@ fun ExpensesTab(
             }
             ExpenseScreenView.EDIT_EXPENSE -> {
                 AddOrEditExpenseScreen(
+                    workspaceMembers = workspaceMembers,
                     isEditMode = true,
                     initialExpense = activeExpense,
                     tractors = tractors,
                     partners = partners,
                     settings = settings,
+                    isOwner = isOwner,
+                    actorName = effectiveActorName,
+                    currentUid = effectiveUid,
                     onBack = {
                         currentView = if (activeExpense != null) ExpenseScreenView.EXPENSE_DETAILS else ExpenseScreenView.REPORT_LIST
                     },
@@ -310,11 +334,22 @@ fun ExpensesTab(
             }
             ExpenseScreenView.EXPENSE_DETAILS -> {
                 activeExpense?.let { expense ->
+                    val canEdit = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canEditExpense(
+                        expense = expense,
+                        isOwner = isOwner,
+                        currentActorName = effectiveActorName,
+                        currentUid = effectiveUid, role = com.example.data.auth.RoleUtils.normalizeRole(workspaceMembers.firstOrNull { it.uid == effectiveUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true) }?.role)
+                    )
+                    val canDelete = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canDeleteExpense(
+                        expense = expense,
+                        isOwner = isOwner,
+                        currentActorName = effectiveActorName,
+                        currentUid = effectiveUid, role = com.example.data.auth.RoleUtils.normalizeRole(workspaceMembers.firstOrNull { it.uid == effectiveUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true) }?.role)
+                    )
                     ExpenseDetailsScreen(
                         expense = expense,
                         jobs = jobs,
                         settings = settings,
-                        canDelete = canDeleteExpense(expense),
                         onBack = {
                             currentView = ExpenseScreenView.REPORT_LIST
                             activeExpense = null
@@ -323,10 +358,14 @@ fun ExpensesTab(
                             currentView = ExpenseScreenView.EDIT_EXPENSE
                         },
                         onDelete = {
-                            onDeleteExpense(expense)
-                            currentView = ExpenseScreenView.REPORT_LIST
-                            activeExpense = null
-                        }
+                            if (canDelete) {
+                                onDeleteExpense(expense)
+                                currentView = ExpenseScreenView.REPORT_LIST
+                                activeExpense = null
+                            }
+                        },
+                        canEdit = canEdit,
+                        canDelete = canDelete
                     )
                 } ?: run {
                     currentView = ExpenseScreenView.REPORT_LIST
@@ -345,11 +384,14 @@ fun ExpenseReportListScreen(
     jobs: List<JobEntryEntity> = emptyList(),
     tractors: List<TractorEntity>,
     partners: List<PartnerEntity>,
-    canDeleteExpense: (ExpenseEntity) -> Boolean = { true },
     onOpenAddExpense: () -> Unit,
     onOpenExpenseDetails: (ExpenseEntity) -> Unit,
     onQuickEdit: (ExpenseEntity) -> Unit,
-    onQuickDelete: (ExpenseEntity) -> Unit
+    onQuickDelete: (ExpenseEntity) -> Unit,
+    isOwner: Boolean = false,
+    actorName: String = "",
+    workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
+    currentUid: String = ""
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -838,19 +880,33 @@ fun ExpenseReportListScreen(
             }
         } else {
             items(filteredExpenses, key = { it.id }) { expense ->
+                val canEdit = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canEditExpense(
+                    expense = expense,
+                    isOwner = isOwner,
+                    currentActorName = actorName,
+                    currentUid = currentUid, role = com.example.data.auth.RoleUtils.normalizeRole(workspaceMembers.firstOrNull { it.uid == currentUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true) }?.role)
+                )
+                val canDelete = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canDeleteExpense(
+                    expense = expense,
+                    isOwner = isOwner,
+                    currentActorName = actorName,
+                    currentUid = currentUid, role = com.example.data.auth.RoleUtils.normalizeRole(workspaceMembers.firstOrNull { it.uid == currentUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true) }?.role)
+                )
                 ExpenseListItemRow(
                     expense = expense,
                     jobs = jobs,
                     currency = settings.currency,
                     isTamil = isTamil,
-                    canDelete = canDeleteExpense(expense),
                     onClick = { onOpenExpenseDetails(expense) },
                     onEdit = { onQuickEdit(expense) },
                     onDelete = { onQuickDelete(expense) },
                     onShare = {
                         val shareText = buildExpenseWhatsAppMessage(expense, settings.businessName, isTamil)
                         sendWhatsAppMessage(context, null, shareText)
-                    }
+                    },
+                    canEdit = canEdit,
+                    canDelete = canDelete,
+                    isArchived = com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers)
                 )
             }
         }
@@ -1066,11 +1122,13 @@ fun ExpenseListItemRow(
     jobs: List<JobEntryEntity> = emptyList(),
     currency: String,
     isTamil: Boolean = false,
-    canDelete: Boolean = true,
     onClick: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    canEdit: Boolean = true,
+    canDelete: Boolean = true,
+    isArchived: Boolean = false
 ) {
     var isMenuExpanded by remember { mutableStateOf(false) }
     val visualConfig = getExpenseVisualConfig(expense.expenseType)
@@ -1084,7 +1142,7 @@ fun ExpenseListItemRow(
 
     Card(
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = if (isArchived) Color(0xFFE9E9E9) else Color.White),
         border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFFE5E7EB))),
         modifier = Modifier
             .fillMaxWidth()
@@ -1200,14 +1258,16 @@ fun ExpenseListItemRow(
                                     onClick()
                                 }
                             )
-                            DropdownMenuItem(
-                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF2563EB)) },
-                                text = { Text(if (isTamil) "செலவைத் திருத்து" else "Edit Expense") },
-                                onClick = {
-                                    isMenuExpanded = false
-                                    onEdit()
-                                }
-                            )
+                            if (canEdit) {
+                                DropdownMenuItem(
+                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF2563EB)) },
+                                    text = { Text(if (isTamil) "செலவைத் திருத்து" else "Edit Expense") },
+                                    onClick = {
+                                        isMenuExpanded = false
+                                        onEdit()
+                                    }
+                                )
+                            }
                             DropdownMenuItem(
                                 leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF16A34A)) },
                                 text = { Text(if (isTamil) "வாட்ஸ்அப்பில் பகிர்க" else "Share WhatsApp") },
@@ -1249,50 +1309,30 @@ fun AddOrEditExpenseScreen(
     tractors: List<TractorEntity>,
     partners: List<PartnerEntity>,
     settings: AppSettingsEntity,
+    isOwner: Boolean = false,
+    actorName: String = "",
+    workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
+    currentUid: String = "",
     onBack: () -> Unit,
     onSaveExpense: (ExpenseEntity) -> Unit
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
 
-    val operatorOptions = remember(partners, settings.activePartnerName, settings.ownerName, isTamil) {
-        val list = mutableListOf<String>()
-        val seenNames = mutableSetOf<String>()
+    val eligibleMembers = workspaceMembers.filter { it.workspaceId == settings.workspaceId && it.uid.isNotBlank() && it.status.equals("active", true) && (isOwner || it.uid == currentUid) }
+    val targetLabels = eligibleMembers.associateBy { "${it.displayName.orEmpty().ifBlank { "Member" }} (${it.role} · ${it.phoneNumber.orEmpty().takeLast(4).ifBlank { it.uid.takeLast(4) }})" }
+    val operatorOptions = targetLabels.keys.toList()
+    var selectedTargetUid by remember(initialExpense, currentUid) { mutableStateOf(initialExpense?.expenseForUid?.takeIf { it.isNotBlank() } ?: currentUid) }
 
-        // 1. Current user / active partner
-        val currentActor = settings.activePartnerName.trim()
-        if (currentActor.isNotBlank()) {
-            val role = if (isTamil) "பங்குதாரர்" else "Partner"
-            list.add("$currentActor ($role)")
-            seenNames.add(currentActor.lowercase())
-        }
-
-        // 2. Business owner
-        val owner = settings.ownerName.trim()
-        if (owner.isNotBlank() && !seenNames.contains(owner.lowercase())) {
-            val role = if (isTamil) "உரிமையாளர்" else "Business Owner"
-            list.add("$owner ($role)")
-            seenNames.add(owner.lowercase())
-        }
-
-        // 3. Registered partners
-        partners.forEach { p ->
-            val pName = p.name.trim()
-            if (pName.isNotBlank() && !seenNames.contains(pName.lowercase())) {
-                val pRole = p.role.ifBlank { if (isTamil) "பங்குதாரர்" else "Partner" }
-                list.add("$pName ($pRole)")
-                seenNames.add(pName.lowercase())
-            }
-        }
-        list
-    }
-
-    // Operator Default: If creating a new expense, default to whoever is logged in (settings.activePartnerName)
-    val defaultOperatorName = remember(initialExpense, settings.activePartnerName, settings.ownerName, operatorOptions) {
+    // Operator Default: If creating a new expense, default to whoever is logged in
+    val defaultOperatorName = remember(initialExpense, settings.activePartnerName, settings.ownerName, operatorOptions, isOwner, actorName) {
         if (initialExpense != null) {
             initialExpense.operatorName
+        } else if (!isOwner) {
+            val currentActor = actorName.ifBlank { settings.activePartnerName.trim() }
+            operatorOptions.firstOrNull() ?: currentActor
         } else {
-            val currentActor = settings.activePartnerName.trim().ifBlank { settings.ownerName.trim() }
+            val currentActor = actorName.ifBlank { settings.ownerName.trim().ifBlank { settings.activePartnerName.trim() } }
             val matchedOption = operatorOptions.find { it.startsWith(currentActor, ignoreCase = true) }
             matchedOption ?: operatorOptions.firstOrNull() ?: currentActor
         }
@@ -1305,8 +1345,10 @@ fun AddOrEditExpenseScreen(
     }
     var amountText by remember { mutableStateOf(if (initialExpense != null) initialExpense.amount.toInt().toString() else "") }
     var descriptionText by remember { mutableStateOf(initialExpense?.description ?: "") }
+    var selectedWhoPaid by remember(initialExpense) {
+        mutableStateOf(initialExpense?.paidBy?.ifBlank { "I Paid" } ?: "I Paid")
+    }
     var paymentMode by remember { mutableStateOf("Cash") }
-    var selectedWhoPaid by remember { mutableStateOf(initialExpense?.paidBy ?: "I Paid") }
     var isTypeDropdownOpen by remember { mutableStateOf(false) }
     var isOperatorDropdownOpen by remember { mutableStateOf(false) }
     var isTractorDropdownOpen by remember { mutableStateOf(false) }
@@ -1319,26 +1361,39 @@ fun AddOrEditExpenseScreen(
         val amt = amountText.toDoubleOrNull() ?: 0.0
         if (amt > 0) {
             val matchedTractor = tractors.find { it.label == selectedTractor }
-            val cleanOperator = selectedOperator.substringBefore(" (").trim()
-            val currentActor = settings.activePartnerName.ifBlank { settings.ownerName.ifBlank { "Partner" } }
+            val currentActor = if (isOwner) {
+                settings.ownerName.ifBlank { actorName.ifBlank { settings.activePartnerName.ifBlank { "Owner" } } }
+            } else {
+                actorName.ifBlank { settings.activePartnerName.ifBlank { "Partner" } }
+            }
+            val cleanOperator = if (!isOwner) currentActor else selectedOperator.substringBefore(" (").trim()
+            val finalAddedByPartner = if (!isOwner) currentActor else (initialExpense?.addedByPartner?.ifBlank { null } ?: currentActor)
+            val finalPaidByPartner = if (selectedWhoPaid == "I Paid") {
+                if (!isOwner) currentActor else (cleanOperator.ifBlank { currentActor })
+            } else ""
+            val finalPaidByUid = if (selectedWhoPaid == "I Paid") {
+                if (!isOwner) currentUid else (initialExpense?.paidByUid?.takeIf { it.isNotBlank() } ?: currentUid)
+            } else ""
+
             val expense = ExpenseEntity(
                 id = initialExpense?.id ?: 0,
+                workspaceId = initialExpense?.workspaceId ?: "",
                 expenseType = selectedType,
                 amount = amt,
                 tractorId = matchedTractor?.id ?: 0,
                 tractorLabel = selectedTractor,
                 operatorName = cleanOperator,
                 description = descriptionText,
-                addedByPartner = initialExpense?.addedByPartner?.ifBlank { null } ?: currentActor,
+                addedByPartner = finalAddedByPartner,
                 dateTimestamp = selectedTimestamp,
                 createdAt = initialExpense?.createdAt ?: System.currentTimeMillis(),
                 paidBy = selectedWhoPaid,
-                paidByPartner = if (selectedWhoPaid == "I Paid") {
-                    initialExpense?.paidByPartner?.takeIf { it.isNotBlank() } ?: currentActor
-                } else "",
-                paidByUid = if (selectedWhoPaid == "I Paid") {
-                    initialExpense?.paidByUid ?: ""
-                } else ""
+                paidByPartner = finalPaidByPartner,
+                paidByUid = if (selectedWhoPaid == "I Paid") selectedTargetUid else "",
+                expenseForUid = initialExpense?.expenseForUid ?: if (isOwner) selectedTargetUid else currentUid,
+                financialAttributionUid = initialExpense?.financialAttributionUid ?: if (isOwner) selectedTargetUid else currentUid,
+                createdByUid = initialExpense?.createdByUid ?: currentUid,
+                createdByRole = initialExpense?.createdByRole ?: (if (isOwner) "owner" else "partner")
             )
             onSaveExpense(expense)
         }
@@ -1464,21 +1519,24 @@ fun AddOrEditExpenseScreen(
                             icon = Icons.Default.Person,
                             label = if (isTamil) "இயக்குநர்*" else "Operator*",
                             value = selectedOperator,
-                            isDropdown = true,
-                            onClick = { isOperatorDropdownOpen = true }
+                            isDropdown = isOwner && operatorOptions.size > 1,
+                            onClick = { if (isOwner && operatorOptions.size > 1) isOperatorDropdownOpen = true }
                         )
-                        DropdownMenu(
-                            expanded = isOperatorDropdownOpen,
-                            onDismissRequest = { isOperatorDropdownOpen = false }
-                        ) {
-                            operatorOptions.forEach { operatorLabel ->
-                                DropdownMenuItem(
-                                    text = { Text(operatorLabel) },
-                                    onClick = {
-                                        selectedOperator = operatorLabel
-                                        isOperatorDropdownOpen = false
-                                    }
-                                )
+                        if (isOwner && operatorOptions.size > 1) {
+                            DropdownMenu(
+                                expanded = isOperatorDropdownOpen,
+                                onDismissRequest = { isOperatorDropdownOpen = false }
+                            ) {
+                                operatorOptions.forEach { operatorLabel ->
+                                    DropdownMenuItem(
+                                        text = { Text(operatorLabel) },
+                                        onClick = {
+                                            selectedOperator = operatorLabel
+                                            selectedTargetUid = targetLabels[operatorLabel]?.uid.orEmpty()
+                                            isOperatorDropdownOpen = false
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1522,6 +1580,93 @@ fun AddOrEditExpenseScreen(
                     testTag = "input_expense_amount"
                 )
             }
+            // Row 3.5: Who Paid? (I Paid / Business Paid)
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = if (isTamil) "யார் செலுத்தியது?" else "Who paid?",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF64748B)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        val isIPaid = selectedWhoPaid == "I Paid"
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                width = if (isIPaid) 1.5.dp else 1.dp,
+                                color = if (isIPaid) Color(0xFF0F9D58) else Color(0xFFCBD5E1)
+                            ),
+                            color = if (isIPaid) Color(0xFFF0FDF4) else Color.White,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(52.dp)
+                                .clickable { selectedWhoPaid = "I Paid" }
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Person,
+                                    contentDescription = null,
+                                    tint = if (isIPaid) Color(0xFF0F9D58) else Color(0xFF64748B),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (isTamil) "நான் செலுத்தினேன்" else "I Paid",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                    color = if (isIPaid) Color(0xFF0F9D58) else Color(0xFF334155)
+                                )
+                            }
+                        }
+
+                        val isBusinessPaid = selectedWhoPaid == "Business Paid"
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                width = if (isBusinessPaid) 1.5.dp else 1.dp,
+                                color = if (isBusinessPaid) Color(0xFF0F9D58) else Color(0xFFCBD5E1)
+                            ),
+                            color = if (isBusinessPaid) Color(0xFFF0FDF4) else Color.White,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(52.dp)
+                                .clickable { selectedWhoPaid = "Business Paid" }
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Storefront,
+                                    contentDescription = null,
+                                    tint = if (isBusinessPaid) Color(0xFF0F9D58) else Color(0xFF64748B),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                    color = if (isBusinessPaid) Color(0xFF0F9D58) else Color(0xFF334155)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
             // Row 4: Description / Purpose (Optional)
             item {
                 FormInputCard(
@@ -1557,99 +1702,6 @@ fun AddOrEditExpenseScreen(
                                     isPaymentModeDropdownOpen = false
                                 }
                             )
-                        }
-                    }
-                }
-            }
-            // Row 6: Who Paid ("I Paid" / "Business Paid")
-            item {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = if (isTamil) "யார் செலுத்தியது?*" else "Who Paid?*",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF475569)
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        val isIPaid = selectedWhoPaid == "I Paid"
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                width = if (isIPaid) 1.5.dp else 1.dp,
-                                color = if (isIPaid) Color(0xFF15803D) else Color(0xFFCBD5E1)
-                            ),
-                            color = if (isIPaid) Color(0xFFF0FDF4) else Color.White,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(50.dp)
-                                .clickable { selectedWhoPaid = "I Paid" }
-                                .testTag("btn_expense_who_paid_i_paid")
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Person,
-                                    contentDescription = null,
-                                    tint = if (isIPaid) Color(0xFF15803D) else Color(0xFF64748B),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = if (isTamil) "நான் செலுத்தினேன்" else "I Paid",
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 13.sp,
-                                    color = if (isIPaid) Color(0xFF15803D) else Color(0xFF334155)
-                                )
-                            }
-                        }
-
-                        val isBusinessPaid = selectedWhoPaid == "Business Paid"
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                width = if (isBusinessPaid) 1.5.dp else 1.dp,
-                                color = if (isBusinessPaid) Color(0xFF15803D) else Color(0xFFCBD5E1)
-                            ),
-                            color = if (isBusinessPaid) Color(0xFFF0FDF4) else Color.White,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(50.dp)
-                                .clickable { selectedWhoPaid = "Business Paid" }
-                                .testTag("btn_expense_who_paid_business_paid")
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Storefront,
-                                    contentDescription = null,
-                                    tint = if (isBusinessPaid) Color(0xFF15803D) else Color(0xFF64748B),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid",
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 13.sp,
-                                    color = if (isBusinessPaid) Color(0xFF15803D) else Color(0xFF334155)
-                                )
-                            }
                         }
                     }
                 }
@@ -1701,10 +1753,11 @@ fun ExpenseDetailsScreen(
     expense: ExpenseEntity,
     jobs: List<JobEntryEntity> = emptyList(),
     settings: AppSettingsEntity,
-    canDelete: Boolean = true,
     onBack: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    canEdit: Boolean = true,
+    canDelete: Boolean = true
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -1764,15 +1817,17 @@ fun ExpenseDetailsScreen(
                             tint = Color.White
                         )
                     }
-                    IconButton(
-                        onClick = onEdit,
-                        modifier = Modifier.testTag("btn_edit_expense_top")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = if (isTamil) "செலவைத் திருத்து" else "Edit Expense",
-                            tint = Color.White
-                        )
+                    if (canEdit) {
+                        IconButton(
+                            onClick = onEdit,
+                            modifier = Modifier.testTag("btn_edit_expense_top")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = if (isTamil) "செலவைத் திருத்து" else "Edit Expense",
+                                tint = Color.White
+                            )
+                        }
                     }
                 }
             }
@@ -1934,30 +1989,11 @@ fun ExpenseDetailsScreen(
                             value = detailsDateFormat.format(Date(expense.createdAt))
                         )
                     }
-                    Divider(color = Color(0xFFF3F4F6), thickness = 1.dp)
-                    // Row 4: Who Paid
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        val whoPaidLabel = if (expense.paidBy == "Business Paid") {
-                            if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid"
-                        } else {
-                            val payer = expense.paidByPartner.ifBlank { expense.operatorName.ifBlank { expense.addedByPartner } }
-                            if (payer.isNotBlank()) "${if (isTamil) "நான் செலுத்தினேன்" else "I Paid"} ($payer)" else (if (isTamil) "நான் செலுத்தினேன்" else "I Paid")
-                        }
-                        DetailInfoItem(
-                            modifier = Modifier.fillMaxWidth(),
-                            icon = if (expense.paidBy == "Business Paid") Icons.Default.Storefront else Icons.Default.Person,
-                            label = if (isTamil) "யார் செலுத்தியது" else "Who Paid",
-                            value = whoPaidLabel
-                        )
-                    }
                 }
             }
             Spacer(modifier = Modifier.weight(1f))
+            // Delete Expense Button
             if (canDelete) {
-                // Delete Expense Button
                 OutlinedButton(
                     onClick = { showDeleteConfirmDialog = true },
                     shape = RoundedCornerShape(10.dp),

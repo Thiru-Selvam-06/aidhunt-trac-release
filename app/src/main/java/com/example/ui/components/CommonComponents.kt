@@ -162,10 +162,11 @@ fun isDateInPreset(
     timestamp: Long,
     preset: DatePreset,
     customStartMillis: Long = 0L,
-    customEndMillis: Long = Long.MAX_VALUE
+    customEndMillis: Long = Long.MAX_VALUE,
+    timeZone: java.util.TimeZone = java.util.TimeZone.getDefault()
 ): Boolean {
     if (preset == DatePreset.ALL_TIME) return true
-    val cal = java.util.Calendar.getInstance()
+    val cal = java.util.Calendar.getInstance(timeZone)
     return when (preset) {
         DatePreset.TODAY -> {
             cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
@@ -795,10 +796,13 @@ fun AppTopHeader(
     isSyncing: Boolean,
     isOnline: Boolean = true,
     totalUnsyncedCount: Int = 0,
+    rejectedOperationCount: Int = 0,
+    blockedOperationCount: Int = 0,
     onSyncClick: () -> Unit = {},
     onPartnerSelected: (PartnerEntity) -> Unit = {},
     rightActionIcon: ImageVector? = null,
     onRightActionClick: (() -> Unit)? = null,
+    cloudConnectionState: com.example.data.firebase.CloudConnectionState = com.example.data.firebase.CloudConnectionState.IDLE,
     isDarkGreenStyle: Boolean = true
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -847,6 +851,14 @@ fun AppTopHeader(
                 .fillMaxWidth()
                 .statusBarsPadding()
         ) {
+            if (cloudConnectionState == com.example.data.firebase.CloudConnectionState.ERROR) {
+                Text(
+                    text = if (isTamil) "கிளவுட் அணுகல் தோல்வி. அனுமதியைச் சரிபார்க்கவும்; மீண்டும் முயல மேல் நிலையைத் தட்டவும்." else "Cloud access failed. Check workspace permissions; tap status to retry.",
+                    color = headerTextColor,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -936,6 +948,7 @@ fun AppTopHeader(
                                 // Status Icon with spin animation when syncing
                                 Icon(
                                     imageVector = when {
+                                        cloudConnectionState == com.example.data.firebase.CloudConnectionState.ERROR -> Icons.Default.CloudOff
                                         isSyncing -> Icons.Default.Sync
                                         !isOnline -> Icons.Default.CloudOff
                                         totalUnsyncedCount > 0 -> Icons.Default.CloudUpload
@@ -955,12 +968,7 @@ fun AppTopHeader(
                                 )
 
                                 Text(
-                                    text = when {
-                                        isSyncing -> if (isTamil) "ஒத்திசை..." else "Syncing..."
-                                        !isOnline -> if (isTamil) "ஆஃப்லைன் ($totalUnsyncedCount)" else "Offline ($totalUnsyncedCount)"
-                                        totalUnsyncedCount > 0 -> if (isTamil) "$totalUnsyncedCount நிலுவை" else "$totalUnsyncedCount Pending"
-                                        else -> if (responsive.isSmallPhone) (if (isTamil) "சரி" else "Synced") else (if (isTamil) "ஒத்திசைந்தது" else "Synced")
-                                    },
+                                    text = com.example.data.firebase.cloudSyncLabel(cloudConnectionState, isOnline, isSyncing, totalUnsyncedCount, isTamil, rejectedOperationCount, blockedOperationCount),
                                     fontSize = if (responsive.isSmallPhone) 10.sp else 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (isDarkGreenStyle) Color.White else when {

@@ -3,9 +3,9 @@ package com.example.data.entity
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "partners")
+@Entity(tableName = "partners", primaryKeys = ["workspaceId", "id"])
 data class PartnerEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val workspaceId: String = "",
     val name: String,
     val phone: String,
@@ -13,12 +13,13 @@ data class PartnerEntity(
     val avatarColorHex: String = "#1E4D2B",
     val photoUri: String = "",
     val isCurrentActive: Boolean = false,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val firebaseUid: String = ""
 )
 
-@Entity(tableName = "tractors")
+@Entity(tableName = "tractors", primaryKeys = ["workspaceId", "id"])
 data class TractorEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val workspaceId: String = "",
     val label: String, // e.g. "Mahindra 575 DI"
     val chassisNo: String, // e.g. "MH-575-TN45-9871"
@@ -30,9 +31,9 @@ data class TractorEntity(
     val createdByRole: String = ""
 )
 
-@Entity(tableName = "customers")
+@Entity(tableName = "customers", primaryKeys = ["workspaceId", "id"])
 data class CustomerEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val workspaceId: String = "",
     val name: String,
     val phone: String,
@@ -42,12 +43,13 @@ data class CustomerEntity(
     val balanceDue: Double = 0.0,
     val isSynced: Boolean = true,
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val createdByUid: String = ""
 )
 
-@Entity(tableName = "job_entries")
+@Entity(tableName = "job_entries", primaryKeys = ["workspaceId", "id"])
 data class JobEntryEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val workspaceId: String = "",
     val customerId: Long = 0,
     val customerName: String,
@@ -73,12 +75,15 @@ data class JobEntryEntity(
     val editedByUid: String = "",
     val editedByName: String = "",
     val editedByRole: String = "",
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val isHistorical: Boolean = false,
+    val entryForUid: String = "",
+    val financialAttributionUid: String = ""
 )
 
-@Entity(tableName = "payments")
+@Entity(tableName = "payments", primaryKeys = ["workspaceId", "id"])
 data class PaymentEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val workspaceId: String = "",
     val jobEntryId: Long = 0,
     val customerId: Long = 0,
@@ -92,13 +97,21 @@ data class PaymentEntity(
     val collectedByName: String = "",
     val collectedByRole: String = "",
     val collectedAt: Long = System.currentTimeMillis(),
+    val isSynced: Boolean = true,
+    val status: String = "ACTIVE",
+    val reversedAt: Long = 0L,
+    val reversedByUid: String = "",
+    val allocationsJson: String = "[]",
     val createdAt: Long = System.currentTimeMillis(),
-    val isSynced: Boolean = true
+    // Business collector is distinct from collectedBy*, the legacy authenticated recorder/audit fields.
+    @androidx.room.ColumnInfo(defaultValue = "''") val collectorUid: String = "",
+    @androidx.room.ColumnInfo(defaultValue = "''") val collectorName: String = "",
+    @androidx.room.ColumnInfo(defaultValue = "''") val collectorRole: String = ""
 )
 
-@Entity(tableName = "expenses")
+@Entity(tableName = "expenses", primaryKeys = ["workspaceId", "id"])
 data class ExpenseEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val workspaceId: String = "",
     val expenseType: String, // "Diesel", "Petrol", "Repair", "Puncture", "Oil Change", "Driver Bata", "Spare Parts", "Other"
     val amount: Double,
@@ -115,12 +128,14 @@ data class ExpenseEntity(
     val paidByPartner: String = "",
     val paidByUid: String = "",
     val createdByUid: String = "",
-    val createdByRole: String = ""
+    val createdByRole: String = "",
+    val expenseForUid: String = "",
+    val financialAttributionUid: String = ""
 )
 
-@Entity(tableName = "withdrawals")
+@Entity(tableName = "withdrawals", primaryKeys = ["workspaceId", "id"])
 data class WithdrawalEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val workspaceId: String = "",
     val partnerId: Long = 0,
     val partnerName: String,
@@ -156,18 +171,18 @@ data class AppSettingsEntity(
     val lastSyncTime: Long = System.currentTimeMillis()
 )
 
-@Entity(tableName = "checklist_items")
+@Entity(tableName = "checklist_items", primaryKeys = ["workspaceId", "id"])
 data class ChecklistItemEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val workspaceId: String = "",
     val text: String,
     val isChecked: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )
 
-@Entity(tableName = "work_type_extensions")
+@Entity(tableName = "work_type_extensions", primaryKeys = ["workspaceId", "id"])
 data class WorkTypeExtensionEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val workspaceId: String = "",
     val name: String = "",
     val createdAt: Long = System.currentTimeMillis(),

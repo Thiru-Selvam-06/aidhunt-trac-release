@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.content.Context
 import android.util.Log
+import androidx.room.withTransaction
 import com.example.data.database.AppDatabase
 import com.example.data.entity.AppSettingsEntity
 import com.example.data.entity.CustomerEntity
@@ -20,24 +21,30 @@ import com.example.data.firebase.Workspace
 import com.example.data.firebase.WorkspaceInvitation
 import com.example.data.firebase.WorkspaceMember
 import com.example.data.firebase.appSettingsFromFirestoreMap
+import com.example.data.firebase.toFirestoreMap
+import com.example.data.entity.PendingOperationEntity
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.example.data.sync.PendingDeleteManager
 import com.example.data.util.IdGenerator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 sealed class WorkspaceInitState {
     object Uninitialized : WorkspaceInitState()
     object Loading : WorkspaceInitState()
     data class Ready(val workspaceId: String) : WorkspaceInitState()
+    data class CachedReady(val workspaceId: String) : WorkspaceInitState()
+    data class SelectionRequired(val workspaces: List<Workspace>) : WorkspaceInitState()
     data class Error(val exception: Throwable) : WorkspaceInitState()
 }
 
@@ -48,6 +55,58 @@ sealed interface SettingsSyncState {
     data class CreatedInCloud(val settings: AppSettingsEntity) : SettingsSyncState
     data class Error(val message: String) : SettingsSyncState
 }
+
+/**
+ * Normalizes the existing Entry-For storage for non-Owners. JobEntryEntity
+ * currently stores Entry-For as operatorName; UID identity remains createdByUid.
+ * The repository calls this only after validating the active workspace member.
+ */
+internal fun enforceSelfOnlyEntryIdentity(
+    job: JobEntryEntity,
+    actorUid: String,
+    actorRole: String,
+    actorDisplayName: String
+): JobEntryEntity {
+    require(actorUid.isNotBlank()) { "Authenticated UID is required for a self-only entry" }
+    val normalizedRole = com.example.data.auth.RoleUtils.normalizeRole(actorRole)
+    require(
+        normalizedRole == com.example.data.auth.RoleUtils.ROLE_PARTNER ||
+            normalizedRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR
+    ) { "Only Partner or Operator members can use self-only entry identity" }
+    return job.copy(
+        createdByUid = actorUid,
+        createdByRole = normalizedRole,
+        operatorName = actorDisplayName.trim(),
+        addedByPartner = actorDisplayName.trim(),
+        entryForUid = actorUid,
+        financialAttributionUid = actorUid
+    )
+}
+
+internal fun effectiveEntryStartTimeForEdit(
+    existingJob: JobEntryEntity?,
+    editedJob: JobEntryEntity
+): Long {
+    return if (existingJob != null && existingJob.createdAt <= 0L) {
+        existingJob.startTimeMillis
+    } else {
+        editedJob.startTimeMillis
+    }
+}
+
+/** Seed only a missing settings row, using the verified workspace's business identity. */
+internal fun initialWorkspaceSettings(
+    workspaceId: String,
+    workspaceName: String,
+    isOwner: Boolean,
+    actorName: String,
+    actorPhone: String
+): AppSettingsEntity = AppSettingsEntity(
+    workspaceId = workspaceId,
+    businessName = workspaceName,
+    ownerName = if (isOwner) actorName else "",
+    businessPhone = if (isOwner) actorPhone else ""
+)
 
 class WorkspaceRepository(
     private val context: Context,
@@ -68,8 +127,6 @@ class WorkspaceRepository(
     private val checklistItemDao = database.checklistItemDao()
     private val workTypeExtensionDao = database.workTypeExtensionDao()
 
-    private val refreshMembersMutex = kotlinx.coroutines.sync.Mutex()
-
     val currentWorkspace: StateFlow<Workspace?> = firestoreRepository.currentWorkspace
 
     private val _isInitialized = MutableStateFlow(false)
@@ -86,8 +143,20 @@ class WorkspaceRepository(
     private val _visibleWorkspaceIds = MutableStateFlow<Set<String>>(emptySet())
     val visibleWorkspaceIds: StateFlow<Set<String>> = _visibleWorkspaceIds.asStateFlow()
 
+    private val _verifiedWorkspaceContext = MutableStateFlow<Pair<String, String>?>(null)
+    val verifiedWorkspaceContext: StateFlow<Pair<String, String>?> = _verifiedWorkspaceContext.asStateFlow()
+
     private val _activeWorkspaceId = MutableStateFlow<String?>(null)
     val activeWorkspaceId: StateFlow<String?> = _activeWorkspaceId.asStateFlow()
+
+    val cloudConnectionState = combine(firestoreRepository.cloudListenerStates, activeWorkspaceId) { states, ws ->
+        states[ws] ?: com.example.data.firebase.CloudConnectionState.IDLE
+    }.stateIn(scope, SharingStarted.Eagerly, com.example.data.firebase.CloudConnectionState.IDLE)
+
+    fun retryCloudListeners() {
+        firestoreRepository.stopRealtimeListeners()
+        attachRealtimeListenersForVisibleWorkspaces()
+    }
 
     private val _settingsSyncState = MutableStateFlow<SettingsSyncState>(SettingsSyncState.Uninitialized)
     val settingsSyncState: StateFlow<SettingsSyncState> = _settingsSyncState.asStateFlow()
@@ -97,6 +166,12 @@ class WorkspaceRepository(
 
     private val _workspaceMembers = MutableStateFlow<List<WorkspaceMember>>(emptyList())
     val workspaceMembers: StateFlow<List<WorkspaceMember>> = _workspaceMembers.asStateFlow()
+
+    // The union above is retained for workspace discovery. Business data must use
+    // this active-workspace-only projection so a visible collaboration workspace
+    // can never contribute participants to the current report.
+    private val _activeWorkspaceMembers = MutableStateFlow<List<WorkspaceMember>>(emptyList())
+    val activeWorkspaceMembers: StateFlow<List<WorkspaceMember>> = _activeWorkspaceMembers.asStateFlow()
 
     // SAFE DEFAULT: non-owner. Owner is only ever granted from an explicit resolved
     // membership role, never from a default, a fallback, or workspace ownership.
@@ -227,7 +302,7 @@ class WorkspaceRepository(
         val wsId = getOrResolveWorkspaceId() ?: return
         _profitShareAllocations.value = allocations
         _profitShareAllocationDetails.value = participantDetails
-        
+
         // Cache locally
         try {
             val prefs = context.getSharedPreferences("workspace_profit_share_prefs", android.content.Context.MODE_PRIVATE)
@@ -258,112 +333,10 @@ class WorkspaceRepository(
         }
     }
 
-    /**
-     * Migrates legacy name-based partnerPercentages to UID-based profitShareAllocations.
-     * Uses workspaceMembers to resolve names to UIDs. Skips ambiguous names.
-     */
+    /** Automatic name/phone matching is not evidence of immutable UID identity. */
     suspend fun migrateLegacyPercentagesToUidAllocations(wsId: String) {
-        if (wsId.isBlank() || _profitShareMigrationDone.value) return
-        
-        val legacyPercentages = _partnerPercentages.value
-        if (legacyPercentages.isEmpty()) {
-            _profitShareMigrationDone.value = true
-            return
-        }
-
-        // Check if we already have UID-based allocations
-        if (_profitShareAllocations.value.isNotEmpty()) {
-            _profitShareMigrationDone.value = true
-            return
-        }
-
-        val members = workspaceMembers.value
-        val memberByName = members.associateBy { 
-            it.displayName?.trim() ?: it.email?.trim() ?: ""
-        }.filter { (name, _) -> name.isNotBlank() }
-        
-        // Also check local partners as fallback
-        val localPartners = partnerDao.getPartnersForWorkspace(wsId).firstOrNull() ?: emptyList()
-        val partnerByName = localPartners.associateBy { it.name.trim() }
-        
-        val newAllocations = mutableMapOf<String, Int>()
-        val newDetails = mutableMapOf<String, com.example.data.firebase.ProfitShareAllocation>()
-        var migratedCount = 0
-        
-        legacyPercentages.forEach { (name, percentage) ->
-            val cleanName = name.trim()
-            // Try to resolve UID from workspace members first (authoritative)
-            val member = memberByName[cleanName]
-            var resolvedUid = member?.uid
-            var resolvedName = member?.displayName ?: member?.email ?: cleanName
-            var resolvedRole = member?.role ?: "partner"
-            
-            // Fallback to local partner
-            if (resolvedUid.isNullOrBlank()) {
-                val partner = partnerByName[cleanName]
-                resolvedUid = partner?.let { 
-                    // Try to find matching member by phone
-                    members.find { m -> 
-                        m.phoneNumber?.filter { it.isDigit() }?.takeLast(10) == it.phone.filter { it.isDigit() }?.takeLast(10)
-                    }?.uid
-                }
-                resolvedName = partner?.name ?: cleanName
-                resolvedRole = partner?.role?.lowercase() ?: "partner"
-            }
-            
-            val targetUid = resolvedUid
-            if (!targetUid.isNullOrBlank()) {
-                newAllocations[targetUid] = percentage
-                newDetails[targetUid] = com.example.data.firebase.ProfitShareAllocation(
-                    participantUid = targetUid,
-                    percentage = percentage,
-                    displayName = resolvedName ?: cleanName,
-                    role = resolvedRole ?: "partner",
-                    isActive = true
-                )
-                migratedCount++
-                Log.d(TAG, "Migrated legacy percentage: $cleanName -> UID $targetUid ($percentage%)")
-            } else {
-                Log.w(TAG, "Could not resolve UID for legacy percentage entry: $cleanName ($percentage%)")
-            }
-        }
-        
-        if (newAllocations.isNotEmpty()) {
-            _profitShareAllocations.value = newAllocations
-            _profitShareAllocationDetails.value = newDetails
-            
-            // Cache locally
-            try {
-                val prefs = context.getSharedPreferences("workspace_profit_share_prefs", android.content.Context.MODE_PRIVATE)
-                val jsonObj = org.json.JSONObject()
-                newAllocations.forEach { (uid, percentage) ->
-                    val detail = newDetails[uid]
-                    val item = org.json.JSONObject().apply {
-                        put("participantUid", uid)
-                        put("percentage", percentage)
-                        put("displayName", detail?.displayName ?: "")
-                        put("role", detail?.role ?: "partner")
-                        put("isActive", detail?.isActive ?: true)
-                    }
-                    jsonObj.put(uid, item)
-                }
-                prefs.edit().putString("psa_$wsId", jsonObj.toString()).apply()
-            } catch (e: Exception) {
-                Log.w(TAG, "Error caching migrated profit share allocations: ${e.message}")
-            }
-            
-            // Sync to cloud
-            if (isCloudReady()) {
-                try {
-                    firestoreRepository.saveProfitShareAllocations(wsId, newAllocations, newDetails)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed syncing migrated profit share allocations to cloud: ${e.message}")
-                }
-            }
-        }
-        
-        _profitShareMigrationDone.value = true
-        Log.i(TAG, "Legacy percentage migration complete for $wsId: $migratedCount/${legacyPercentages.size} entries migrated")
+        requireWorkspaceActor(wsId)
+        throw IllegalStateException("Legacy allocation migration requires a reviewed UID mapping and verified backup; name/phone inference is disabled")
     }
 
     private val _genuinePartnerWorkspaces = MutableStateFlow<List<Workspace>>(emptyList())
@@ -377,12 +350,7 @@ class WorkspaceRepository(
             val initialUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
             if (!initialUid.isNullOrBlank()) {
                 activeUid = initialUid
-                val defaultWsId = "ws_${initialUid.replace(Regex("[^a-zA-Z0-9]"), "").take(16).ifBlank { "main" }}"
-                _personalWorkspaceId.value = defaultWsId
-                _visibleWorkspaceIds.value = setOf(defaultWsId)
-                _activeWorkspaceId.value = defaultWsId
-                _isInitialized.value = true
-                _workspaceInitState.value = WorkspaceInitState.Ready(defaultWsId)
+                restoreVerifiedMembership(initialUid)
             }
         } catch (_: Exception) {}
     }
@@ -390,12 +358,10 @@ class WorkspaceRepository(
     fun getActiveUid(): String? = getEffectiveActorUid()
 
     fun getEffectiveActorUid(): String? {
-        val currentAuthUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
-        if (!currentAuthUid.isNullOrBlank()) {
-            activeUid = currentAuthUid
-            return currentAuthUid
-        }
-        return activeUid
+        val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        if (uid.isNullOrBlank()) { activeUid = null; return null }
+        activeUid = uid
+        return uid
     }
 
     private val userLangPrefs by lazy {
@@ -595,8 +561,8 @@ class WorkspaceRepository(
 
         // Record compact audit event
         recordAuditEvent(
-            action = "PARTNER",
-            entityType = "PARTNER",
+            action = com.example.data.auth.RoleUtils.ROLE_PARTNER,
+            entityType = com.example.data.auth.RoleUtils.ROLE_PARTNER,
             recordId = 0L,
             reference = "Updated permissions for partner '$partnerKey': locked '$pageKey' = $isLocked",
             workspaceId = targetWsId
@@ -686,7 +652,10 @@ class WorkspaceRepository(
      * then resolves Firestore bootstrap & verification, attaches real-time snapshot listeners,
      * resolves settings safely, and performs safe initial migration.
      */
-    suspend fun initializeForUser(userProfile: UserProfile): Result<String> = kotlinx.coroutines.withContext(Dispatchers.IO) {
+    suspend fun createPersonalWorkspace(user: com.google.firebase.auth.FirebaseUser, fullName: String, businessName: String): UserProfile =
+        firestoreRepository.createPersonalWorkspace(user, fullName, businessName)
+
+    suspend fun initializeForUser(userProfile: UserProfile, selectedWorkspaceId: String? = null): Result<String> = kotlinx.coroutines.withContext(Dispatchers.IO) {
         val uid = userProfile.uid
         if (uid.isBlank()) {
             val err = IllegalArgumentException("User profile UID is blank")
@@ -701,139 +670,40 @@ class WorkspaceRepository(
         activeUid = uid
         currentUserRole = userProfile.role
 
-        val rawPhone = userProfile.phoneNumber ?: com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.phoneNumber ?: ""
-        val verifiedPhone = normalizePhoneNumber(rawPhone)
-        var activeProfile = userProfile
-
-        // AUTHORITATIVE MEMBERSHIP RESOLUTION (must run BEFORE any workspace bootstrap).
-        // workspaceId (WHERE the user belongs) and role (WHAT the user may do) are read
-        // exclusively from workspaces/{workspaceId}/members/{uid}. Ownership of the workspace
-        // document is NEVER used to infer a role.
+        restoreVerifiedMembership(uid)
+        val activeProfile = userProfile
+        val cachedWorkspaceId = _activeWorkspaceId.value.takeIf { _verifiedWorkspaceContext.value == (uid to it) }
+        if (cachedWorkspaceId == null) _workspaceInitState.value = WorkspaceInitState.Loading
+        val canonicalWsId = activeProfile.defaultWorkspaceId.orEmpty()
         var authoritativeWsId: String? = null
         var authoritativeRole: String? = null
-        try {
-            val membership = firestoreRepository.resolveAuthoritativeMembership(uid)
-            if (membership != null) {
-                authoritativeWsId = membership.workspaceId
-                authoritativeRole = membership.role
-                Log.i(
-                    "TRAC_ROLE",
-                    "Authoritative membership uid=$uid ws=${membership.workspaceId} role=${membership.role}"
-                )
-            } else {
-                Log.d("TRAC_ROLE", "No membership record found for uid=$uid")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "resolveAuthoritativeMembership failed for uid=$uid: ${e.message}")
-        }
-
-        // A Partner may be mis-provisioned from an earlier regression into their own
-        // ws_{uid} workspace with role=owner. If the profile points at a canonical
-        // self-workspace but a real Owner membership exists elsewhere, prefer the membership.
-        val profileWsId = activeProfile.defaultWorkspaceId?.ifBlank { null }
-        val canonicalSelfWsId = "ws_${uid.replace(Regex("[^a-zA-Z0-9]"), "").take(16).ifBlank { "main" }}"
-        val profileIsCanonicalSelfWs = profileWsId == null || profileWsId == canonicalSelfWsId
-        if (authoritativeWsId != null && profileIsCanonicalSelfWs &&
-            authoritativeWsId != canonicalSelfWsId &&
-            !authoritativeRole.equals("owner", ignoreCase = true)
-        ) {
-            Log.i(
-                "TRAC_WORKSPACE",
-                "Replacing self-workspace $profileWsId with Owner membership workspace $authoritativeWsId role=$authoritativeRole"
-            )
-            activeProfile = activeProfile.copy(
-                defaultWorkspaceId = authoritativeWsId,
-                workspaces = listOf(authoritativeWsId),
-                role = authoritativeRole
-            )
-            currentUserRole = authoritativeRole
-        } else if (authoritativeWsId != null && authoritativeWsId == profileWsId) {
-            currentUserRole = authoritativeRole
-        }
-
-        // MANDATORY RESOLUTION FLOW: Check if this user was invited by an Owner before bootstrapping.
-        // Conditions to attempt re-resolution:
-        //   a) No workspace ID set yet (new user), OR
-        //   b) Workspace ID is the canonical self-workspace for this UID (hasn't been bound to owner yet), OR
-        //   c) The profile role is explicitly "partner" (returning Partner — re-validate binding to preserve role)
-        val isExplicitPartnerRole = (activeProfile.role ?: "").equals("partner", ignoreCase = true) ||
-                                    (currentUserRole ?: "").equals("partner", ignoreCase = true)
-        val needsPartnerResolution = activeProfile.defaultWorkspaceId.isNullOrBlank() ||
-                                     activeProfile.defaultWorkspaceId!!.startsWith("ws_$uid") ||
-                                     isExplicitPartnerRole
-        if (needsPartnerResolution && verifiedPhone.isNotBlank() && authoritativeWsId == null) {
-            try {
-                val bound = firestoreRepository.resolveAndBindPartnerInvitation(
-                    userUid = uid,
-                    rawPhone = verifiedPhone,
-                    userDisplayName = activeProfile.displayName,
-                    knownWorkspaceIds = firestoreRepository.getAllKnownWorkspaceIdsFromDisk()
-                )
-                if (bound != null) {
-                    Log.i("TRAC_PARTNER", "initializeForUser resolved partner invitation into ws=${bound.defaultWorkspaceId} role=${bound.role}")
-                    activeProfile = bound
-                    currentUserRole = "partner"
-                } else if (isExplicitPartnerRole) {
-                    // Returning Partner where invitation is already consumed — keep role explicit
-                    Log.d("TRAC_PARTNER", "Returning Partner uid=$uid: invitation already consumed, preserving partner role")
-                    currentUserRole = "partner"
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "resolveAndBindPartnerInvitation check failed in initializeForUser: ${e.message}")
-                if (isExplicitPartnerRole) {
-                    currentUserRole = "partner" // always preserve partner role even on error
-                }
-            }
-        }
-
-        // Deterministic fallback workspace ID based on UID
-        val canonicalWsId = activeProfile.defaultWorkspaceId?.ifBlank { null }
-            ?: "ws_${uid.replace(Regex("[^a-zA-Z0-9]"), "").take(16).ifBlank { "main" }}"
-
-        // 1. INSTANT LOCAL STARTUP: Immediately prime local workspace state from Room/Cache so UI renders immediately
-        val isPreResolvedPartner = (authoritativeRole ?: "").equals("partner", ignoreCase = true) ||
-            (authoritativeRole ?: "").equals("operator", ignoreCase = true) ||
-            isExplicitPartnerRole
-        val initialWsId = canonicalWsId
-        _personalWorkspaceId.value = if (!isPreResolvedPartner) canonicalWsId else null
-        _visibleWorkspaceIds.value = setOf(initialWsId)
-        _activeWorkspaceId.value = initialWsId
-        _isInitialized.value = true
-        _workspaceInitState.value = WorkspaceInitState.Loading
+        var isPreResolvedPartner = false
 
         return@withContext try {
+            kotlinx.coroutines.withTimeout(20_000L) {
             Log.d(TAG, "Resolving deterministic cloud workspace for user UID: $uid")
 
-            // 1-7. Resolve/create, verify and write users/{uid}.defaultWorkspaceId on Firestore.
-            // When an authoritative membership already exists, bootstrap verifies that
-            // membership and NEVER creates a workspace or rewrites defaultWorkspaceId.
-            val bootstrapPreResolvedWs = authoritativeWsId
-                ?: activeProfile.defaultWorkspaceId?.ifBlank { null }
-            val bootstrapPreResolvedRole = authoritativeRole ?: activeProfile.role
-            val workspace = firestoreRepository.bootstrapWorkspaceForUser(
-                user = activeProfile,
-                preResolvedWorkspaceId = bootstrapPreResolvedWs,
-                preResolvedRole = bootstrapPreResolvedRole
-            )
-            val resolvedWsId = workspace.workspaceId.ifBlank { canonicalWsId }
-            _personalWorkspaceId.value = if (!isPreResolvedPartner) resolvedWsId else null
-
-            // Auto-connect if this verified phone number was previously added by an owner while unregistered
-            if (verifiedPhone.isNotBlank()) {
-                try {
-                    val connected = firestoreRepository.findAndConnectPendingPartnerLinks(
-                        userUid = uid,
-                        verifiedPhone = verifiedPhone,
-                        userWorkspaceId = resolvedWsId,
-                        userDisplayName = activeProfile.displayName
-                    )
-                    if (connected.isNotEmpty()) {
-                        Log.d("TRAC_PARTNER", "Auto-connected to groups on login: $connected")
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "findAndConnectPendingPartnerLinks error: ${e.message}")
-                }
+            val preferredWs = if (com.example.BuildConfig.PHYSICAL_TEST) {
+                if (com.example.data.firebase.FirebaseEnvironment.isStagingWorkspace(cachedWorkspaceId)) cachedWorkspaceId else null
+            } else cachedWorkspaceId
+            val choices = getAvailableWorkspaces(userProfile)
+            val selected = com.example.data.firebase.WorkspaceDiscoveryPolicy.selectedWorkspace(
+                choices.map { it.workspaceId }, selectedWorkspaceId, preferredWs)
+            if (selected == null && choices.size > 1) {
+                stopWorkspaceListeners()
+                _workspaceInitState.value = WorkspaceInitState.SelectionRequired(choices)
+                return@withTimeout Result.failure(IllegalStateException("Choose a workspace to continue"))
             }
+            val membership = selected?.let { id -> choices.firstOrNull { it.workspaceId == id } }
+                ?: throw SecurityException(if (com.example.BuildConfig.PHYSICAL_TEST) "Signed in. This isolated test build cannot open business workspaces. Choose an authorized staging workspace, or use the standard app for your personal/business workspace." else "No active workspace. Create a personal workspace or ask the Owner to complete your invitation.")
+            if (com.example.BuildConfig.PHYSICAL_TEST && !com.example.data.firebase.FirebaseEnvironment.isStagingWorkspace(membership.workspaceId))
+                throw SecurityException("Physical test membership is outside the staging workspace")
+            authoritativeWsId = membership.workspaceId
+            authoritativeRole = membership.accessRole
+            isPreResolvedPartner = !com.example.data.auth.RoleUtils.isOwner(membership.accessRole)
+            val workspace = firestoreRepository.bootstrapWorkspaceForUser(activeProfile, membership.workspaceId, membership.accessRole)
+            val resolvedWsId = workspace.workspaceId
+            _personalWorkspaceId.value = if (!isPreResolvedPartner) resolvedWsId else null
 
             // Discover genuine partner workspaces strictly
             val genuinePartners = getGenuinePartnerWorkspaces(activeProfile, resolvedWsId)
@@ -847,15 +717,15 @@ class WorkspaceRepository(
 
             // Re-read the authoritative membership after bootstrap so an Owner keeps OWNER
             // and a Partner keeps PARTNER even though both share the same workspaceId.
-            val finalRole = try {
-                firestoreRepository.resolveAuthoritativeRole(uid, targetWsId)
-            } catch (_: Exception) {
-                null
-            } ?: authoritativeRole ?: activeProfile.role
+            val finalRole = firestoreRepository.resolveAuthoritativeRole(uid, targetWsId)
+                ?: throw SecurityException("Verified workspace membership is inactive or missing")
 
             val normalizedFinalRole = com.example.data.auth.RoleUtils.normalizeRole(finalRole)
-            val isOwner = normalizedFinalRole == com.example.data.auth.RoleUtils.ROLE_OWNER ||
-                normalizedFinalRole == com.example.data.auth.RoleUtils.ROLE_CO_OWNER
+            val isOwner = normalizedFinalRole == com.example.data.auth.RoleUtils.ROLE_OWNER
+            if (normalizedFinalRole.isBlank()) throw SecurityException("Unsupported workspace role")
+            val verifiedMembers = firestoreRepository.getWorkspaceMembers(targetWsId)
+            _activeWorkspaceMembers.value = verifiedMembers
+            cacheVerifiedMembership(uid, targetWsId, verifiedMembers)
             currentUserRole = normalizedFinalRole
             Log.i(
                 "TRAC_ROLE",
@@ -875,9 +745,12 @@ class WorkspaceRepository(
 
             // Load or initialize cloud settings before enabling writes
             val currentLocal = appSettingsDao.getSettingsForWorkspaceOnce(resolvedActiveWsId)
-                ?: AppSettingsEntity(
+                ?: initialWorkspaceSettings(
                     workspaceId = resolvedActiveWsId,
-                    businessName = if (isOwner) (activeProfile.displayName ?: "") else (genuinePartners.find { it.workspaceId == resolvedActiveWsId }?.name ?: workspace.name)
+                    workspaceName = workspace.name,
+                    isOwner = isOwner,
+                    actorName = activeProfile.displayName.orEmpty(),
+                    actorPhone = activeProfile.phoneNumber.orEmpty()
                 )
             val resolvedSettings = firestoreRepository.fetchOrCreateWorkspaceSettings(
                 workspaceId = resolvedActiveWsId,
@@ -896,7 +769,7 @@ class WorkspaceRepository(
             scope.launch {
                 loadProfitShareAllocationsFromCloud(resolvedActiveWsId)
                 // Migrate legacy name-based percentages to UID-based allocations
-                migrateLegacyPercentagesToUidAllocations(resolvedActiveWsId)
+                // Legacy identity migration requires a reviewed backup and explicit manifest.
             }
 
             // Decoupled language: user's personal preference, NOT shared workspace's
@@ -939,7 +812,7 @@ class WorkspaceRepository(
 
             // Safe migration on first login if personal workspace has no remote records yet
             if (isOwner) {
-                firestoreRepository.migrateLocalDataIfRequired(resolvedWsId, uid, database)
+                // Legacy migration is explicit and backup-gated; initialization never rewrites legacy business rows.
             }
 
             _workspaceInitState.value = WorkspaceInitState.Ready(resolvedActiveWsId)
@@ -948,7 +821,7 @@ class WorkspaceRepository(
             attachRealtimeListenersForVisibleWorkspaces()
 
             // Start listener for collaboration groups discovery
-            listenToCollaborationGroupsDiscovery(uid, resolvedWsId)
+            // Legacy collaboration indexes are discovery data, never membership authority.
 
             refreshWorkspaceMembers(resolvedActiveWsId)
 
@@ -956,25 +829,30 @@ class WorkspaceRepository(
             pushUnsyncedToCloud(resolvedActiveWsId)
 
             Result.success(resolvedActiveWsId)
+            }
         } catch (e: Throwable) {
-            Log.w(TAG, "Cloud workspace bootstrap deferred (offline fallback): ${e.message}")
-            val fallbackWsId = canonicalWsId
-            val isPartnerFallback = (currentUserRole ?: "").equals("partner", ignoreCase = true) || (activeProfile.role ?: "").equals("partner", ignoreCase = true)
-            _personalWorkspaceId.value = if (!isPartnerFallback) fallbackWsId else null
-            _isCollaborationOwner.value = !isPartnerFallback
-            _visibleWorkspaceIds.value = setOf(fallbackWsId)
-            _activeWorkspaceId.value = fallbackWsId
-            _genuinePartnerWorkspaces.value = emptyList()
-
-            val fallbackSettings = appSettingsDao.getSettingsForWorkspaceOnce(fallbackWsId)
-                ?: AppSettingsEntity(workspaceId = fallbackWsId, businessName = activeProfile.displayName ?: "")
-            appSettingsDao.insertOrUpdateSettings(fallbackSettings)
-
-            _isInitialized.value = true
-            _workspaceInitState.value = WorkspaceInitState.Ready(fallbackWsId)
-            _settingsSyncState.value = SettingsSyncState.LoadedFromCloud(fallbackSettings)
-
-            Result.success(fallbackWsId)
+            if (e is kotlinx.coroutines.CancellationException && e !is kotlinx.coroutines.TimeoutCancellationException) throw e
+            Log.w(TAG, "Workspace verification unavailable: ${e.message}")
+            if (e is SecurityException || (e is com.google.firebase.firestore.FirebaseFirestoreException &&
+                e.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED)) {
+                context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE).edit().clear().commit()
+                _activeWorkspaceMembers.value = emptyList()
+                _workspaceMembers.value = emptyList()
+                currentUserRole = null
+                stopWorkspaceListeners()
+                _workspaceInitState.value = WorkspaceInitState.Error(e)
+                return@withContext Result.failure(e)
+            }
+            restoreVerifiedMembership(uid)
+            val cachedId = _activeWorkspaceId.value
+            if (!cachedId.isNullOrBlank() && resolveRoleForWorkspace(cachedId).isNotBlank()) {
+                val cachedSettings = appSettingsDao.getSettingsForWorkspaceOnce(cachedId)
+                if (cachedSettings != null) _settingsSyncState.value = SettingsSyncState.LoadedFromCloud(cachedSettings)
+                Result.success(cachedId)
+            } else {
+                _workspaceInitState.value = WorkspaceInitState.Error(e)
+                Result.failure(e)
+            }
         }
     }
 
@@ -1051,7 +929,7 @@ class WorkspaceRepository(
                         attachRealtimeListenersForVisibleWorkspaces()
                         refreshWorkspaceMembers()
                     }
-                    
+
                     if (_activeWorkspaceId.value != null && groupsToRemove.contains(_activeWorkspaceId.value)) {
                         val available = getAvailableWorkspaces(UserProfile(uid = uid))
                         val fallbackId = available.firstOrNull()?.workspaceId ?: personalWsId
@@ -1073,7 +951,7 @@ class WorkspaceRepository(
                                 _visibleWorkspaceIds.value = newVisible
                                 attachRealtimeListenersForVisibleWorkspaces()
                             }
-                            refreshWorkspaceMembers(_activeWorkspaceId.value)
+                            refreshWorkspaceMembers()
                         }
                     }
                     if (listener != null) {
@@ -1083,7 +961,7 @@ class WorkspaceRepository(
                 if (!groupPendingListeners.containsKey(groupId)) {
                     val pListener = firestoreRepository.listenToCollaborationGroupPendingPhones(groupId) {
                         scope.launch {
-                            refreshWorkspaceMembers(_activeWorkspaceId.value)
+                            refreshWorkspaceMembers()
                         }
                     }
                     if (pListener != null) {
@@ -1100,12 +978,35 @@ class WorkspaceRepository(
             Log.d(TAG, "Skipping attachRealtimeListenersForVisibleWorkspaces: not authenticated")
             return
         }
-        val visibleIds = _visibleWorkspaceIds.value
+        val visibleIds = setOfNotNull(_activeWorkspaceId.value).filter { it.isNotBlank() }.toSet()
         if (visibleIds.isEmpty()) {
             return
         }
         firestoreRepository.startRealtimeListenersForWorkspaces(
             workspaceIds = visibleIds,
+            operatorWorkspaceIds = if (currentUserRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) visibleIds else emptySet(),
+            onMembershipUpdated = { members, wsId ->
+                if (wsId == _activeWorkspaceId.value) {
+                    val uid = getEffectiveActorUid().orEmpty()
+                    val actor = members.firstOrNull { it.uid == uid && it.status.equals("active", true) }
+                    val role = com.example.data.auth.RoleUtils.normalizeRole(actor?.role)
+                    if (role.isBlank()) {
+                        context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE).edit().clear().commit()
+                        _activeWorkspaceMembers.value = emptyList()
+                        _workspaceMembers.value = emptyList()
+                        currentUserRole = ""
+                        _isCollaborationOwner.value = false
+                        stopWorkspaceListeners()
+                        _workspaceInitState.value = WorkspaceInitState.Error(SecurityException("Workspace access removed"))
+                    } else {
+                        _activeWorkspaceMembers.value = members
+                        _workspaceMembers.value = members
+                        currentUserRole = role
+                        _isCollaborationOwner.value = role == com.example.data.auth.RoleUtils.ROLE_OWNER
+                        cacheVerifiedMembership(uid, wsId, members)
+                    }
+                }
+            },
             onJobsUpdated = { remoteJobs, listenerWsId ->
                 scope.launch {
                     syncRemoteJobsToLocal(remoteJobs, listenerWsId)
@@ -1267,7 +1168,8 @@ class WorkspaceRepository(
                     if (!_visibleWorkspaceIds.value.contains(listenerWsId) && listenerWsId != activeWsId && listenerWsId != pWsId) {
                         return@launch
                     }
-                    workTypeExtensionDao.insertAll(remoteExtensions)
+                    val pendingIds = operations.outstandingOperations(listenerWsId).filter { it.entityType == "EXTENSION" }.map { it.entityId }.toSet()
+                    workTypeExtensionDao.insertAll(remoteExtensions.filter { it.id !in pendingIds })
                     Log.d(TAG, "Extensions synced for $listenerWsId: count=${remoteExtensions.size}")
                 }
             }
@@ -1285,15 +1187,32 @@ class WorkspaceRepository(
         if (!_visibleWorkspaceIds.value.contains(listenerWsId) && listenerWsId != activeWsId && listenerWsId != pWsId) {
             return
         }
-        val syncedPayments = remotePayments.map { it.copy(isSynced = true) }
-        paymentDao.insertPayments(syncedPayments)
-
-        // Reconciliation: remove local synced payments that are no longer in the remote list
-        val validRemoteIds = remotePayments.map { it.id }
-        if (validRemoteIds.isNotEmpty()) {
-            paymentDao.deleteSyncedNotIn(listenerWsId, validRemoteIds)
-        } else {
-            paymentDao.deleteAllForWorkspace(listenerWsId)
+        if (activeUid != getEffectiveActorUid() || listenerWsId != activeWsId) return
+        database.withTransaction {
+            if (activeUid != getEffectiveActorUid() || listenerWsId != _activeWorkspaceId.value) return@withTransaction
+            require(remotePayments.all { it.workspaceId == listenerWsId }) { "Collection snapshot workspace mismatch" }
+            val outstanding = operations.outstandingOperations(listenerWsId)
+            val compoundCollectionIds = outstanding.filter {
+                it.entityType == "JOB" && it.mutationType == "DELETE" && it.state == "PENDING"
+            }.flatMap { op ->
+                val ids = org.json.JSONObject(op.payloadJson).optJSONArray("linkedCollectionIds")
+                if (ids == null) emptyList() else (0 until ids.length()).map { ids.getString(it).toLong() }
+            }
+            val pendingIds = (outstanding.filter { it.entityType == "PAYMENT" }.map { it.entityId } + compoundCollectionIds).toSet()
+            val confirmedDeletedIds = operations.observe(listenerWsId).firstOrNull().orEmpty().filter {
+                it.entityType == "JOB" && it.mutationType == "DELETE" && it.state == "ACKNOWLEDGED"
+            }.flatMap { op ->
+                val ids = org.json.JSONObject(op.payloadJson).optJSONArray("linkedCollectionIds")
+                if (ids == null) emptyList() else (0 until ids.length()).map { ids.getString(it).toLong() }
+            }.toSet()
+            val unsyncedIds = paymentDao.getPaymentsForWorkspace(listenerWsId).firstOrNull().orEmpty().filter { !it.isSynced }.map { it.id }.toSet()
+            paymentDao.insertPayments(remotePayments.filter { it.id !in pendingIds && it.id !in unsyncedIds && it.id !in confirmedDeletedIds }.map { it.copy(workspaceId = listenerWsId, isSynced = true) })
+            // A successful full listener snapshot is authoritative for confirmed Collections.
+            // Preserve pending/rejected and unsynced local actions; remove only synced cloud rows
+            // absent from this workspace's snapshot (including legacy phantom ACTIVE rows).
+            val retainedIds = (remotePayments.map { it.id }.filterNot { it in confirmedDeletedIds } + pendingIds).distinct()
+            if (retainedIds.isEmpty()) paymentDao.deleteAllSyncedForWorkspace(listenerWsId)
+            else paymentDao.deleteSyncedNotIn(listenerWsId, retainedIds)
         }
     }
 
@@ -1301,6 +1220,7 @@ class WorkspaceRepository(
      * Cleanly detaches all cloud snapshot listeners on logout.
      */
     fun stopWorkspaceListeners() {
+        _verifiedWorkspaceContext.value = null
         firestoreRepository.stopRealtimeListeners()
         collaborationIndexListener?.remove()
         collaborationIndexListener = null
@@ -1310,6 +1230,7 @@ class WorkspaceRepository(
         groupPendingListeners.clear()
         groupWorkspacesMap.clear()
         _workspaceMembers.value = emptyList()
+        _activeWorkspaceMembers.value = emptyList()
         _isInitialized.value = false
         _workspaceInitState.value = WorkspaceInitState.Uninitialized
         _settingsSyncState.value = SettingsSyncState.Uninitialized
@@ -1323,58 +1244,48 @@ class WorkspaceRepository(
         _isCollaborationOwner.value = false
         currentUserRole = null
         _workspaceMembers.value = emptyList()
+        _activeWorkspaceMembers.value = emptyList()
         Log.d(TAG, "Workspace listeners stopped.")
     }
 
     // --- Remote to Local Synchronization Helpers (ID-based Reconciliation) ---
 
-    private suspend fun syncRemoteJobsToLocal(remoteJobs: List<JobEntryEntity>, listenerWsId: String) {
-        val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
-        if (activeUid != currentUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) {
-            Log.w(TAG, "Ignoring jobs snapshot from $listenerWsId because it is not in visible workspaces")
-            return
-        }
+    internal suspend fun syncRemoteJobsToLocal(remoteJobs: List<JobEntryEntity>, listenerWsId: String) {
+        val snapshotActorUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        if (snapshotActorUid.isNullOrBlank() || activeUid != snapshotActorUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) return
         try {
-            val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("JOB", listenerWsId)
-            val unsyncedLocalJobIds = jobEntryDao.getUnsyncedJobs().filter { it.workspaceId == listenerWsId }.map { it.id }.toSet()
-            val validRemoteJobs = remoteJobs.filterNot { pendingDeleteIds.contains(it.id) }
-
-            for (job in validRemoteJobs) {
-                if (unsyncedLocalJobIds.contains(job.id)) {
-                    // Do not overwrite pending local edits
-                    continue
-                }
-                jobEntryDao.insertJob(job.copy(workspaceId = listenerWsId, isSynced = true))
-            }
-
-            val validRemoteIds = validRemoteJobs.map { it.id }
-            if (validRemoteIds.isNotEmpty()) {
-                jobEntryDao.deleteSyncedNotIn(listenerWsId, validRemoteIds)
-            } else {
-                jobEntryDao.deleteAllSyncedForWorkspace(listenerWsId)
-            }
-
-            // Keep local customer totals synchronized with freshly synced jobs
-            val allLocalJobs = jobEntryDao.getAllJobs().firstOrNull() ?: emptyList()
-            val localCustomers = customerDao.getCustomersForWorkspace(listenerWsId).firstOrNull() ?: emptyList()
-            for (c in localCustomers) {
-                val stats = com.example.ui.util.FinancialCalculationEngine.calculateCustomerFinancials(c, allLocalJobs)
-                if (stats.totalBilled != c.totalBilled || stats.totalPaid != c.totalPaid || stats.balanceDue != c.balanceDue) {
-                    customerDao.updateCustomer(
-                        c.copy(
-                            totalBilled = stats.totalBilled,
-                            totalPaid = stats.totalPaid,
-                            balanceDue = stats.balanceDue,
-                            updatedAt = System.currentTimeMillis()
-                        )
-                    )
+            database.withTransaction {
+                if (activeUid != snapshotActorUid || getEffectiveActorUid() != snapshotActorUid ||
+                    !_visibleWorkspaceIds.value.contains(listenerWsId)) return@withTransaction
+                require(remoteJobs.all { it.workspaceId == listenerWsId }) { "Entry snapshot workspace mismatch" }
+                val history = operations.observe(listenerWsId).firstOrNull().orEmpty()
+                val deletes = history.filter { it.entityType == "JOB" && it.mutationType == "DELETE" }
+                val pendingIds = pendingDeleteManager.getPendingDeleteIds("JOB", listenerWsId) +
+                    deletes.filter { it.state == "PENDING" }.map { it.entityId }
+                val confirmed = deletes.filter { it.state == "ACKNOWLEDGED" }
+                val deletedCustomers = confirmed.mapNotNull { org.json.JSONObject(it.payloadJson).optLong("customerId").takeIf { id -> id > 0 } }.toSet()
+                val unsyncedIds = jobEntryDao.getUnsyncedJobsForWorkspace(listenerWsId).map { it.id }.toSet()
+                val retained = remoteJobs.filterNot { job -> job.id in pendingIds || confirmed.any { deletion ->
+                    deletion.entityId == job.id && org.json.JSONObject(deletion.payloadJson).optLong("createdAt") == job.createdAt
+                } }
+                for (job in retained) if (job.id !in unsyncedIds)
+                    jobEntryDao.insertJob(job.copy(workspaceId = listenerWsId, isSynced = true))
+                val ids = retained.map { it.id }
+                if (ids.isEmpty()) jobEntryDao.deleteAllSyncedForWorkspace(listenerWsId)
+                else jobEntryDao.deleteSyncedNotIn(listenerWsId, ids)
+                val jobs = jobEntryDao.getJobsForWorkspaceOnce(listenerWsId)
+                for (customer in customerDao.getCustomersForWorkspaceOnce(listenerWsId)) {
+                    val source = if (customer.id in deletedCustomers)
+                        customer.copy(totalBilled = 0.0, totalPaid = 0.0, balanceDue = 0.0) else customer
+                    val stats = com.example.ui.util.FinancialCalculationEngine.calculateCustomerFinancials(source, jobs)
+                    if (stats.totalBilled != customer.totalBilled || stats.totalPaid != customer.totalPaid || stats.balanceDue != customer.balanceDue)
+                        customerDao.updateCustomer(customer.copy(totalBilled = stats.totalBilled,
+                            totalPaid = stats.totalPaid, balanceDue = stats.balanceDue, updatedAt = System.currentTimeMillis()))
                 }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error syncing remote jobs to local: ${e.message}")
-        }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { Log.e(TAG, "Error syncing remote jobs to local: ${e.message}") }
     }
-
     private suspend fun syncRemoteExpensesToLocal(remoteExpenses: List<ExpenseEntity>, listenerWsId: String) {
         val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
         if (activeUid != currentUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) {
@@ -1382,8 +1293,14 @@ class WorkspaceRepository(
             return
         }
         try {
-            val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("EXPENSE", listenerWsId)
-            val unsyncedLocalExpIds = expenseDao.getUnsyncedExpenses().filter { it.workspaceId == listenerWsId }.map { it.id }.toSet()
+            val compoundPendingIds = operations.outstandingOperations(listenerWsId)
+                .filter { it.entityType == "JOB" && it.mutationType == "DELETE" && it.state == "PENDING" }
+                .flatMap { op ->
+                    val ids = org.json.JSONObject(op.payloadJson).optJSONArray("linkedExpenseIds")
+                    if (ids == null) emptyList() else (0 until ids.length()).map { ids.getLong(it) }
+                }.toSet()
+            val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("EXPENSE", listenerWsId) + compoundPendingIds
+            val unsyncedLocalExpIds = expenseDao.getUnsyncedExpensesForWorkspace(listenerWsId).map { it.id }.toSet()
             val validRemoteExpenses = remoteExpenses.filterNot { pendingDeleteIds.contains(it.id) }
 
             for (expense in validRemoteExpenses) {
@@ -1405,46 +1322,39 @@ class WorkspaceRepository(
         }
     }
 
-    private suspend fun syncRemoteCustomersToLocal(remoteCustomers: List<CustomerEntity>, listenerWsId: String) {
-        val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
-        if (activeUid != currentUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) {
-            Log.w(TAG, "Ignoring customers snapshot from $listenerWsId because it is not in visible workspaces")
-            return
-        }
+    internal suspend fun syncRemoteCustomersToLocal(remoteCustomers: List<CustomerEntity>, listenerWsId: String) {
+        val snapshotActorUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        if (snapshotActorUid.isNullOrBlank() || activeUid != snapshotActorUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) return
         try {
-            val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("CUSTOMER", listenerWsId)
-            val unsyncedLocalCustIds = customerDao.getUnsyncedCustomers().filter { it.workspaceId == listenerWsId }.map { it.id }.toSet()
-            val validRemoteCustomers = remoteCustomers.filterNot { pendingDeleteIds.contains(it.id) }
-
-            val allJobs = jobEntryDao.getAllJobs().firstOrNull() ?: emptyList()
-            for (customer in validRemoteCustomers) {
-                if (unsyncedLocalCustIds.contains(customer.id)) {
-                    // Do not overwrite pending local edits
-                    continue
+            database.withTransaction {
+                if (activeUid != snapshotActorUid || getEffectiveActorUid() != snapshotActorUid ||
+                    !_visibleWorkspaceIds.value.contains(listenerWsId)) return@withTransaction
+                require(remoteCustomers.all { it.workspaceId == listenerWsId }) { "Customer snapshot workspace mismatch" }
+                // Serialize the source rows and pending protection with deletion/acknowledgement.
+                val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("CUSTOMER", listenerWsId)
+                val unsyncedIds = customerDao.getUnsyncedCustomersForWorkspace(listenerWsId).map { it.id }.toSet()
+                val retained = remoteCustomers.filterNot { it.id in pendingDeleteIds }
+                val jobs = jobEntryDao.getJobsForWorkspaceOnce(listenerWsId)
+                val deletedSourceCustomers = operations.observe(listenerWsId).firstOrNull().orEmpty().filter {
+                    it.entityType == "JOB" && it.mutationType == "DELETE" && it.state == "ACKNOWLEDGED"
+                }.mapNotNull { op -> org.json.JSONObject(op.payloadJson).optLong("customerId").takeIf { it > 0 } }.toSet()
+                for (customer in retained) {
+                    if (customer.id in unsyncedIds) continue
+                    // Empty-job legacy totals remain intact except where a source deletion was confirmed.
+                    val source = if (customer.id in deletedSourceCustomers)
+                        customer.copy(totalBilled = 0.0, totalPaid = 0.0, balanceDue = 0.0) else customer
+                    val stats = com.example.ui.util.FinancialCalculationEngine.calculateCustomerFinancials(source, jobs)
+                    customerDao.insertCustomer(customer.copy(workspaceId = listenerWsId,
+                        totalBilled = stats.totalBilled, totalPaid = stats.totalPaid,
+                        balanceDue = stats.balanceDue, isSynced = true))
                 }
-                val stats = com.example.ui.util.FinancialCalculationEngine.calculateCustomerFinancials(customer, allJobs)
-                customerDao.insertCustomer(
-                    customer.copy(
-                        workspaceId = listenerWsId,
-                        totalBilled = stats.totalBilled,
-                        totalPaid = stats.totalPaid,
-                        balanceDue = stats.balanceDue,
-                        isSynced = true
-                    )
-                )
+                val ids = retained.map { it.id }
+                if (ids.isEmpty()) customerDao.deleteAllSyncedForWorkspace(listenerWsId)
+                else customerDao.deleteSyncedNotIn(listenerWsId, ids)
             }
-
-            val validRemoteIds = validRemoteCustomers.map { it.id }
-            if (validRemoteIds.isNotEmpty()) {
-                customerDao.deleteSyncedNotIn(listenerWsId, validRemoteIds)
-            } else {
-                customerDao.deleteAllSyncedForWorkspace(listenerWsId)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error syncing remote customers to local: ${e.message}")
-        }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { Log.e(TAG, "Error syncing remote customers to local: ${e.message}") }
     }
-
     private suspend fun syncRemoteTractorsToLocal(remoteTractors: List<TractorEntity>, listenerWsId: String) {
         val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
         if (activeUid != currentUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) {
@@ -1453,13 +1363,14 @@ class WorkspaceRepository(
         }
         try {
             val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("TRACTOR", listenerWsId)
-            val validRemoteTractors = remoteTractors.filterNot { pendingDeleteIds.contains(it.id) }
+            val queuedIds = operations.outstandingOperations(listenerWsId).filter { it.entityType == "TRACTOR" }.map { it.entityId }.toSet()
+            val validRemoteTractors = remoteTractors.filterNot { pendingDeleteIds.contains(it.id) || it.id in queuedIds }
 
             for (tractor in validRemoteTractors) {
                 tractorDao.insertTractor(tractor.copy(workspaceId = listenerWsId))
             }
 
-            val validRemoteIds = validRemoteTractors.map { it.id }
+            val validRemoteIds = validRemoteTractors.map { it.id } + queuedIds
             if (validRemoteIds.isNotEmpty()) {
                 tractorDao.deleteNotIn(listenerWsId, validRemoteIds)
             } else {
@@ -1477,7 +1388,7 @@ class WorkspaceRepository(
             return
         }
         try {
-            val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("PARTNER", listenerWsId)
+            val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds(com.example.data.auth.RoleUtils.ROLE_PARTNER, listenerWsId)
             val validRemotePartners = remotePartners.filterNot { pendingDeleteIds.contains(it.id) }
 
             for (partner in validRemotePartners) {
@@ -1504,7 +1415,7 @@ class WorkspaceRepository(
         }
         try {
             val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("WITHDRAWAL", listenerWsId)
-            val unsyncedLocalWthIds = withdrawalDao.getUnsyncedWithdrawals().filter { it.workspaceId == listenerWsId }.map { it.id }.toSet()
+            val unsyncedLocalWthIds = withdrawalDao.getUnsyncedWithdrawalsForWorkspace(listenerWsId).map { it.id }.toSet()
             val validRemoteWithdrawals = remoteWithdrawals.filterNot { pendingDeleteIds.contains(it.id) }
 
             for (withdrawal in validRemoteWithdrawals) {
@@ -1529,7 +1440,222 @@ class WorkspaceRepository(
     private suspend fun getOrResolveWorkspaceId(): String? {
         val current = _activeWorkspaceId.value
         if (!current.isNullOrBlank()) return current
+        val pWsId = _personalWorkspaceId.value
+        if (!pWsId.isNullOrBlank()) return pWsId
+        val readyWsId = (_workspaceInitState.value as? WorkspaceInitState.Ready)?.workspaceId
+        if (!readyWsId.isNullOrBlank()) return readyWsId
+        val wsCurrent = currentWorkspace.value?.workspaceId
+        if (!wsCurrent.isNullOrBlank()) return wsCurrent
         return null
+    }
+
+    private fun requireRecordMembersActive(creatorUid: String, targetUid: String = creatorUid) {
+        val members = _activeWorkspaceMembers.value
+        if (creatorUid.isBlank() || targetUid.isBlank()) throw SecurityException("Record identity requires verified migration")
+        if (listOf(creatorUid, targetUid).any { uid -> members.none { it.uid == uid && it.status.equals("active", true) } }) {
+            throw SecurityException("This record belongs to a removed member and is retained read-only. The Owner can review permanent deletion under Account > Deleted Users.")
+        }
+    }
+
+    private fun requireWorkspaceActor(wsId: String): String {
+        if (com.example.BuildConfig.PHYSICAL_TEST && !com.example.data.firebase.FirebaseEnvironment.isStagingWorkspace(wsId))
+            throw SecurityException("Physical test access is limited to the staging workspace")
+        val actor = getEffectiveActorUid().orEmpty()
+        if (actor.isBlank() || _verifiedWorkspaceContext.value != (actor to wsId)) throw SecurityException("Verify workspace access for this authenticated account")
+        val role = resolveRoleForWorkspace(wsId)
+        if (role.isBlank()) throw SecurityException("Active authenticated workspace membership is required")
+        return role
+    }
+
+    private fun cacheVerifiedMembership(uid: String, wsId: String, members: List<WorkspaceMember>) {
+        if (members.none { it.uid == uid && it.workspaceId == wsId && it.status.equals("active", true) }) return
+        val json = org.json.JSONArray()
+        members.forEach { json.put(org.json.JSONObject(it.toMap())) }
+        context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE).edit()
+            .putString("uid", uid).putString("workspaceId", wsId).putString("members", json.toString()).commit()
+        _verifiedWorkspaceContext.value = uid to wsId
+    }
+
+    private fun restoreVerifiedMembership(uid: String) {
+        val prefs = context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE)
+        if (prefs.getString("uid", "") != uid) return
+        val wsId = prefs.getString("workspaceId", "").orEmpty()
+        if (com.example.BuildConfig.PHYSICAL_TEST && !com.example.data.firebase.FirebaseEnvironment.isStagingWorkspace(wsId)) return
+        if (wsId.isBlank()) return
+        val json = runCatching { org.json.JSONArray(prefs.getString("members", "[]")) }.getOrNull() ?: return
+        val members = (0 until json.length()).map { index ->
+            val row = json.getJSONObject(index)
+            WorkspaceMember(uid = row.optString("uid"), workspaceId = wsId,
+                role = row.optString("role"), status = row.optString("status"), displayName = row.optString("displayName"))
+        }
+        val actor = members.firstOrNull { it.uid == uid && it.status.equals("active", true) } ?: return
+        val role = com.example.data.auth.RoleUtils.normalizeRole(actor.role)
+        if (role.isBlank()) return
+        _activeWorkspaceId.value = wsId
+        _visibleWorkspaceIds.value = setOf(wsId)
+        _activeWorkspaceMembers.value = members
+        _workspaceMembers.value = members
+        currentUserRole = role
+        _isCollaborationOwner.value = role == com.example.data.auth.RoleUtils.ROLE_OWNER
+        _workspaceInitState.value = WorkspaceInitState.CachedReady(wsId)
+        _isInitialized.value = true
+        _verifiedWorkspaceContext.value = uid to _activeWorkspaceId.value.orEmpty()
+    }
+
+    private val syncMutex = Mutex()
+    private val operations get() = database.pendingOperationDao()
+    fun pendingOperations(wsId: String): kotlinx.coroutines.flow.Flow<List<com.example.data.entity.PendingOperationEntity>> {
+        val uid = getEffectiveActorUid().orEmpty()
+        if (_verifiedWorkspaceContext.value != (uid to wsId) || uid.isBlank()) return kotlinx.coroutines.flow.flowOf(emptyList())
+        return operations.observeActor(wsId, uid)
+    }
+
+    /** Reopen only the original collection action after verifying current access and cloud state. */
+    suspend fun retryRejectedCollection(operationId: String) = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        syncMutex.withLock {
+            val op = operations.getOperation(operationId) ?: throw IllegalArgumentException("Retained action was not found")
+            val uid = getEffectiveActorUid().orEmpty()
+            if (op.actorUid != uid || op.workspaceId != _activeWorkspaceId.value ||
+                _verifiedWorkspaceContext.value != (uid to op.workspaceId))
+                throw SecurityException("Sign in to the original account and workspace to retry this action")
+            if (op.state != "REJECTED" || op.entityType != "PAYMENT" || op.mutationType != "UPSERT" ||
+                !op.failureReason.contains("PERMISSION_DENIED", ignoreCase = true))
+                throw IllegalStateException("This action is not eligible for collection retry")
+            val role = firestoreRepository.resolveAuthoritativeRole(uid, op.workspaceId)
+                ?: throw SecurityException("Workspace access has been removed; action retained")
+            com.example.data.sync.OperationPolicy.requireAuthorized(op, role,
+                firestoreRepository.getWorkspaceMembers(op.workspaceId))
+            val cloud = try { firestoreRepository.getOperationRecordFromServer(op) }
+                catch (e: com.google.firebase.firestore.FirebaseFirestoreException) {
+                    if (e.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED)
+                        throw SecurityException("Collection access is still denied by deployed Firebase Rules. Original action retained.")
+                    throw e
+                }
+            if (cloud != null) throw IllegalStateException("Collection already exists in Cloud; reconcile it before retrying")
+            if (getEffectiveActorUid() != uid || _activeWorkspaceId.value != op.workspaceId)
+                throw SecurityException("Account or workspace changed; original action retained")
+            check(operations.requeueRejected(operationId) == 1) { "Action state changed; refresh and retry" }
+        }
+    }
+
+    private suspend fun enqueue(type: String, id: Long, payload: Map<String, Any?>, mutation: String = "UPSERT", expectedActorUid: String? = null, actionTime: Long = System.currentTimeMillis()) {
+        val wsId = payload["workspaceId"] as? String ?: throw SecurityException("Missing operation workspace")
+        requireWorkspaceActor(wsId)
+        val operationActor = getEffectiveActorUid().orEmpty()
+        require(expectedActorUid == null || operationActor == expectedActorUid) { "Account changed before queuing deletion" }
+        operations.supersedeReconciledRejections(wsId, operationActor, type, id)
+        operations.insert(PendingOperationEntity(java.util.UUID.randomUUID().toString(), wsId,
+            operationActor, type, id, mutation, operations.nextSequence(), actionTime,
+            org.json.JSONObject(payload).put("operationProtocolVersion", 2).toString()))
+    }
+
+    private suspend fun reconcileRejectedOperation(op: PendingOperationEntity): Boolean {
+        fun contextMatches() = getEffectiveActorUid() == op.actorUid && _activeWorkspaceId.value == op.workspaceId
+        if (!contextMatches()) return false
+        val cloud = firestoreRepository.getOperationRecordFromServer(op)
+        if (!contextMatches()) return false
+        if (op.entityType == "JOB") return com.example.data.sync.OfflineEntryRecovery.restore(database, op, cloud,
+            contextMatches = { contextMatches() }, recalculate = { recalculateCustomerStats(it, op.workspaceId, clearDeletedSourceBalance = true) })
+        val sourceId = if (op.entityType == "PAYMENT") org.json.JSONObject(op.payloadJson).getLong("jobEntryId") else null
+        val source = sourceId?.let { firestoreRepository.getEntryFromServer(op.workspaceId, it) }
+        return database.withTransaction {
+            if (!contextMatches()) return@withTransaction false
+            val pending = operations.outstandingOperations(op.workspaceId)
+            val newerRecord = pending.any { it.state == "PENDING" && it.entityType == op.entityType && it.entityId == op.entityId && it.sequence > op.sequence }
+            val pendingSource = sourceId != null && pending.any { it.state == "PENDING" &&
+                ((it.entityType == "JOB" && it.entityId == sourceId) ||
+                    (it.entityType == "PAYMENT" && it.operationId != op.operationId && org.json.JSONObject(it.payloadJson).optLong("jobEntryId") == sourceId)) }
+            if (newerRecord || pendingSource) return@withTransaction false
+            when(op.entityType) {
+                "CUSTOMER" -> if (cloud != null) customerDao.insertCustomer(com.example.data.firebase.customerFromFirestoreMap(cloud, op.entityId, op.workspaceId))
+                    else customerDao.getCustomerById(op.workspaceId, op.entityId)?.let { customerDao.deleteCustomer(it) }
+                "EXPENSE" -> if (cloud != null) expenseDao.insertExpense(com.example.data.firebase.expenseFromFirestoreMap(cloud, op.entityId, op.workspaceId))
+                    else {
+                        expenseDao.getExpenseById(op.workspaceId, op.entityId)?.let { expenseDao.deleteExpense(it) }
+                        if (op.mutationType == "DELETE" && op.state == "REJECTED" &&
+                            op.failureReason.startsWith("Confirmed state restored;"))
+                            operations.resolveAbsentExpenseDelete(op.operationId, op.workspaceId)
+                    }
+                "WITHDRAWAL" -> if (cloud != null) withdrawalDao.insertWithdrawal(com.example.data.firebase.withdrawalFromFirestoreMap(cloud, op.entityId, op.workspaceId))
+                    else withdrawalDao.getWithdrawalById(op.workspaceId, op.entityId)?.let { withdrawalDao.deleteWithdrawal(it) }
+                "PAYMENT" -> {
+                    if (cloud != null) paymentDao.insertPayment(com.example.data.firebase.paymentFromFirestoreMap(cloud, op.entityId, op.workspaceId))
+                    else paymentDao.deletePayment(op.workspaceId, op.entityId)
+                    if (source != null) { jobEntryDao.insertJob(source); recalculateCustomerStats(source.customerId, op.workspaceId) }
+                }
+            }
+            true
+        }
+    }
+
+    private fun clearCompoundDeleteMarkers(op: PendingOperationEntity) {
+        if (op.mutationType != "DELETE") return
+        pendingDeleteManager.removePendingDelete(op.entityType, op.entityId, op.workspaceId)
+        if (op.entityType == "JOB") {
+            val ids = org.json.JSONObject(op.payloadJson).optJSONArray("linkedExpenseIds")
+            if (ids != null) for (index in 0 until ids.length())
+                pendingDeleteManager.removePendingDelete("EXPENSE", ids.getLong(index), op.workspaceId)
+        }
+    }
+
+    private suspend fun acknowledge(op: PendingOperationEntity) {
+        database.withTransaction {
+            operations.acknowledge(op.operationId)
+            if (op.mutationType == "DELETE") pendingDeleteManager.removePendingDelete(op.entityType, op.entityId, op.workspaceId)
+            if (op.entityType == "JOB" && op.mutationType == "DELETE") {
+                val deletedSource = org.json.JSONObject(op.payloadJson)
+                val customerId = deletedSource.getLong("customerId")
+                val remainingOperations = operations.outstandingOperations(op.workspaceId)
+                val newerSourceWrite = remainingOperations.any {
+                    it.entityType == "JOB" && it.entityId == op.entityId && it.mutationType == "UPSERT" &&
+                        it.state == "PENDING" && it.sequence > op.sequence
+                }
+                // Repair a retained/stale local source only after the trusted server confirms deletion.
+                if (!newerSourceWrite) jobEntryDao.getJobById(op.workspaceId, op.entityId)?.takeIf {
+                    it.createdAt == deletedSource.optLong("createdAt")
+                }?.let { jobEntryDao.deleteJob(it) }
+                val linkedExpenseIds = deletedSource.optJSONArray("linkedExpenseIds")
+                if (linkedExpenseIds != null) for (index in 0 until linkedExpenseIds.length()) {
+                    val expenseId = linkedExpenseIds.getLong(index)
+                    expenseDao.getExpenseById(op.workspaceId, expenseId)?.takeIf {
+                        it.relatedJobId == op.entityId
+                    }?.let { expenseDao.deleteExpense(it) }
+                    pendingDeleteManager.removePendingDelete("EXPENSE", expenseId, op.workspaceId)
+                    operations.supersedeExpenseDeleteAfterEntryDelete(op.workspaceId, expenseId)
+                }
+                val deletedCollectionIds = deletedSource.optJSONArray("linkedCollectionIds")
+                if (deletedCollectionIds != null) for (index in 0 until deletedCollectionIds.length())
+                    paymentDao.deletePayment(op.workspaceId, deletedCollectionIds.getString(index).toLong())
+                val relatedPending = remainingOperations.any { remaining ->
+                    com.example.data.sync.OperationDependencies.blocksCustomerAcknowledgement(remaining, customerId)
+                }
+                if (!relatedPending) {
+                    // A pre-delete customer snapshot can arrive while its command is in flight.
+                    // Reconcile the acknowledged deletion before declaring its balance synced.
+                    recalculateCustomerStats(customerId, op.workspaceId, clearDeletedSourceBalance = true)
+                    customerDao.markCustomersSynced(op.workspaceId, listOf(customerId))
+                }
+            }
+            if (operations.outstanding(op.workspaceId, op.entityType, op.entityId) == 0 && op.mutationType != "DELETE") {
+                when (op.entityType) {
+                    "JOB" -> jobEntryDao.markJobsSynced(op.workspaceId, listOf(op.entityId))
+                    "EXPENSE" -> expenseDao.markExpensesSynced(op.workspaceId, listOf(op.entityId))
+                    "CUSTOMER" -> customerDao.markCustomersSynced(op.workspaceId, listOf(op.entityId))
+                    "WITHDRAWAL" -> withdrawalDao.markWithdrawalsSynced(op.workspaceId, listOf(op.entityId))
+                    "PAYMENT" -> {
+                        paymentDao.markPaymentsSynced(op.workspaceId, listOf(op.entityId))
+                        val jobId = org.json.JSONObject(op.payloadJson).optLong("jobEntryId")
+                        if (operations.outstandingOperations(op.workspaceId).none {
+                            com.example.data.sync.OperationDependencies.blocksEntryAcknowledgement(it, jobId)
+                        }) jobEntryDao.markJobsSynced(op.workspaceId, listOf(jobId))
+                    }
+                }
+            }
+            if (op.entityType in setOf("JOB", "PAYMENT") && op.mutationType != "DELETE") {
+                val customerId = org.json.JSONObject(op.payloadJson).optLong("customerId")
+                if (customerId > 0) recalculateCustomerStats(customerId, op.workspaceId)
+            }
+        }
     }
 
     // --- CRUD Bridge (Local + Cloud with Collision-Resistant IDs) ---
@@ -1539,10 +1665,31 @@ class WorkspaceRepository(
         linkedExpense: ExpenseEntity? = null,
         linkedExpenses: List<ExpenseEntity> = emptyList()
     ): Long {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
+
+        com.example.ui.util.requireOptionalContactPhone(job.customerPhone)
         Log.d("TRAC_AUTH", "activeUid=$activeUid")
         val isReady = isCloudReady()
         val wsId = getOrResolveWorkspaceId() ?: ""
-        val existingJob = if (job.id > 0) jobEntryDao.getJobById(job.id) else null
+        val existingJob = if (job.id > 0) jobEntryDao.getJobById(_activeWorkspaceId.value.orEmpty(), job.id) else null
+        if (existingJob != null && existingJob.workspaceId.isNotBlank() && existingJob.workspaceId != wsId) {
+            throw SecurityException("Entry does not belong to the active workspace")
+        }
+        val verifiedActorRole = requireWorkspaceActor(wsId)
+        if (job.workspaceId.isNotBlank() && job.workspaceId != wsId) throw SecurityException("Entry workspace mismatch")
+        val authenticatedUid = getEffectiveActorUid().orEmpty()
+        val entryTarget = existingJob?.entryForUid ?: job.entryForUid.ifBlank { authenticatedUid }
+        if (!com.example.data.auth.AuthorizationManager.canCreateEntryFor(isOwnerOfWorkspace(wsId), authenticatedUid, entryTarget)) {
+            throw SecurityException("Entry target must be the authenticated member")
+        }
+        if (existingJob == null && entryTarget != authenticatedUid && _activeWorkspaceMembers.value.none {
+            it.uid == entryTarget && it.workspaceId == wsId && it.status.equals("active", true)
+        }) throw SecurityException("Entry target is not an active workspace member")
+        if (verifiedActorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR && (linkedExpense != null || linkedExpenses.isNotEmpty())) {
+            throw SecurityException("Operators cannot create expenses")
+        }
         var customerId = job.customerId
         if (customerId <= 0) {
             if (existingJob != null && existingJob.customerId > 0) {
@@ -1552,42 +1699,48 @@ class WorkspaceRepository(
             }
         }
 
+        if (customerId > 0 && customerDao.getCustomerById(wsId, customerId) == null &&
+            jobEntryDao.getJobsForWorkspaceOnce(wsId).none { it.customerId == customerId }) throw SecurityException("Customer reference is outside this workspace")
+        if (job.tractorId > 0 && (existingJob == null || existingJob.tractorId != job.tractorId) &&
+            tractorDao.getTractorsForWorkspaceOnce(wsId).none { it.id == job.tractorId }) throw SecurityException("Tractor reference is outside this workspace")
+
         // Determine authorized person attribution
         val isOwner = isOwnerOfWorkspace(wsId)
-        val appSettings = appSettingsDao.getSettings().firstOrNull()
-        val currentActorName: String = if (isOwner) {
-            // Owner is authorized to record as self or on behalf of an active registered partner
-            val candidateName = job.addedByPartner.ifBlank { job.operatorName }
-            if (candidateName.isNotBlank()) {
-                candidateName
-            } else {
-                appSettings?.ownerName?.ifBlank { null } ?: appSettings?.activePartnerName?.ifBlank { null } ?: "Owner"
-            }
+        val actorUid = getEffectiveActorUid()?.trim().orEmpty()
+        val activeActorMember = if (!isOwner) {
+            _activeWorkspaceMembers.value.firstOrNull {
+                it.uid == actorUid && it.status.equals("active", ignoreCase = true)
+            } ?: throw SecurityException("Active workspace membership is required to create an entry")
         } else {
-            // PARTNER: MUST ALWAYS record entries under their own authenticated identity
-            appSettings?.activePartnerName?.ifBlank { null } ?: "Partner"
+            null
         }
+        val appSettings = appSettingsDao.getSettingsForWorkspaceOnce(wsId)
+        val currentActorName = _activeWorkspaceMembers.value.firstOrNull { it.uid == actorUid }?.displayName?.takeIf { it.isNotBlank() }
+            ?: if (isOwner) appSettings?.ownerName.orEmpty().ifBlank { "Owner" } else appSettings?.activePartnerName.orEmpty().ifBlank { "Member" }
 
-        val actorUid = getEffectiveActorUid() ?: ""
+        if (!isOwner && actorUid.isBlank()) {
+            throw SecurityException("Authenticated UID is required to create an entry")
+        }
         if (existingJob != null) {
+            requireRecordMembersActive(existingJob.createdByUid, existingJob.entryForUid)
             if (!isOwner && existingJob.createdByUid.isNotBlank() && existingJob.createdByUid != actorUid) {
                 Log.w(TAG, "Security rejection: Non-owner ($currentActorName, uid=$actorUid) cannot edit another person's entry (${existingJob.createdByUid})")
                 throw SecurityException("Unauthorized: You can only edit your own entries")
             }
             val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
-            val actorRole = if (isOwner) com.example.data.auth.RoleUtils.ROLE_OWNER else (currentMember?.role?.takeIf { it.isNotBlank() }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) } ?: com.example.data.auth.RoleUtils.ROLE_PARTNER)
-            if (!com.example.data.auth.AuthorizationManager.canEditEntry(existingJob, isOwner, currentActorName, actorUid, role = actorRole)) {
+            val actorRole = requireWorkspaceActor(wsId)
+            if (!com.example.data.auth.AuthorizationManager.canEditEntry(existingJob, isOwner, currentActorName, actorUid, role = actorRole, currentTimeMillis = operationTime)) {
                 Log.w(TAG, "Security rejection: User ($currentActorName, isOwner=$isOwner, uid=$actorUid, role=$actorRole) is not authorized to edit entry ${existingJob.id}")
                 throw SecurityException("Unauthorized to edit entry ${existingJob.id}")
             }
         } else {
             val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
-            val actorRole = if (isOwner) com.example.data.auth.RoleUtils.ROLE_OWNER else (currentMember?.role?.takeIf { it.isNotBlank() }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) } ?: com.example.data.auth.RoleUtils.ROLE_PARTNER)
+            val actorRole = requireWorkspaceActor(wsId)
             if (!isOwner && job.createdByUid.isNotBlank() && job.createdByUid != actorUid) {
                 Log.w(TAG, "Security rejection: Non-owner ($currentActorName, uid=$actorUid) cannot create entry for another person (${job.createdByUid})")
                 throw SecurityException("Unauthorized: Non-owner cannot create an entry for another person")
             }
-            val isHistorical = !com.example.data.auth.AuthorizationManager.isSameCalendarDay(job.startTimeMillis)
+            val isHistorical = job.isHistorical
             if (isHistorical && !com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner, role = actorRole)) {
                 Log.w(TAG, "Security rejection: User ($currentActorName, isOwner=$isOwner, uid=$actorUid, role=$actorRole) is not authorized to create old/historical entry")
                 throw SecurityException("Unauthorized: Old/historical entry creation is restricted to the workspace Owner")
@@ -1602,23 +1755,28 @@ class WorkspaceRepository(
         // - Owner can edit any entry, including partner entries.
         // - Preserve the original entry creation date/time exactly.
         // - Editing must never overwrite or reset the original entry timestamp or author.
-        val finalCreatedAt = existingJob?.createdAt ?: if (job.createdAt > 0) job.createdAt else System.currentTimeMillis()
-        val finalAddedBy = if (existingJob != null) {
+        val finalCreatedAt = existingJob?.createdAt ?: if (job.createdAt > 0) job.createdAt else operationTime
+        val finalAddedBy = if (!isOwner && existingJob == null) {
+            currentActorName
+        } else if (existingJob != null) {
             existingJob.addedByPartner.ifBlank { job.addedByPartner }
         } else {
-            job.addedByPartner.ifBlank { currentActorName }
+            currentActorName
         }
         val finalCreatedByUid = if (existingJob != null) {
             existingJob.createdByUid.ifBlank { job.createdByUid }
         } else {
-            job.createdByUid.ifBlank { actorUid }
+            actorUid
         }
         val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
         val resolvedDefaultRole = if (isOwner) "Owner" else (currentMember?.role?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() } ?: "Partner")
         val candidateRole = if (existingJob != null) {
             existingJob.createdByRole.ifBlank { job.createdByRole }.ifBlank { resolvedDefaultRole }
+        } else if (!isOwner) {
+            activeActorMember?.role?.ifBlank { null }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) }
+                ?: resolvedDefaultRole
         } else {
-            job.createdByRole.ifBlank { resolvedDefaultRole }
+            verifiedActorRole
         }
         val finalCreatedByRole = if (!isOwner && com.example.data.auth.RoleUtils.isOwner(candidateRole)) "Partner" else candidateRole
         val finalOperator = if (!isOwner) {
@@ -1639,17 +1797,9 @@ class WorkspaceRepository(
             job.customerName
         }
 
-        val isHistorical = job.notes.contains("Old", ignoreCase = true) ||
-                job.notes.contains("Historical", ignoreCase = true) ||
-                job.customerName.contains("old", ignoreCase = true) ||
-                job.workType.contains("Old", ignoreCase = true) ||
-                job.tractorLabel.contains("Old", ignoreCase = true)
+        val isHistorical = job.isHistorical
 
-        val finalCustomerPhone = if (existingJob != null && job.customerPhone.isBlank() && existingJob.customerPhone.isNotBlank() && job.pendingAmount > 0.0 && !isHistorical) {
-            existingJob.customerPhone
-        } else {
-            job.customerPhone
-        }
+        val finalCustomerPhone = com.example.ui.util.requireOptionalContactPhone(job.customerPhone)
 
         // Edited by attribution (Recorded when an existing entry is edited)
         val finalEditedByUid = if (existingJob != null) actorUid else ""
@@ -1657,7 +1807,18 @@ class WorkspaceRepository(
         val finalEditedByRole = if (existingJob != null) resolvedDefaultRole else ""
         val finalUpdatedAt = if (existingJob != null) System.currentTimeMillis() else 0L
 
-        val localJob = job.copy(
+        val identitySafeJob = if (!isOwner && existingJob == null) {
+            enforceSelfOnlyEntryIdentity(
+                job = job,
+                actorUid = actorUid,
+                actorRole = activeActorMember?.role ?: "",
+                actorDisplayName = currentActorName
+            )
+        } else {
+            job
+        }
+
+        val localJob = identitySafeJob.copy(
             id = safeJobId,
             workspaceId = wsId,
             customerId = customerId,
@@ -1672,9 +1833,29 @@ class WorkspaceRepository(
             editedByRole = finalEditedByRole,
             updatedAt = finalUpdatedAt,
             isSynced = false,
-            createdAt = finalCreatedAt
+            createdAt = finalCreatedAt,
+            isHistorical = existingJob?.isHistorical ?: job.isHistorical,
+            entryForUid = existingJob?.entryForUid ?: identitySafeJob.entryForUid.ifBlank { actorUid },
+            financialAttributionUid = existingJob?.financialAttributionUid ?: identitySafeJob.entryForUid.ifBlank { actorUid },
+            startTimeMillis = effectiveEntryStartTimeForEdit(existingJob, job)
         )
         jobEntryDao.insertJob(localJob)
+        com.example.data.auth.EntryFinancialMutationPolicy.requireAuthorized(verifiedActorRole, existingJob?.amountReceived, localJob.amountReceived)
+        val entrySnapshot = if (existingJob == null && localJob.amountReceived > 0) localJob.copy(amountReceived = 0.0, pendingAmount = localJob.totalAmount) else localJob
+        enqueue("JOB", localJob.id, entrySnapshot.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid)
+        if (existingJob == null && localJob.amountReceived > 0) {
+            val collection = PaymentEntity(id = IdGenerator.generateId(), workspaceId = wsId, jobEntryId = localJob.id,
+                customerId = customerId, customerName = localJob.customerName, tractorId = localJob.tractorId, tractorLabel = localJob.tractorLabel,
+                amount = localJob.amountReceived, collectedByUid = actorUid, collectedByName = currentActorName,
+                collectorUid = actorUid,
+                collectorName = _activeWorkspaceMembers.value.first { it.uid == actorUid && it.workspaceId == wsId }.displayName.orEmpty(),
+                collectorRole = _activeWorkspaceMembers.value.first { it.uid == actorUid && it.workspaceId == wsId }.role,
+                collectedByRole = verifiedActorRole, collectedAt = operationTime, createdAt = operationTime, isSynced = false,
+                allocationsJson = org.json.JSONArray().put(org.json.JSONObject().put("jobId", localJob.id).put("amount", localJob.amountReceived)).toString())
+            paymentDao.insertPayment(collection)
+            enqueue("PAYMENT", collection.id, collection.toFirestoreMap() + mapOf("entrySnapshotJson" to org.json.JSONObject(localJob.toFirestoreMap()).toString(),
+                "baseAmountReceived" to 0.0, "basePendingAmount" to localJob.totalAmount), expectedActorUid = operationActorUid, actionTime = operationTime)
+        }
 
         val allExpensesToSave = mutableListOf<ExpenseEntity>()
         if (linkedExpenses.isNotEmpty()) {
@@ -1685,14 +1866,19 @@ class WorkspaceRepository(
         val distinctExpenses = allExpensesToSave.distinctBy { if (it.id > 0) it.id else "${it.expenseType}_${it.amount}_${it.paidBy}" }
 
         // Reconcile: delete any existing linked expenses for this job that were removed in the edit form
-        val existingLinkedExpenses = if (safeJobId > 0) {
-            try { expenseDao.getExpensesForJob(safeJobId) } catch (e: Exception) { emptyList() }
+        if (verifiedActorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR && distinctExpenses.isNotEmpty()) throw SecurityException("Operators cannot mutate Expenses")
+        val existingLinkedExpenses = if (safeJobId > 0 && verifiedActorRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR) {
+            try { expenseDao.getExpensesForJob(_activeWorkspaceId.value.orEmpty(), safeJobId) } catch (e: Exception) { emptyList() }
         } else emptyList()
         val newExpenseIds = distinctExpenses.map { it.id }.filter { it > 0 }.toSet()
         val deletedLinkedExpenses = existingLinkedExpenses.filter { it.id !in newExpenseIds }
 
         for (delExp in deletedLinkedExpenses) {
+            if (delExp.workspaceId != wsId || !com.example.data.auth.AuthorizationManager.canDeleteExpense(delExp, isOwner, currentUid = actorUid, role = verifiedActorRole))
+                throw SecurityException("A linked expense cannot be deleted by this member")
+            requireRecordMembersActive(delExp.createdByUid, delExp.expenseForUid)
             expenseDao.deleteExpense(delExp)
+            enqueue("EXPENSE", delExp.id, delExp.toFirestoreMap(), "DELETE", expectedActorUid = operationActorUid, actionTime = operationTime)
             if (wsId.isNotBlank()) {
                 pendingDeleteManager.recordPendingDelete("EXPENSE", delExp.id, wsId)
             }
@@ -1700,12 +1886,21 @@ class WorkspaceRepository(
 
         val savedExpensesList = mutableListOf<ExpenseEntity>()
         for (exp in distinctExpenses) {
+            val originalExpense = existingLinkedExpenses.firstOrNull { it.id == exp.id }
+            if (originalExpense != null) {
+                if (originalExpense.workspaceId != wsId || !com.example.data.auth.AuthorizationManager.canEditExpense(originalExpense, isOwner, currentUid = actorUid, role = verifiedActorRole))
+                    throw SecurityException("A linked expense cannot be edited by this member")
+                requireRecordMembersActive(originalExpense.createdByUid, originalExpense.expenseForUid)
+            }
             val safeExpId = if (exp.id > 0) exp.id else IdGenerator.generateId()
+            // Personal funding refers to the authorized selected Entry member, not its creator.
+            // Existing Expenses retain their recorded payer when edited.
+            val effectivePaidByUid = com.example.ui.viewmodel.linkedExpensePayerUid(
+                exp.paidBy, originalExpense?.paidByUid.orEmpty(), if (isOwner) entryTarget else actorUid)
             val effectivePartner = if (exp.paidBy == "I Paid") {
-                if (exp.paidByPartner.isNotBlank()) exp.paidByPartner else finalAddedBy
-            } else ""
-            val effectivePaidByUid = if (exp.paidBy == "I Paid") {
-                exp.paidByUid.ifBlank { finalCreatedByUid }
+                originalExpense?.paidByPartner?.takeIf { it.isNotBlank() }
+                    ?: _activeWorkspaceMembers.value.firstOrNull { it.uid == effectivePaidByUid }?.displayName
+                    ?: finalOperator
             } else ""
             val localExp = exp.copy(
                 id = safeExpId,
@@ -1715,12 +1910,16 @@ class WorkspaceRepository(
                 paidBy = exp.paidBy,
                 paidByPartner = effectivePartner,
                 paidByUid = effectivePaidByUid,
-                createdByUid = exp.createdByUid.ifBlank { finalCreatedByUid },
-                createdByRole = exp.createdByRole.ifBlank { finalCreatedByRole },
+                createdByUid = existingLinkedExpenses.firstOrNull { it.id == safeExpId }?.createdByUid ?: actorUid,
+                createdByRole = existingLinkedExpenses.firstOrNull { it.id == safeExpId }?.createdByRole ?: verifiedActorRole,
+                expenseForUid = if (isOwner) exp.expenseForUid.ifBlank { entryTarget } else actorUid,
+                financialAttributionUid = if (isOwner) exp.expenseForUid.ifBlank { entryTarget } else actorUid,
+                createdAt = originalExpense?.createdAt ?: operationTime,
                 relatedJobId = safeJobId,
                 isSynced = false
             )
             expenseDao.insertExpense(localExp)
+            enqueue("EXPENSE", localExp.id, localExp.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
             savedExpensesList.add(localExp)
         }
 
@@ -1728,48 +1927,13 @@ class WorkspaceRepository(
 
         // Push to Cloud Workspace asynchronously so local write returns immediately
         Log.d("TRAC_WORKSPACE", "workspaceId=$wsId isCloudReady=$isReady")
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.saveJobEntry(wsId, localJob, activeUid)
-                    jobEntryDao.markJobsSynced(listOf(safeJobId))
-                    Log.d("TRAC_ENTRY", "marked synced id=$safeJobId")
-                } catch (e: Exception) {
-                    Log.w("TRAC_FIRESTORE", "Job cloud sync deferred: ${e.message}")
-                }
 
-                for (delExp in deletedLinkedExpenses) {
-                    try {
-                        firestoreRepository.deleteExpense(wsId, delExp.id)
-                        pendingDeleteManager.removePendingDelete("EXPENSE", delExp.id, wsId)
-                    } catch (e: Exception) {
-                        Log.w("TRAC_FIRESTORE", "Deleted linked expense cloud sync deferred: ${e.message}")
-                    }
-                }
 
-                for (savedExp in savedExpensesList) {
-                    try {
-                        firestoreRepository.saveExpense(wsId, savedExp, activeUid)
-                        expenseDao.markExpensesSynced(listOf(savedExp.id))
-                    } catch (e: Exception) {
-                        Log.w("TRAC_FIRESTORE", "Linked expense cloud sync deferred: ${e.message}")
-                    }
-                }
-                val cust = customerDao.getCustomerById(customerId)
-                if (cust != null) {
-                    try {
-                        firestoreRepository.saveCustomer(wsId, cust, activeUid)
-                        customerDao.markCustomersSynced(listOf(cust.id))
-                    } catch (e: Exception) {
-                        Log.w("TRAC_FIRESTORE", "Customer cloud sync deferred: ${e.message}")
-                    }
-                }
-            }
-        } else {
-            Log.d("TRAC_WORKSPACE", "workspace not ready for cloud writes, keeping local isSynced=false")
+        return@withTransaction safeJobId
+
         }
-
-        return safeJobId
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
     /**
@@ -1785,26 +1949,12 @@ class WorkspaceRepository(
      *  3. Partner (safe default — never grants Owner)
      */
     fun resolveRoleForWorkspace(wsId: String, actorUid: String? = null): String {
-        val uid = (actorUid ?: getEffectiveActorUid())?.takeIf { it.isNotBlank() } ?: ""
-        val isActiveWs = wsId.isBlank() || wsId == _activeWorkspaceId.value
-        val isSelf = actorUid == null || actorUid == getEffectiveActorUid()
-        if (isActiveWs && isSelf && !_isCollaborationOwner.value) {
-            val sessionRole = currentUserRole?.takeIf { it.isNotBlank() }
-            if (sessionRole != null && !com.example.data.auth.RoleUtils.isOwner(sessionRole)) {
-                return com.example.data.auth.RoleUtils.normalizeRole(sessionRole)
-            }
-            return com.example.data.auth.RoleUtils.ROLE_PARTNER
-        }
-        if (uid.isNotBlank() && wsId.isNotBlank()) {
-            workspaceMembers.value.firstOrNull { it.uid == uid }?.role
-                ?.takeIf { it.isNotBlank() }
-                ?.let { return com.example.data.auth.RoleUtils.normalizeRole(it) }
-        }
-        val sessionRole = currentUserRole?.takeIf { it.isNotBlank() }
-        if (sessionRole != null && isActiveWs) {
-            return com.example.data.auth.RoleUtils.normalizeRole(sessionRole)
-        }
-        return com.example.data.auth.RoleUtils.ROLE_PARTNER
+        val uid = (actorUid ?: getEffectiveActorUid()).orEmpty()
+        if (uid.isBlank() || wsId.isBlank() || wsId != _activeWorkspaceId.value) return ""
+        val member = _activeWorkspaceMembers.value.firstOrNull {
+            it.uid == uid && it.workspaceId == wsId && it.status.equals("active", true)
+        } ?: return ""
+        return com.example.data.auth.RoleUtils.normalizeRole(member.role)
     }
 
     /**
@@ -1815,198 +1965,237 @@ class WorkspaceRepository(
      * shortcut, because that inference is what misclassified Partners as Owners.
      */
     fun isOwnerOfWorkspace(wsId: String): Boolean {
-        if (wsId.isBlank() || wsId == _activeWorkspaceId.value) {
-            return _isCollaborationOwner.value
-        }
-        val resolved = resolveRoleForWorkspace(wsId)
-        return resolved == com.example.data.auth.RoleUtils.ROLE_OWNER ||
-            resolved == com.example.data.auth.RoleUtils.ROLE_CO_OWNER
+        return resolveRoleForWorkspace(wsId) == com.example.data.auth.RoleUtils.ROLE_OWNER
     }
 
     suspend fun deleteJob(job: JobEntryEntity) {
-        val wsId = job.workspaceId.ifBlank { getOrResolveWorkspaceId() ?: "" }
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val wsId = _activeWorkspaceId.value.orEmpty()
+        val actorUid = getEffectiveActorUid().orEmpty()
+        require(wsId.isNotBlank() && job.workspaceId == wsId) { "Entry workspace mismatch" }
+        database.withTransaction {
+            val role = requireWorkspaceActor(wsId)
+            val stored = jobEntryDao.getJobById(wsId, job.id)
+            if (stored == null) {
+                require(operations.outstandingOperations(wsId).any {
+                    it.actorUid == actorUid && it.entityType == "JOB" && it.entityId == job.id && it.mutationType == "DELETE"
+                }) { "Entry is no longer available; refresh before retrying" }
+                return@withTransaction
+            }
+            requireRecordMembersActive(stored.createdByUid, stored.entryForUid)
+            val owner = isOwnerOfWorkspace(wsId)
+            require(com.example.data.auth.AuthorizationManager.canDeleteEntry(stored, owner, currentActorName = "", currentUid = actorUid, role = role, currentTimeMillis = operationTime)) {
+                "You cannot delete this Entry: check ownership, role and the 24-hour deadline"
+            }
+            val payments = paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty()
+            val linked = payments.filter { com.example.data.sync.EntryDeletionPolicy.references(it, stored.id) }
+            val collectionDeletes = com.example.data.sync.EntryDeletionPolicy.plannedCollectionDeletes(
+                stored, linked, owner, actorUid, role, operationTime)
+            val expenses = expenseDao.getExpensesForJob(wsId, stored.id)
+            com.example.data.sync.EntryDeletionPolicy.requireNoLinkedExpenses(stored, expenses, owner, actorUid, role)
+            val dependencies = operations.outstandingOperations(wsId).filter {
+                (it.entityType == "PAYMENT" && com.example.data.sync.OperationDependencies.references(it).contains("JOB" to stored.id)) ||
+                    (it.entityType == "EXPENSE" && org.json.JSONObject(it.payloadJson).optLong("relatedJobId") == stored.id)
+            }
+            // Pending children upload in dependency order before this compound command.
+            // Rejected financial writes still need explicit resolution and are never retried here.
+            val supersededExpenseDeletes = dependencies.filter { it.state == "REJECTED" &&
+                it.entityType == "EXPENSE" && it.mutationType == "DELETE" && expenses.any { expense -> expense.id == it.entityId }
+            }
+            require(dependencies.none { it.state == "REJECTED" && it !in supersededExpenseDeletes }) {
+                "Resolve the rejected linked operation before deleting this Entry"
+            }
+            require(_activeWorkspaceId.value == wsId && getEffectiveActorUid() == actorUid) { "Workspace or account changed; retry in the original workspace" }
+            val payload = stored.toFirestoreMap().toMutableMap()
+            payload["linkedExpenseIds"] = org.json.JSONArray().apply {
+                expenses.forEach { put(it.id.toString()) }
+            }
+            payload["linkedExpenseSnapshots"] = org.json.JSONArray().apply {
+                expenses.forEach { put(org.json.JSONObject(it.toFirestoreMap())) }
+            }
+            payload["linkedCollectionIds"] = org.json.JSONArray().apply {
+                collectionDeletes.forEach { put(it.id.toString()) }
+            }
+            payload["linkedCollectionSnapshots"] = org.json.JSONArray().apply {
+                collectionDeletes.forEach { put(org.json.JSONObject(it.toFirestoreMap())) }
+            }
+            payload["deleteDependencies"] = dependencies.filterNot { it in supersededExpenseDeletes }
+                .map { mapOf("type" to it.entityType, "id" to it.entityId) }
+            jobEntryDao.deleteJob(stored)
+            expenses.forEach { expenseDao.deleteExpense(it) }
+            collectionDeletes.forEach { paymentDao.deletePayment(it) }
+            operations.invalidateRejectedEntryDelete(wsId, actorUid, stored.id)
+            enqueue("JOB", stored.id, payload, "DELETE", expectedActorUid = operationActorUid, actionTime = operationTime)
+            recalculateCustomerStats(stored.customerId, wsId, clearDeletedSourceBalance = true)
+        }
+        pendingDeleteManager.recordPendingDelete("JOB", job.id, wsId)
+        val queued = operations.outstandingOperations(wsId).firstOrNull {
+            it.entityType == "JOB" && it.entityId == job.id && it.mutationType == "DELETE" && it.state == "PENDING"
+        }
+        queued?.let { op ->
+            val ids = org.json.JSONObject(op.payloadJson).optJSONArray("linkedExpenseIds")
+            if (ids != null) for (index in 0 until ids.length())
+                pendingDeleteManager.recordPendingDelete("EXPENSE", ids.getLong(index), wsId)
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud(wsId) }
+    }
+
+    suspend fun getExpensesForJob(jobId: Long): List<ExpenseEntity> {
+        val wsId = _activeWorkspaceId.value.orEmpty()
+        val role = requireWorkspaceActor(wsId)
+        if (role == com.example.data.auth.RoleUtils.ROLE_OPERATOR) return emptyList()
+        return expenseDao.getExpensesForJob(wsId, jobId)
+    }
+
+    suspend fun addExpense(expense: ExpenseEntity): Long {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
+
+        val isReady = isCloudReady()
+        val wsId = getOrResolveWorkspaceId() ?: ""
+        val safeExpId = if (expense.id > 0) expense.id else IdGenerator.generateId()
+        val actorUid = getEffectiveActorUid() ?: ""
         val isOwner = isOwnerOfWorkspace(wsId)
-        val appSettings = appSettingsDao.getSettings().firstOrNull()
-        val currentActorName: String = if (isOwner) {
+        val appSettings = appSettingsDao.getSettingsForWorkspaceOnce(wsId)
+        val currentActorName = if (isOwner) {
             appSettings?.ownerName?.ifBlank { null } ?: appSettings?.activePartnerName?.ifBlank { null } ?: "Owner"
         } else {
             appSettings?.activePartnerName?.ifBlank { null } ?: "Partner"
         }
-
-        val actorUid = getEffectiveActorUid() ?: ""
         val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
-        val actorRole = if (isOwner) com.example.data.auth.RoleUtils.ROLE_OWNER else (currentMember?.role?.takeIf { it.isNotBlank() }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) } ?: com.example.data.auth.RoleUtils.ROLE_PARTNER)
-        // STRICT SECURITY / ROLE CHECK USING CENTRALIZED AUTHORIZATION
-        if (!com.example.data.auth.AuthorizationManager.canDeleteEntry(job, isOwner, currentActorName, actorUid, role = actorRole)) {
-            Log.w(TAG, "Security rejection: User ($currentActorName, isOwner=$isOwner, uid=$actorUid, role=$actorRole) is not authorized to delete entry ${job.id} (created by ${job.addedByPartner} at ${job.createdAt})")
-            return
-        }
+        val actorRole = requireWorkspaceActor(wsId)
 
-        // Atomically retrieve and delete any linked job expenses
-        val linkedExpenses = try { expenseDao.getExpensesForJob(job.id) } catch (e: Exception) { emptyList() }
-        linkedExpenses.forEach { exp ->
-            expenseDao.deleteExpense(exp)
-            if (wsId.isNotBlank()) {
-                pendingDeleteManager.recordPendingDelete("EXPENSE", exp.id, wsId)
-            }
-        }
+        if (actorRole != com.example.data.auth.RoleUtils.ROLE_OWNER && actorRole != com.example.data.auth.RoleUtils.ROLE_PARTNER) throw SecurityException("Expenses are unavailable for this role")
+        if (expense.workspaceId.isNotBlank() && expense.workspaceId != wsId) throw SecurityException("Expense workspace mismatch")
+        val targetUid = if (isOwner) expense.expenseForUid.ifBlank { actorUid } else actorUid
+        if (_activeWorkspaceMembers.value.none { it.uid == targetUid && it.workspaceId == wsId && it.status.equals("active", true) }) throw SecurityException("Expense target is not active")
 
-        jobEntryDao.deleteJob(job)
-        recalculateCustomerStats(job.customerId)
-        if (wsId.isNotBlank()) {
-            pendingDeleteManager.recordPendingDelete("JOB", job.id, wsId)
-        }
-
-        val isReady = isCloudReady()
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    linkedExpenses.forEach { exp ->
-                        try {
-                            firestoreRepository.deleteExpense(wsId, exp.id)
-                            pendingDeleteManager.removePendingDelete("EXPENSE", exp.id, wsId)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Linked expense delete cloud sync deferred: ${e.message}")
-                        }
-                    }
-                    firestoreRepository.deleteJob(wsId, job.id)
-                    pendingDeleteManager.removePendingDelete("JOB", job.id, wsId)
-                    val cust = customerDao.getCustomerById(job.customerId)
-                    if (cust != null) {
-                        firestoreRepository.saveCustomer(wsId, cust, activeUid)
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Job delete cloud sync deferred: ${e.message}")
-                }
-            }
-        }
-    }
-
-    suspend fun getExpensesForJob(jobId: Long): List<ExpenseEntity> {
-        return try {
-            expenseDao.getExpensesForJob(jobId)
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
-
-    suspend fun addExpense(expense: ExpenseEntity): Long {
-        val isReady = isCloudReady()
-        val wsId = getOrResolveWorkspaceId() ?: ""
-        val safeExpId = if (expense.id > 0) expense.id else IdGenerator.generateId()
-        val currentUid = activeUid ?: ""
-        val effectiveCreatedByUid = expense.createdByUid.ifBlank { currentUid }
-        val effectivePaidByUid = if (expense.paidBy == "I Paid") {
-            expense.paidByUid.ifBlank { currentUid }
+        // Requirement 2: PARTNER EXPENSE OWNERSHIP
+        // When logged in as a Partner, the Partner must not be able to create an Expense on behalf of another Partner.
+        // Partner expense creation must be for the current Partner only.
+        val finalExpense = if (!isOwner) {
+            expense.copy(
+                id = safeExpId,
+                workspaceId = wsId,
+                operatorName = currentActorName,
+                addedByPartner = currentActorName,
+                paidBy = expense.paidBy,
+                paidByPartner = if (expense.paidBy == "I Paid") currentActorName else "",
+                paidByUid = if (expense.paidBy == "I Paid") actorUid else "",
+                createdByUid = actorUid,
+                createdByRole = actorRole,
+                isSynced = false
+            )
         } else {
-            ""
+            val finalCreatedByUid = actorUid
+            val finalCreatedByRole = actorRole
+            expense.copy(
+                id = safeExpId,
+                workspaceId = wsId,
+                createdByUid = finalCreatedByUid,
+                createdByRole = finalCreatedByRole,
+                isSynced = false
+            )
         }
-        val savedExp = expense.copy(
-            id = safeExpId,
-            workspaceId = wsId,
-            createdByUid = effectiveCreatedByUid,
-            paidByUid = effectivePaidByUid,
-            isSynced = false
-        )
-        expenseDao.insertExpense(savedExp)
+        val attributedExpense = finalExpense.copy(expenseForUid = targetUid, financialAttributionUid = targetUid)
+        expenseDao.insertExpense(attributedExpense)
+        enqueue("EXPENSE", attributedExpense.id, attributedExpense.toFirestoreMap(), expectedActorUid = operationActorUid, actionTime = operationTime)
 
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.saveExpense(wsId, savedExp, activeUid)
-                    expenseDao.markExpensesSynced(listOf(safeExpId))
-                } catch (e: Exception) {
-                    Log.w("TRAC_FIRESTORE", "Expense cloud sync deferred: ${e.message}")
-                }
-            }
+
+        return@withTransaction safeExpId
+
         }
-        return safeExpId
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
     suspend fun updateExpense(expense: ExpenseEntity) {
-        val wsId = expense.workspaceId.ifBlank { getOrResolveWorkspaceId() ?: "" }
-        val isOwner = isOwnerOfWorkspace(wsId)
-        val actorUid = getEffectiveActorUid() ?: ""
-        val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
-        val actorRole = if (isOwner) com.example.data.auth.RoleUtils.ROLE_OWNER else (currentMember?.role?.takeIf { it.isNotBlank() }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) } ?: com.example.data.auth.RoleUtils.ROLE_PARTNER)
-
-        if (!com.example.data.auth.AuthorizationManager.canEditExpense(
-                expenseCreatedByUid = expense.createdByUid,
-                expensePaidByUid = expense.paidByUid,
-                expenseCreatedAt = expense.createdAt,
-                isOwner = isOwner,
-                currentUid = actorUid,
-                role = actorRole
-        )) {
-            Log.w(TAG, "Security rejection: Actor (uid=$actorUid, role=$actorRole, isOwner=$isOwner) is not authorized to edit expense ${expense.id}")
-            return
-        }
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
 
         val isReady = isCloudReady()
-        val effectiveCreatedByUid = expense.createdByUid.ifBlank { actorUid }
-        val effectivePaidByUid = if (expense.paidBy == "I Paid") {
-            expense.paidByUid.ifBlank { actorUid }
+        val wsId = getOrResolveWorkspaceId() ?: expense.workspaceId
+        val actorUid = getEffectiveActorUid() ?: ""
+        val isOwner = isOwnerOfWorkspace(wsId)
+        val appSettings = appSettingsDao.getSettingsForWorkspaceOnce(wsId)
+        val currentActorName = if (isOwner) {
+            appSettings?.ownerName?.ifBlank { null } ?: appSettings?.activePartnerName?.ifBlank { null } ?: "Owner"
         } else {
-            ""
+            appSettings?.activePartnerName?.ifBlank { null } ?: "Partner"
         }
+        val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
+        val actorRole = requireWorkspaceActor(wsId)
+
+        val original = expenseDao.getExpenseById(_activeWorkspaceId.value.orEmpty(), expense.id)
+        val expenseToCheck = original ?: throw SecurityException("Expense no longer exists")
+        requireRecordMembersActive(expenseToCheck.createdByUid, expenseToCheck.expenseForUid)
+        if (expenseToCheck.workspaceId != wsId || expense.workspaceId != wsId) throw SecurityException("Expense workspace mismatch")
+
+        if (!com.example.data.auth.AuthorizationManager.canEditExpense(expenseToCheck, isOwner, currentActorName, actorUid, role = actorRole, currentTimeMillis = operationTime)) {
+            Log.w(TAG, "Security rejection: User ($currentActorName, isOwner=$isOwner, uid=$actorUid, role=$actorRole) is not authorized to edit expense ${expense.id}")
+            throw SecurityException("Unauthorized to edit expense ${expense.id}")
+        }
+
         val updated = expense.copy(
             workspaceId = wsId,
-            createdByUid = effectiveCreatedByUid,
-            paidByUid = effectivePaidByUid,
+            expenseForUid = expenseToCheck.expenseForUid,
+            financialAttributionUid = expenseToCheck.financialAttributionUid,
+            createdAt = original?.createdAt ?: expense.createdAt,
+            createdByUid = if (original != null && original.createdByUid.isNotBlank()) original.createdByUid else (expense.createdByUid.ifBlank { actorUid }),
+            createdByRole = if (original != null && original.createdByRole.isNotBlank()) original.createdByRole else (expense.createdByRole.ifBlank { actorRole }),
             isSynced = false
         )
         expenseDao.updateExpense(updated)
+        enqueue("EXPENSE", updated.id, updated.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid)
 
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.saveExpense(wsId, updated, activeUid)
-                    expenseDao.markExpensesSynced(listOf(updated.id))
-                } catch (e: Exception) {
-                    Log.w("TRAC_FIRESTORE", "Expense update cloud sync deferred: ${e.message}")
-                }
-            }
+
+
         }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
-    suspend fun deleteExpense(expense: ExpenseEntity) {
+    suspend fun deleteExpense(expenseInput: ExpenseEntity) {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
+        val expense = expenseDao.getExpenseById(_activeWorkspaceId.value.orEmpty(), expenseInput.id) ?: throw SecurityException("Record no longer exists")
+        requireRecordMembersActive(expense.createdByUid, expense.expenseForUid)
+        if (expense.workspaceId != _activeWorkspaceId.value) throw SecurityException("Record is outside the active workspace")
+
+
         val wsId = expense.workspaceId.ifBlank { getOrResolveWorkspaceId() ?: "" }
         val actorUid = getEffectiveActorUid() ?: ""
+        val isOwner = isOwnerOfWorkspace(wsId)
+        val appSettings = appSettingsDao.getSettingsForWorkspaceOnce(wsId)
+        val currentActorName = if (isOwner) {
+            appSettings?.ownerName?.ifBlank { null } ?: appSettings?.activePartnerName?.ifBlank { null } ?: "Owner"
+        } else {
+            appSettings?.activePartnerName?.ifBlank { null } ?: "Partner"
+        }
         val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
-        val rawRole = currentMember?.role?.takeIf { it.isNotBlank() } ?: resolveRoleForWorkspace(wsId)
-        val actorRole = com.example.data.auth.RoleUtils.normalizeRole(rawRole)
-        val isOwner = isOwnerOfWorkspace(wsId) && actorRole != com.example.data.auth.RoleUtils.ROLE_PARTNER && actorRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR
+        val actorRole = requireWorkspaceActor(wsId)
 
-        val effectiveCreatedAt = if (expense.createdAt > 0) expense.createdAt else expense.dateTimestamp
-
-        if (!com.example.data.auth.AuthorizationManager.canDeleteExpense(
-                expenseCreatedByUid = expense.createdByUid,
-                expensePaidByUid = expense.paidByUid,
-                expenseCreatedAt = effectiveCreatedAt,
-                isOwner = isOwner,
-                currentUid = actorUid,
-                role = actorRole
-        )) {
-            Log.w(TAG, "Security rejection: Actor (uid=$actorUid, role=$actorRole, isOwner=$isOwner) is not authorized to delete expense ${expense.id}")
-            return
+        if (!com.example.data.auth.AuthorizationManager.canDeleteExpense(expense, isOwner, currentActorName, actorUid, role = actorRole, currentTimeMillis = operationTime)) {
+            Log.w(TAG, "Security rejection: User ($currentActorName, isOwner=$isOwner, uid=$actorUid, role=$actorRole) is not authorized to delete expense ${expense.id}")
+            throw SecurityException("Unauthorized to delete expense ${expense.id}")
         }
 
         expenseDao.deleteExpense(expense)
+        enqueue("EXPENSE", expense.id, expense.toFirestoreMap(), "DELETE", actionTime = operationTime, expectedActorUid = operationActorUid)
         if (wsId.isNotBlank()) {
             pendingDeleteManager.recordPendingDelete("EXPENSE", expense.id, wsId)
         }
 
         val isReady = isCloudReady()
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.deleteExpense(wsId, expense.id)
-                    pendingDeleteManager.removePendingDelete("EXPENSE", expense.id, wsId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Expense delete cloud sync deferred: ${e.message}")
-                }
-            }
+
+
         }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
     /**
@@ -2014,44 +2203,32 @@ class WorkspaceRepository(
      * Formula: Total Received (collected payments) - Total Expenses - Total Withdrawals
      * This represents the actual cash available in the business, NOT the accrual-based
      * profit which would include unpaid invoices (totalRecorded - totalReceived).
-     * 
+     *
      * NOTE: This is a cash-basis calculation. If accrual-basis balance is needed
      * (including pending receivables), a separate method should be implemented.
      */
     suspend fun getAvailableBalance(): Double {
         val wsId = getOrResolveWorkspaceId() ?: return 0.0
-        val totalRec = jobEntryDao.getTotalReceivedForWorkspace(wsId).firstOrNull() ?: 0.0
-        val totalExp = expenseDao.getTotalExpensesForWorkspace(wsId).firstOrNull() ?: 0.0
-        val totalWth = withdrawalDao.getTotalWithdrawnForWorkspace(wsId).firstOrNull() ?: 0.0
-        return totalRec - totalExp - totalWth
+        return com.example.ui.util.FinancialCalculationEngine.cashAvailable(
+            paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty(),
+            expenseDao.getExpensesForWorkspaceOnce(wsId),
+            withdrawalDao.getWithdrawalsForWorkspaceOnce(wsId),
+            com.example.ui.util.FinancialScope(workspaceId = wsId)
+        )
     }
 
     suspend fun addWithdrawal(withdrawal: WithdrawalEntity): Long {
-        val actorUid = getEffectiveActorUid() ?: withdrawal.createdByUid.ifBlank { null } ?: ""
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
+
+        val actorUid = getEffectiveActorUid().orEmpty()
         val wsId = getOrResolveWorkspaceId() ?: withdrawal.workspaceId
         val isOwner = isOwnerOfWorkspace(wsId)
-        val members = workspaceMembers.value
+        val members = _activeWorkspaceMembers.value
         val currentMember = members.firstOrNull { it.uid == actorUid }
-        val actorRole = if (isOwner) {
-            com.example.data.auth.RoleUtils.ROLE_OWNER
-        } else {
-            currentMember?.role?.takeIf { it.isNotBlank() }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) }
-                ?: withdrawal.createdByRole.takeIf { it.isNotBlank() }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) }
-                ?: com.example.data.auth.RoleUtils.ROLE_PARTNER
-        }
-
-        var targetUid = withdrawal.targetPartnerUid.trim()
-        if (targetUid.isBlank()) {
-            targetUid = if (actorRole == com.example.data.auth.RoleUtils.ROLE_PARTNER) {
-                val targetMember = members.firstOrNull {
-                    it.displayName?.trim()?.equals(withdrawal.partnerName.trim(), ignoreCase = true) == true
-                }
-                targetMember?.uid ?: if (withdrawal.partnerName.isBlank() || withdrawal.partnerName.trim().equals(currentMember?.displayName?.trim(), ignoreCase = true)) actorUid else "unresolved_target"
-            } else {
-                members.firstOrNull { it.displayName?.trim()?.equals(withdrawal.partnerName.trim(), ignoreCase = true) == true }?.uid ?: actorUid
-            }
-        }
-
+        val actorRole = requireWorkspaceActor(wsId)
+        val targetUid = if (isOwner) withdrawal.targetPartnerUid.ifBlank { actorUid } else actorUid
         // STRICT DEFENSE-IN-DEPTH: Reject unauthorized callers BEFORE Room insertion
         if (!com.example.data.auth.AuthorizationManager.canCreateWithdrawal(
                 actorUid = actorUid,
@@ -2083,250 +2260,146 @@ class WorkspaceRepository(
             targetPartnerUid = targetUid
         )
         withdrawalDao.insertWithdrawal(saved)
+        enqueue("WITHDRAWAL", saved.id, saved.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
 
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.saveWithdrawal(wsId, saved, actorUid)
-                    withdrawalDao.markWithdrawalsSynced(listOf(safeWithId))
-                } catch (e: Exception) {
-                    Log.w("TRAC_FIRESTORE", "Withdrawal cloud sync deferred: ${e.message}")
-                }
-            }
+
+        return@withTransaction safeWithId
+
         }
-        return safeWithId
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
     suspend fun updateWithdrawal(withdrawal: WithdrawalEntity) {
-        val actorUid = getEffectiveActorUid() ?: withdrawal.createdByUid.ifBlank { null } ?: ""
-        val wsId = getOrResolveWorkspaceId() ?: withdrawal.workspaceId
-        val isOwner = isOwnerOfWorkspace(wsId)
-        val members = workspaceMembers.value
-        val currentMember = members.firstOrNull { it.uid == actorUid }
-        val actorRole = if (isOwner) {
-            com.example.data.auth.RoleUtils.ROLE_OWNER
-        } else {
-            currentMember?.role?.takeIf { it.isNotBlank() }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) }
-                ?: withdrawal.createdByRole.takeIf { it.isNotBlank() }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) }
-                ?: com.example.data.auth.RoleUtils.ROLE_PARTNER
-        }
-        val targetUid = withdrawal.targetPartnerUid.ifBlank { actorUid }
-
-        if (!com.example.data.auth.AuthorizationManager.canCreateWithdrawal(
-                actorUid = actorUid,
-                actorRole = actorRole,
-                targetUid = targetUid,
-                workspaceId = wsId,
-                workspaceMembers = members
-            )
-        ) {
-            Log.w(TAG, "Security rejection: Actor (uid=$actorUid, role=$actorRole) is not authorized to update withdrawal for target (uid=$targetUid)")
-            throw SecurityException("Unauthorized withdrawal update attempt for member: ${withdrawal.partnerName}")
-        }
-        val isReady = isCloudReady()
-        val updated = withdrawal.copy(
-            workspaceId = wsId,
-            isSynced = false,
-            createdByUid = actorUid,
-            createdByRole = actorRole,
-            targetPartnerUid = targetUid
-        )
-        withdrawalDao.updateWithdrawal(updated)
-
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.saveWithdrawal(wsId, updated, actorUid)
-                    withdrawalDao.markWithdrawalsSynced(listOf(updated.id))
-                } catch (e: Exception) {
-                    Log.w("TRAC_FIRESTORE", "Withdrawal update cloud sync deferred: ${e.message}")
-                }
-            }
-        }
+        throw SecurityException("Withdrawals cannot be edited; delete and recreate the record")
     }
 
-    suspend fun deleteWithdrawal(withdrawal: WithdrawalEntity) {
+    suspend fun deleteWithdrawal(withdrawalInput: WithdrawalEntity) {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
+        val withdrawal = withdrawalDao.getWithdrawalById(_activeWorkspaceId.value.orEmpty(), withdrawalInput.id) ?: throw SecurityException("Record no longer exists")
+        requireRecordMembersActive(withdrawal.createdByUid, withdrawal.targetPartnerUid)
+        if (withdrawal.workspaceId != _activeWorkspaceId.value) throw SecurityException("Record is outside the active workspace")
+
+
         val wsId = withdrawal.workspaceId.ifBlank { getOrResolveWorkspaceId() ?: "" }
         val actorUid = getEffectiveActorUid() ?: ""
+        val isOwner = isOwnerOfWorkspace(wsId)
+        val appSettings = appSettingsDao.getSettingsForWorkspaceOnce(wsId)
+        val currentActorName = if (isOwner) {
+            appSettings?.ownerName?.ifBlank { null } ?: appSettings?.activePartnerName?.ifBlank { null } ?: "Owner"
+        } else {
+            appSettings?.activePartnerName?.ifBlank { null } ?: "Partner"
+        }
         val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
-        val rawRole = currentMember?.role?.takeIf { it.isNotBlank() } ?: resolveRoleForWorkspace(wsId)
-        val actorRole = com.example.data.auth.RoleUtils.normalizeRole(rawRole)
-        val isOwner = isOwnerOfWorkspace(wsId) && actorRole != com.example.data.auth.RoleUtils.ROLE_PARTNER && actorRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR
+        val actorRole = requireWorkspaceActor(wsId)
 
-        val effectiveCreatedAt = if (withdrawal.createdAt > 0) withdrawal.createdAt else withdrawal.timestamp
-
-        if (!com.example.data.auth.AuthorizationManager.canDeleteWithdrawal(
-                withdrawalTargetPartnerUid = withdrawal.targetPartnerUid,
-                withdrawalCreatedByUid = withdrawal.createdByUid,
-                withdrawalCreatedAt = effectiveCreatedAt,
-                isOwner = isOwner,
-                currentUid = actorUid,
-                role = actorRole
-        )) {
-            Log.w(TAG, "Security rejection: Actor (uid=$actorUid, role=$actorRole, isOwner=$isOwner) is not authorized to delete withdrawal ${withdrawal.id}")
-            return
+        if (!com.example.data.auth.AuthorizationManager.canDeleteWithdrawal(withdrawal, isOwner, currentActorName, actorUid, role = actorRole, currentTimeMillis = operationTime)) {
+            Log.w(TAG, "Security rejection: User ($currentActorName, isOwner=$isOwner, uid=$actorUid, role=$actorRole) is not authorized to delete withdrawal ${withdrawal.id}")
+            throw SecurityException("Unauthorized to delete withdrawal ${withdrawal.id}")
         }
 
         withdrawalDao.deleteWithdrawal(withdrawal)
+        enqueue("WITHDRAWAL", withdrawal.id, withdrawal.toFirestoreMap(), "DELETE", actionTime = operationTime, expectedActorUid = operationActorUid)
         if (wsId.isNotBlank()) {
             pendingDeleteManager.recordPendingDelete("WITHDRAWAL", withdrawal.id, wsId)
         }
 
         val isReady = isCloudReady()
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.deleteWithdrawal(wsId, withdrawal.id)
-                    pendingDeleteManager.removePendingDelete("WITHDRAWAL", withdrawal.id, wsId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Withdrawal delete cloud sync deferred: ${e.message}")
-                }
-            }
+
+
         }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
     suspend fun updateCustomer(customer: CustomerEntity) {
-        val isReady = isCloudReady()
-        val wsId = getOrResolveWorkspaceId() ?: customer.workspaceId
-        val sanitized = customer.copy(
-            workspaceId = wsId,
-            phone = com.example.ui.components.sanitizePhoneNumberForStorage(customer.phone),
-            isSynced = false
-        )
-        customerDao.updateCustomer(sanitized)
-
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.saveCustomer(wsId, sanitized, activeUid)
-                    customerDao.markCustomersSynced(listOf(sanitized.id))
-                } catch (e: Exception) {
-                    Log.w("TRAC_FIRESTORE", "Customer update cloud sync deferred: ${e.message}")
-                }
-            }
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        database.withTransaction {
+            val wsId = _activeWorkspaceId.value.orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            if (!com.example.data.auth.AuthorizationManager.canManageCustomers(isOwnerOfWorkspace(wsId), role)) throw SecurityException("Customer edits are forbidden")
+            val original = customerDao.getCustomerById(_activeWorkspaceId.value.orEmpty(), customer.id) ?: throw SecurityException("Customer no longer exists")
+            if (original.workspaceId != wsId || customer.workspaceId != wsId) throw SecurityException("Customer workspace mismatch")
+            val updated = customer.copy(createdByUid = original.createdByUid, createdAt = original.createdAt,
+                phone = com.example.ui.util.requireOptionalContactPhone(customer.phone), isSynced = false,
+                totalBilled = original.totalBilled, totalPaid = original.totalPaid, balanceDue = original.balanceDue)
+            customerDao.updateCustomer(updated)
+            enqueue("CUSTOMER", updated.id, updated.toFirestoreMap(), expectedActorUid = operationActorUid, actionTime = operationTime)
         }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
     }
 
     suspend fun deleteCustomer(customer: CustomerEntity) {
-        val wsId = customer.workspaceId.ifBlank { getOrResolveWorkspaceId() ?: "" }
-        val isOwner = isOwnerOfWorkspace(wsId)
-
-        // STRICT SECURITY / ROLE CHECK USING CENTRALIZED AUTHORIZATION
-        if (!com.example.data.auth.AuthorizationManager.canDeleteCustomer(isOwner)) {
-            Log.w(TAG, "Security rejection: User is not authorized to delete customer ${customer.name} (isOwner=$isOwner)")
-            return
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        database.withTransaction {
+            val wsId = _activeWorkspaceId.value.orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            if (role != com.example.data.auth.RoleUtils.ROLE_OWNER) throw SecurityException("Only Owner can delete customers")
+            val stored = customerDao.getCustomerById(_activeWorkspaceId.value.orEmpty(), customer.id) ?: throw SecurityException("Customer no longer exists")
+            if (stored.workspaceId != wsId) throw SecurityException("Customer workspace mismatch")
+            require(jobEntryDao.getJobsForWorkspaceOnce(wsId).none { it.customerId == stored.id } &&
+                paymentDao.getPaymentsForCustomer(_activeWorkspaceId.value.orEmpty(), stored.id).none { it.workspaceId == wsId }) { "Customer is referenced by retained financial history" }
+            customerDao.deleteCustomer(stored)
+            enqueue("CUSTOMER", stored.id, stored.toFirestoreMap(), "DELETE", expectedActorUid = operationActorUid, actionTime = operationTime)
         }
-
-        // Find all associated job records for this customer by customerId or unique phone
-        val associatedJobs = try {
-            jobEntryDao.getJobsForWorkspaceOnce(wsId).filter { job ->
-                job.customerId == customer.id || (customer.phone.isNotBlank() && job.customerPhone == customer.phone)
-            }
-        } catch (e: Exception) {
-            emptyList()
-        }
-
-        // 1. Delete associated expenses from local database & record pending delete
-        val associatedExpenses = expenseDao.getExpensesForCustomer(customer.id)
-        associatedExpenses.forEach { exp ->
-            expenseDao.deleteExpense(exp)
-            if (wsId.isNotBlank()) {
-                pendingDeleteManager.recordPendingDelete("EXPENSE", exp.id, wsId)
-            }
-        }
-
-        // 2. Delete associated payments from local database & record pending delete
-        val associatedPayments = paymentDao.getPaymentsForCustomer(customer.id)
-        associatedPayments.forEach { pay ->
-            paymentDao.deletePayment(pay)
-            if (wsId.isNotBlank()) {
-                pendingDeleteManager.recordPendingDelete("PAYMENT", pay.id, wsId)
-            }
-        }
-
-        // 3. Delete associated jobs from local database & record pending delete
-        associatedJobs.forEach { job ->
-            jobEntryDao.deleteJob(job)
-            if (wsId.isNotBlank()) {
-                pendingDeleteManager.recordPendingDelete("JOB", job.id, wsId)
-            }
-        }
-
-        // 4. Delete the customer from local database & record pending delete
-        customerDao.deleteCustomer(customer)
-        if (wsId.isNotBlank()) {
-            pendingDeleteManager.recordPendingDelete("CUSTOMER", customer.id, wsId)
-        }
-
-        // 5. Synchronize deletions to Firestore
-        val isReady = isCloudReady()
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    associatedExpenses.forEach { exp ->
-                        try {
-                            firestoreRepository.deleteExpense(wsId, exp.id)
-                            pendingDeleteManager.removePendingDelete("EXPENSE", exp.id, wsId)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Associated expense delete cloud sync deferred: ${e.message}")
-                        }
-                    }
-                    associatedPayments.forEach { pay ->
-                        try {
-                            firestoreRepository.deletePayment(wsId, pay.id)
-                            pendingDeleteManager.removePendingDelete("PAYMENT", pay.id, wsId)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Associated payment delete cloud sync deferred: ${e.message}")
-                        }
-                    }
-                    associatedJobs.forEach { job ->
-                        try {
-                            firestoreRepository.deleteJob(wsId, job.id)
-                            pendingDeleteManager.removePendingDelete("JOB", job.id, wsId)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Associated job delete cloud sync deferred: ${e.message}")
-                        }
-                    }
-                    firestoreRepository.deleteCustomer(wsId, customer.id)
-                    pendingDeleteManager.removePendingDelete("CUSTOMER", customer.id, wsId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Customer delete cloud sync deferred: ${e.message}")
-                }
-            }
-        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
     }
 
     suspend fun addOrFindCustomer(name: String, phone: String, location: String): Long {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
+
         val isReady = isCloudReady()
         val wsId = getOrResolveWorkspaceId() ?: ""
+        val actorRole = requireWorkspaceActor(wsId)
+        if (actorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) {
+            val cleanPhone = com.example.ui.util.requireOptionalContactPhone(phone)
+            val permitted = jobEntryDao.getJobsForWorkspaceOnce(wsId).filter { !it.isHistorical && it.customerId > 0 &&
+                (if (cleanPhone.isNotBlank()) it.customerPhone == cleanPhone else it.customerName.trim() == name.trim() && it.customerLocation.trim() == location.trim()) }
+                .map { it.customerId }.distinct()
+            if (permitted.size == 1) return@withTransaction permitted.single()
+            throw SecurityException("Use a customer from an existing ordinary Entry; only Owner or Partner can create customers")
+        }
         val customers = customerDao.getCustomersForWorkspace(wsId).firstOrNull() ?: emptyList()
-        val cleanPhone = com.example.ui.components.sanitizePhoneNumberForStorage(phone)
+        val cleanPhone = com.example.ui.util.requireOptionalContactPhone(phone)
         val cleanName = name.trim()
         val cleanLocation = location.trim()
 
-        // Match by exact name AND exact phone (never merge distinct customers with same name and different/blank phones)
-        val existing = customers.find { 
-            it.name.trim().equals(cleanName, ignoreCase = true) && 
-            cleanPhone.isNotBlank() && it.phone == cleanPhone 
+        // Match by phone only. If phone is blank, always create a new customer to avoid
+        // merging distinct customers with the same name but no phone.
+        val existing = if (cleanPhone.isNotBlank()) {
+            customers.find { it.phone == cleanPhone }
+        } else {
+            null
         }
 
         val custId: Long
         val customerEntity: CustomerEntity
 
         if (existing != null) {
+            if (actorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) return@withTransaction existing.id
             val updated = existing.copy(
                 phone = if (cleanPhone.isNotBlank()) cleanPhone else existing.phone,
                 location = if (cleanLocation.isNotBlank()) cleanLocation else existing.location,
-                updatedAt = System.currentTimeMillis(),
+                updatedAt = operationTime,
                 isSynced = false
             )
             customerDao.updateCustomer(updated)
+            enqueue("CUSTOMER", updated.id, updated.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
             custId = existing.id
             customerEntity = updated
         } else {
+            if (actorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) throw SecurityException("Only Owner or Partner can create customers")
             val safeCustId = IdGenerator.generateId()
             val newCust = CustomerEntity(
                 id = safeCustId,
+                createdAt = operationTime,
+                createdByUid = getEffectiveActorUid().orEmpty(),
                 workspaceId = wsId,
                 name = name.trim(),
                 phone = cleanPhone,
@@ -2337,24 +2410,23 @@ class WorkspaceRepository(
                 isSynced = false
             )
             customerDao.insertCustomer(newCust)
+            enqueue("CUSTOMER", newCust.id, newCust.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
             custId = safeCustId
             customerEntity = newCust
         }
 
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.saveCustomer(wsId, customerEntity, activeUid)
-                    customerDao.markCustomersSynced(listOf(custId))
-                } catch (e: Exception) {
-                    Log.w(TAG, "Customer sync to cloud deferred: ${e.message}")
-                }
-            }
-        }
 
-        return custId
+
+        return@withTransaction custId
+
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
+    /** The legacy collectedBy input selects the business collector; authenticated identity always comes from Firebase Auth.
+     * Caller-supplied name/role are deliberately ignored in favor of current workspace membership.
+     */
     suspend fun recordCustomerPayment(
         customer: CustomerEntity,
         amount: Double,
@@ -2366,390 +2438,124 @@ class WorkspaceRepository(
         collectedByName: String = "",
         collectedByRole: String = ""
     ): Long {
-        val isReady = isCloudReady()
-        // CRITICAL: A payment for a customer MUST always belong to the customer's workspace.
-        // Falling back to personal workspace causes split records that are invisible to the Owner.
-        val wsId = customer.workspaceId.ifBlank { getOrResolveWorkspaceId() ?: "" }
-        val activeUid = getEffectiveActorUid()
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
 
-        // 1. Validate amount against outstanding due
-        val roundedAmount = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(amount)
-        val currentBalanceDue = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customer.balanceDue)
-        if (roundedAmount > currentBalanceDue) {
-            throw IllegalArgumentException("Payment amount $roundedAmount cannot be greater than outstanding due $currentBalanceDue")
-        }
-
-        // 2. Fetch all jobs for the customer
-        val jobs = jobEntryDao.getJobsForCustomer(customer.id).firstOrNull() ?: emptyList()
-
-        // 3. Find job entries with pending dues and sort by startTimeMillis (oldest first)
-        val unpaidJobs = jobs.filter { 
-            !com.example.ui.util.FinancialCalculationEngine.isSyntheticPayment(it) && 
-            com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(it.pendingAmount) > 0.0 
-        }.sortedBy { it.startTimeMillis }
-
-        var remainingPayment = roundedAmount
-        val updatedJobsList = mutableListOf<JobEntryEntity>()
-
-        for (job in unpaidJobs) {
-            if (remainingPayment <= 0.0) break
-
-            val currentPending = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(job.pendingAmount)
-            val allocation = minOf(remainingPayment, currentPending)
-
-            val newAmountReceived = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(job.amountReceived + allocation)
-            val newPendingAmount = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, job.totalAmount - newAmountReceived))
-
-            // Combine note with existing notes
-            val notePart = if (note.isNotBlank()) "Payment Note: $note" else ""
-            val methodPart = if (paymentMethod.isNotBlank()) "Payment Method: $paymentMethod" else ""
-            val paymentNotes = listOf(methodPart, notePart).filter { it.isNotBlank() }.joinToString(" • ")
-
-            val updatedNotes = if (paymentNotes.isNotBlank()) {
-                if (job.notes.isNotBlank()) "${job.notes} • $paymentNotes" else paymentNotes
-            } else {
-                job.notes
+        val wsId = getOrResolveWorkspaceId().orEmpty()
+        val role = requireWorkspaceActor(wsId)
+        val actorUid = getEffectiveActorUid().orEmpty()
+        if (!com.example.data.auth.AuthorizationManager.canCollectPayment(isOwnerOfWorkspace(wsId), role)) throw SecurityException("Collections are forbidden for this role")
+        val storedCustomer = customerDao.getCustomerById(_activeWorkspaceId.value.orEmpty(), customer.id) ?: throw SecurityException("Customer not found")
+        if (storedCustomer.workspaceId != wsId) throw SecurityException("Customer workspace mismatch")
+        val value = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(amount)
+        require(value > 0 && amount.isFinite()) { "Collection amount must be positive" }
+        val actorName = _activeWorkspaceMembers.value.first { it.uid == actorUid && it.workspaceId == wsId }.displayName.orEmpty()
+        val collector = com.example.data.auth.CollectionPolicy.requireCollector(wsId, actorUid,
+            isOwnerOfWorkspace(wsId), collectedByUid, _activeWorkspaceMembers.value)
+        val collections = mutableListOf<PaymentEntity>()
+        val updates = mutableListOf<JobEntryEntity>()
+        database.withTransaction {
+            val jobs = jobEntryDao.getJobsForWorkspaceOnce(wsId).filter { it.customerId == customer.id && it.pendingAmount > 0 }
+                .sortedWith(compareBy<JobEntryEntity> { it.startTimeMillis }.thenBy { it.id })
+            require(value <= jobs.sumOf { it.pendingAmount }) { "Collection exceeds the outstanding job dues" }
+            // Validate the complete split before changing Room or writing any outbox command.
+            com.example.data.auth.CollectionPolicy.allocatedJobs(jobs, wsId, customer.id, value).forEach {
+                com.example.data.auth.CollectionPolicy.requireDate(dateTimestamp, it.createdAt)
             }
-
-            val updatedJob = job.copy(
-                amountReceived = newAmountReceived,
-                pendingAmount = newPendingAmount,
-                notes = updatedNotes,
-                isSynced = false,
-                updatedAt = System.currentTimeMillis()
-            )
-            updatedJobsList.add(updatedJob)
-            remainingPayment = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, remainingPayment - allocation))
-        }
-
-        // 4. Update the jobs in database
-        for (updatedJob in updatedJobsList) {
-            jobEntryDao.insertJob(updatedJob)
-        }
-
-        // 5. If there were NO unpaid jobs to apply to (e.g. advance payment with 0 due jobs),
-        // create a synthetic Payment Received record in job_entries so it is tracked as credit.
-        var fallbackPaymentId: Long? = null
-        if (updatedJobsList.isEmpty()) {
-            val methodDesc = if (paymentMethod.isNotBlank()) "Payment Method: $paymentMethod" else ""
-            val noteDesc = if (note.isNotBlank()) "Note: $note" else ""
-            val combinedNotes = listOf(methodDesc, noteDesc).filter { it.isNotBlank() }.joinToString(" • ").ifBlank { "Direct Payment Received" }
-
-            val safeEntryId = IdGenerator.generateId()
-            val paymentEntry = JobEntryEntity(
-                id = safeEntryId,
-                workspaceId = wsId,
-                customerId = customer.id,
-                customerName = customer.name,
-                customerPhone = customer.phone,
-                customerLocation = customer.location,
-                operatorName = operatorName.ifBlank { "Partner" },
-                tractorId = 0,
-                tractorLabel = "Payment",
-                workType = "Payment Received",
-                startTimeMillis = dateTimestamp,
-                endTimeMillis = dateTimestamp,
-                durationMinutes = 0,
-                hourlyRate = 0.0,
-                totalAmount = 0.0,
-                amountReceived = roundedAmount,
-                pendingAmount = 0.0,
-                addedByPartner = operatorName.ifBlank { "Partner" },
-                notes = combinedNotes,
-                isSynced = false,
-                createdByUid = activeUid ?: "",
-                createdByRole = if (isOwnerOfWorkspace(wsId)) com.example.data.auth.RoleUtils.ROLE_OWNER else com.example.data.auth.RoleUtils.ROLE_PARTNER
-            )
-            jobEntryDao.insertJob(paymentEntry)
-            fallbackPaymentId = safeEntryId
-        }
-
-        // 6. Record Payment event in payments table (for accounting and history)
-        val paymentId = IdGenerator.generateId()
-        val firstJob = updatedJobsList.firstOrNull() ?: unpaidJobs.firstOrNull()
-        val isOwner = isOwnerOfWorkspace(wsId)
-        val finalCollectorUid = if (collectedByUid.isNotBlank()) collectedByUid else (activeUid ?: "")
-        val finalCollectorName = if (collectedByName.isNotBlank()) collectedByName else operatorName.ifBlank { "Owner" }
-        val finalCollectorRole = if (collectedByRole.isNotBlank()) com.example.data.auth.RoleUtils.normalizeRole(collectedByRole) else (if (isOwner) com.example.data.auth.RoleUtils.ROLE_OWNER else com.example.data.auth.RoleUtils.ROLE_PARTNER)
-
-        val paymentRecord = PaymentEntity(
-            id = paymentId,
-            workspaceId = wsId,
-            jobEntryId = firstJob?.id ?: (fallbackPaymentId ?: 0L),
-            customerId = customer.id,
-            customerName = customer.name,
-            tractorId = firstJob?.tractorId ?: 0L,
-            tractorLabel = firstJob?.tractorLabel ?: "Payment",
-            amount = roundedAmount,
-            paymentMethod = paymentMethod.ifBlank { "Cash" },
-            notes = note,
-            collectedByUid = finalCollectorUid,
-            collectedByName = finalCollectorName,
-            collectedByRole = finalCollectorRole,
-            collectedAt = dateTimestamp,
-            createdAt = System.currentTimeMillis(),
-            isSynced = false
-        )
-        paymentDao.insertPayment(paymentRecord)
-
-        // Recalculate stats for the customer
-        recalculateCustomerStats(customer.id)
-
-        // Sync changes to cloud
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    for (updatedJob in updatedJobsList) {
-                        firestoreRepository.saveJobEntry(wsId, updatedJob, activeUid)
-                        jobEntryDao.markJobsSynced(listOf(updatedJob.id))
-                    }
-                    if (fallbackPaymentId != null) {
-                        val paymentEntry = jobEntryDao.getJobById(fallbackPaymentId)
-                        if (paymentEntry != null) {
-                            firestoreRepository.saveJobEntry(wsId, paymentEntry, activeUid)
-                            jobEntryDao.markJobsSynced(listOf(fallbackPaymentId))
-                        }
-                    }
-                    firestoreRepository.savePayment(wsId, paymentRecord, activeUid)
-                    paymentDao.markPaymentsSynced(listOf(paymentId))
-
-                    val updatedCust = customerDao.getCustomerById(customer.id)
-                    if (updatedCust != null) {
-                        firestoreRepository.saveCustomer(wsId, updatedCust, activeUid)
-                        customerDao.markCustomersSynced(listOf(customer.id))
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Customer update after payment deferred: ${e.message}")
-                }
+            var remaining = value
+            for (job in jobs) {
+                if (remaining <= 0) break
+                val allocated = minOf(remaining, job.pendingAmount)
+                val collection = PaymentEntity(id = IdGenerator.generateId(), workspaceId = wsId,
+                    jobEntryId = job.id, customerId = customer.id, customerName = storedCustomer.name,
+                    tractorId = job.tractorId, tractorLabel = job.tractorLabel, amount = allocated,
+                    paymentMethod = paymentMethod, notes = note, collectedByUid = actorUid,
+                    collectedByName = actorName, collectedByRole = role, collectedAt = dateTimestamp, createdAt = operationTime,
+                    collectorUid = collector.uid, collectorName = collector.displayName.orEmpty(), collectorRole = collector.role,
+                    isSynced = false, status = "ACTIVE",
+                    allocationsJson = org.json.JSONArray().put(org.json.JSONObject().put("jobId", job.id).put("amount", allocated)).toString())
+                val updated = job.copy(amountReceived = job.amountReceived + allocated,
+                    pendingAmount = maxOf(0.0, job.pendingAmount - allocated), isSynced = false)
+                jobEntryDao.insertJob(updated)
+                paymentDao.insertPayment(collection)
+                enqueue("PAYMENT", collection.id, collection.toFirestoreMap() + mapOf(
+                    "entrySnapshotJson" to org.json.JSONObject(updated.toFirestoreMap()).toString(),
+                    "baseAmountReceived" to job.amountReceived, "basePendingAmount" to job.pendingAmount), expectedActorUid = operationActorUid, actionTime = operationTime)
+                collections.add(collection); updates.add(updated)
+                remaining -= allocated
             }
+            recalculateCustomerStats(customer.id)
         }
 
-        return fallbackPaymentId ?: paymentId
+        return@withTransaction collections.first().id
+
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
+    private fun <T> authorizedRecords(workspaceId: String, financial: Boolean = false, records: Flow<List<T>>): Flow<List<T>> =
+        kotlinx.coroutines.flow.combine(records, _verifiedWorkspaceContext, _activeWorkspaceId, _activeWorkspaceMembers) { items, verified, active, members ->
+            val uid = getEffectiveActorUid().orEmpty()
+            val role = com.example.data.auth.RoleUtils.normalizeRole(members.firstOrNull { it.uid == uid && it.workspaceId == workspaceId && it.status.equals("active", true) }?.role)
+            if (uid.isBlank() || active != workspaceId || verified != (uid to workspaceId) || role.isBlank() ||
+                (financial && role == com.example.data.auth.RoleUtils.ROLE_OPERATOR)) emptyList() else items
+        }
+
     fun getPaymentsFlow(workspaceId: String): Flow<List<PaymentEntity>> {
-        return paymentDao.getPaymentsForWorkspace(workspaceId)
+        return authorizedRecords(workspaceId, true, paymentDao.getPaymentsForWorkspace(workspaceId))
     }
 
     suspend fun deletePayment(paymentId: Long) {
-        val wsId = getOrResolveWorkspaceId() ?: ""
-        val actorUid = getEffectiveActorUid() ?: ""
-        val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
-        val rawRole = currentMember?.role?.takeIf { it.isNotBlank() } ?: resolveRoleForWorkspace(wsId)
-        val actorRole = com.example.data.auth.RoleUtils.normalizeRole(rawRole)
-        val isOwner = _isCollaborationOwner.value || 
-            isOwnerOfWorkspace(wsId) || 
-            com.example.data.auth.RoleUtils.isOwner(actorRole) || 
-            (currentMember?.role?.let { com.example.data.auth.RoleUtils.isOwner(it) } == true) ||
-            (currentWorkspace.value?.ownerUid == actorUid)
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
 
-        Log.d("TRAC_DELETE", "WorkspaceRepository.deletePayment: paymentId=$paymentId, wsId=$wsId, actorUid=$actorUid, isOwner=$isOwner")
-
-        val resolvedId = kotlin.math.abs(paymentId)
-        val payment = paymentDao.getPaymentById(paymentId) 
-            ?: paymentDao.getPaymentById(resolvedId)
-            ?: paymentDao.getPaymentsForWorkspace(wsId).firstOrNull()?.find { it.jobEntryId == resolvedId || it.id == resolvedId }
-
-        if (payment == null) {
-            Log.d("TRAC_DELETE", "WorkspaceRepository.deletePayment: PaymentEntity not found for paymentId=$paymentId (resolvedId=$resolvedId). Checking job entries.")
-            // PaymentEntity not found. Check if paymentId corresponds to a standalone synthetic or job-backed collection entry
-            val job = jobEntryDao.getJobById(resolvedId) ?: jobEntryDao.getJobById(paymentId)
-            if (job != null) {
-                Log.d("TRAC_DELETE", "WorkspaceRepository.deletePayment: Found job entry for collection deletion reversal: job.id=${job.id}")
-                val customerId = job.customerId
-                if (com.example.ui.util.FinancialCalculationEngine.isSyntheticPayment(job)) {
-                    jobEntryDao.deleteJob(job)
-                    if (wsId.isNotBlank()) {
-                        pendingDeleteManager.recordPendingDelete("JOB", job.id, wsId)
-                        scope.launch {
-                            try {
-                                firestoreRepository.deleteJob(wsId, job.id)
-                                pendingDeleteManager.removePendingDelete("JOB", job.id, wsId)
-                            } catch (_: Exception) {}
-                        }
-                    }
-                } else if (job.amountReceived > 0.0) {
-                    val newReceived = 0.0
-                    val newPending = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, job.totalAmount))
-                    val updatedJob = job.copy(
-                        amountReceived = newReceived,
-                        pendingAmount = newPending,
-                        isSynced = false,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                    jobEntryDao.insertJob(updatedJob)
-                    if (wsId.isNotBlank()) {
-                        scope.launch {
-                            try {
-                                firestoreRepository.saveJobEntry(wsId, updatedJob, activeUid)
-                                jobEntryDao.markJobsSynced(listOf(updatedJob.id))
-                            } catch (_: Exception) {}
-                        }
-                    }
-                }
-                if (customerId > 0L) {
-                    recalculateCustomerStats(customerId)
-                }
-            } else {
-                Log.w("TRAC_DELETE", "WorkspaceRepository.deletePayment: Neither PaymentEntity nor JobEntry found for paymentId=$paymentId")
+        val wsId = getOrResolveWorkspaceId().orEmpty()
+        val role = requireWorkspaceActor(wsId)
+        val actorUid = getEffectiveActorUid().orEmpty()
+        var reversed: PaymentEntity? = null
+        val updates = mutableListOf<JobEntryEntity>()
+        database.withTransaction {
+            val original = paymentDao.getPaymentById(_activeWorkspaceId.value.orEmpty(), paymentId) ?: throw SecurityException("Collection requires verified migration before reversal")
+            if (original.workspaceId != wsId) throw SecurityException("Collection workspace mismatch")
+            if (!com.example.data.auth.AuthorizationManager.canReverseCollection(original, isOwnerOfWorkspace(wsId), actorUid, role, actionTime = operationTime)) throw SecurityException("Collection reversal is not permitted")
+            val allocations = org.json.JSONArray(original.allocationsJson)
+            if (allocations.length() == 0) throw IllegalStateException("Collection allocation must be migrated before reversal")
+            var total = 0.0
+            for (i in 0 until allocations.length()) {
+                val allocation = allocations.getJSONObject(i)
+                val job = jobEntryDao.getJobById(_activeWorkspaceId.value.orEmpty(), allocation.getLong("jobId")) ?: throw IllegalStateException("Collection source job is missing")
+                val amount = allocation.getDouble("amount")
+                require(job.workspaceId == wsId && job.customerId == original.customerId && amount > 0 && job.amountReceived >= amount) { "Invalid collection allocation" }
+                val updated = job.copy(amountReceived = job.amountReceived - amount, pendingAmount = job.pendingAmount + amount, isSynced = false)
+                jobEntryDao.insertJob(updated); updates.add(updated); total += amount
             }
-            return
+            require(kotlin.math.abs(total - original.amount) < 0.001) { "Collection allocation does not match the collection amount" }
+            reversed = original.copy(status = "REVERSED", reversedByUid = actorUid, reversedAt = operationTime, isSynced = false)
+            paymentDao.insertPayment(reversed!!)
+            require(updates.size == 1) { "Legacy aggregate allocation requires reviewed migration" }
+            val updated = updates.single()
+            enqueue("PAYMENT", reversed!!.id, reversed!!.toFirestoreMap() + mapOf(
+                "entrySnapshotJson" to org.json.JSONObject(updated.toFirestoreMap()).toString(),
+                "baseAmountReceived" to (updated.amountReceived + original.amount),
+                "basePendingAmount" to (updated.pendingAmount - original.amount)), actionTime = operationTime, expectedActorUid = operationActorUid)
+            recalculateCustomerStats(original.customerId)
         }
 
-        Log.d("TRAC_DELETE", "WorkspaceRepository.deletePayment: Found PaymentEntity: id=${payment.id}, amount=${payment.amount}, customerId=${payment.customerId}, collectorUid=${payment.collectedByUid}")
 
-        // Workspace validation
-        if (payment.workspaceId.isNotBlank() && wsId.isNotBlank() && payment.workspaceId != wsId) {
-            Log.w(TAG, "Security rejection: Payment $paymentId belongs to workspace ${payment.workspaceId}, not active workspace $wsId")
-            return
         }
-
-        val originalCreatedAt = if (payment.createdAt > 0L) payment.createdAt else payment.collectedAt
-        val canDelete = com.example.data.auth.AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = payment.collectedByUid,
-            collectionCreatedAt = originalCreatedAt,
-            isOwner = isOwner,
-            currentUid = actorUid,
-            role = actorRole
-        )
-
-        if (!canDelete) {
-            Log.w(TAG, "Security rejection: Actor (uid=$actorUid, role=$actorRole, isOwner=$isOwner) is not authorized to delete collection/payment $paymentId")
-            throw SecurityException("Unauthorized collection deletion")
-        }
-
-        val customerId = payment.customerId
-        val paymentAmount = payment.amount
-        val targetJobId = payment.jobEntryId
-        val targetWsId = payment.workspaceId.ifBlank { wsId }
-
-        var remainingReversal = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(paymentAmount)
-        val updatedJobsList = mutableListOf<JobEntryEntity>()
-
-        // 1a. If payment was linked to a specific jobEntryId, reverse from that job first
-        if (targetJobId > 0L) {
-            val targetJob = jobEntryDao.getJobById(targetJobId)
-            if (targetJob != null && !com.example.ui.util.FinancialCalculationEngine.isSyntheticPayment(targetJob)) {
-                val currentReceived = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(targetJob.amountReceived)
-                val maxReversible = minOf(currentReceived, remainingReversal)
-                if (maxReversible > 0.0) {
-                    val newAmountReceived = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, currentReceived - maxReversible))
-                    val newPendingAmount = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, targetJob.totalAmount - newAmountReceived))
-                    val updatedJob = targetJob.copy(
-                        amountReceived = newAmountReceived,
-                        pendingAmount = newPendingAmount,
-                        isSynced = false,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                    updatedJobsList.add(updatedJob)
-                    remainingReversal = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, remainingReversal - maxReversible))
-                }
-            }
-        }
-
-        // 1b. If there is still amount to reverse (or targetJob was not set), reverse from customer's work jobs (newest first)
-        if (remainingReversal > 0.0 && customerId > 0L) {
-            val jobs = jobEntryDao.getJobsForCustomer(customerId).firstOrNull() ?: emptyList()
-            val candidateJobs = jobs.filter { 
-                !com.example.ui.util.FinancialCalculationEngine.isSyntheticPayment(it) && 
-                it.id != targetJobId &&
-                com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(it.amountReceived) > 0.0 
-            }.sortedByDescending { it.startTimeMillis }
-
-            for (job in candidateJobs) {
-                if (remainingReversal <= 0.0) break
-                val currentReceived = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(job.amountReceived)
-                val maxReversible = minOf(currentReceived, remainingReversal)
-                if (maxReversible > 0.0) {
-                    val newAmountReceived = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, currentReceived - maxReversible))
-                    val newPendingAmount = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, job.totalAmount - newAmountReceived))
-                    val updatedJob = job.copy(
-                        amountReceived = newAmountReceived,
-                        pendingAmount = newPendingAmount,
-                        isSynced = false,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                    updatedJobsList.add(updatedJob)
-                    remainingReversal = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, remainingReversal - maxReversible))
-                }
-            }
-        }
-
-        // 1c. Update the reversed jobs in Room database
-        for (updatedJob in updatedJobsList) {
-            jobEntryDao.insertJob(updatedJob)
-        }
-
-        // 1d. Clean up any synthetic payment job associated with this payment or customer
-        if (customerId > 0L) {
-            val allCustomerJobs = jobEntryDao.getJobsForCustomer(customerId).firstOrNull() ?: emptyList()
-            val syntheticPaymentJobs = allCustomerJobs.filter { 
-                com.example.ui.util.FinancialCalculationEngine.isSyntheticPayment(it) && (
-                    it.id == targetJobId ||
-                    it.id == payment.id ||
-                    (it.amountReceived == paymentAmount && kotlin.math.abs((it.startTimeMillis.takeIf { t -> t > 0 } ?: it.createdAt) - payment.collectedAt) < 120_000L)
-                )
-            }
-            for (pJob in syntheticPaymentJobs) {
-                jobEntryDao.deleteJob(pJob)
-                if (targetWsId.isNotBlank()) {
-                    pendingDeleteManager.recordPendingDelete("JOB", pJob.id, targetWsId)
-                    scope.launch {
-                        try {
-                            firestoreRepository.deleteJob(targetWsId, pJob.id)
-                            pendingDeleteManager.removePendingDelete("JOB", pJob.id, targetWsId)
-                        } catch (_: Exception) {}
-                    }
-                }
-            }
-        }
-
-        // 2. Delete the PaymentEntity from Room and record pending delete
-        paymentDao.deletePayment(paymentId)
-        if (targetWsId.isNotBlank()) {
-            pendingDeleteManager.recordPendingDelete("PAYMENT", paymentId, targetWsId)
-        }
-
-        // 3. Recalculate customer stats immediately
-        if (customerId > 0L) {
-            recalculateCustomerStats(customerId)
-        }
-
-        // 4. Sync reversal to cloud
-        val isReady = isCloudReady()
-        if (isReady && targetWsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    // Sync updated reversed jobs to Firestore
-                    for (job in updatedJobsList) {
-                        firestoreRepository.saveJobEntry(targetWsId, job, activeUid)
-                        jobEntryDao.markJobsSynced(listOf(job.id))
-                    }
-
-                    // Sync updated customer to Firestore
-                    if (customerId > 0L) {
-                        val updatedCust = customerDao.getCustomerById(customerId)
-                        if (updatedCust != null) {
-                            firestoreRepository.saveCustomer(targetWsId, updatedCust, activeUid)
-                            customerDao.markCustomersSynced(listOf(customerId))
-                        }
-                    }
-
-                    // Delete payment document from Firestore
-                    firestoreRepository.deletePayment(targetWsId, paymentId)
-                    pendingDeleteManager.removePendingDelete("PAYMENT", paymentId, targetWsId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Payment reversal sync deferred: ${e.message}")
-                }
-            }
-        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
     fun getChecklistFlow(workspaceId: String): Flow<List<ChecklistItemEntity>> {
-        return checklistItemDao.getChecklistForWorkspace(workspaceId)
+        return authorizedRecords(workspaceId, records = checklistItemDao.getChecklistForWorkspace(workspaceId))
     }
 
     suspend fun addChecklistItem(text: String, workspaceId: String): Long {
+        requireWorkspaceActor(workspaceId)
         val item = ChecklistItemEntity(
             workspaceId = workspaceId,
             text = text,
@@ -2760,82 +2566,76 @@ class WorkspaceRepository(
     }
 
     suspend fun updateChecklistItem(item: ChecklistItemEntity) {
+        requireWorkspaceActor(item.workspaceId)
         checklistItemDao.updateChecklistItem(item)
     }
 
     suspend fun deleteChecklistItem(item: ChecklistItemEntity) {
+        requireWorkspaceActor(item.workspaceId)
         checklistItemDao.deleteChecklistItem(item)
     }
 
     suspend fun deleteChecklistItemById(id: Long) {
-        checklistItemDao.deleteChecklistItemById(id)
+        requireWorkspaceActor(_activeWorkspaceId.value.orEmpty())
+        checklistItemDao.deleteChecklistItemById(_activeWorkspaceId.value.orEmpty(), id)
     }
 
-    private suspend fun recalculateCustomerStats(customerId: Long) {
-        val customer = customerDao.getCustomerById(customerId) ?: return
-        val jobs = jobEntryDao.getAllJobs().firstOrNull() ?: emptyList()
-        val stats = com.example.ui.util.FinancialCalculationEngine.calculateCustomerFinancials(customer, jobs)
+    private suspend fun recalculateCustomerStats(customerId: Long, workspaceId: String = _activeWorkspaceId.value.orEmpty(), clearDeletedSourceBalance: Boolean = false) {
+        val customer = customerDao.getCustomerById(workspaceId, customerId) ?: return
+        val jobs = jobEntryDao.getJobsForWorkspaceOnce(customer.workspaceId)
+        val source = if (clearDeletedSourceBalance) customer.copy(totalBilled = 0.0, totalPaid = 0.0, balanceDue = 0.0) else customer
+        val stats = com.example.ui.util.FinancialCalculationEngine.calculateCustomerFinancials(source, jobs)
 
+        val pendingCustomerWork = operations.outstandingOperations(workspaceId).any {
+            com.example.data.sync.OperationDependencies.blocksCustomerAcknowledgement(it, customerId)
+        }
         val updated = customer.copy(
             totalBilled = stats.totalBilled,
             totalPaid = stats.totalPaid,
             balanceDue = stats.balanceDue,
-            isSynced = false,
+            isSynced = !pendingCustomerWork && jobs.filter { it.customerId == customerId }.all { it.isSynced },
             updatedAt = System.currentTimeMillis()
         )
         customerDao.updateCustomer(updated)
     }
 
     suspend fun addTractor(tractor: TractorEntity): Long {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
+
         val isReady = isCloudReady()
         val wsId = getOrResolveWorkspaceId() ?: ""
         val safeTracId = if (tractor.id > 0) tractor.id else IdGenerator.generateId()
-        val actorUid = getEffectiveActorUid() ?: activeUid ?: ""
-        val isOwner = isOwnerOfWorkspace(wsId)
-        val myRole = if (isOwner) com.example.data.auth.RoleUtils.ROLE_OWNER else {
-            val member = _workspaceMembers.value.find { it.uid == actorUid }
-            if (member != null && member.role.isNotBlank()) com.example.data.auth.RoleUtils.normalizeRole(member.role) else com.example.data.auth.RoleUtils.ROLE_PARTNER
-        }
-        val saved = tractor.copy(
-            id = safeTracId,
-            workspaceId = wsId,
-            createdByUid = if (tractor.createdByUid.isNotBlank()) tractor.createdByUid else actorUid,
-            createdByRole = if (tractor.createdByRole.isNotBlank()) tractor.createdByRole else myRole
-        )
+        val role = requireWorkspaceActor(wsId)
+        if (!com.example.data.auth.AuthorizationManager.canManageTractors(isOwnerOfWorkspace(wsId), role)) throw SecurityException("Asset creation is forbidden")
+        val saved = tractor.copy(id = safeTracId, workspaceId = wsId, createdByUid = getEffectiveActorUid().orEmpty(), createdByRole = role)
         tractorDao.insertTractor(saved)
+        enqueue("TRACTOR", saved.id, saved.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
 
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.saveTractor(wsId, saved, actorUid)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Tractor cloud sync deferred: ${e.message}")
-                }
-            }
+
+        return@withTransaction safeTracId
+
         }
-        return safeTracId
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
     fun getWorkTypeExtensionsFlow(workspaceId: String): Flow<List<WorkTypeExtensionEntity>> {
-        return workTypeExtensionDao.getExtensionsForWorkspace(workspaceId)
+        return authorizedRecords(workspaceId, records = workTypeExtensionDao.getExtensionsForWorkspace(workspaceId))
     }
 
     suspend fun addExtension(name: String, workspaceId: String = ""): WorkTypeExtensionEntity {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
+
         val cleanName = name.trim()
         if (cleanName.isBlank()) throw IllegalArgumentException("Extension name cannot be empty")
         val wsId = workspaceId.ifBlank { getOrResolveWorkspaceId() ?: "" }
         val actorUid = getEffectiveActorUid() ?: ""
         val isOwner = isOwnerOfWorkspace(wsId)
-        val myRole = if (isOwner) {
-            com.example.data.auth.RoleUtils.ROLE_OWNER
-        } else {
-            val member = _workspaceMembers.value.find { it.uid == actorUid }
-            if (member != null && member.role.isNotBlank()) {
-                com.example.data.auth.RoleUtils.normalizeRole(member.role)
-            } else {
-                com.example.data.auth.RoleUtils.ROLE_PARTNER
-            }
-        }
+        val myRole = requireWorkspaceActor(wsId)
         if (!com.example.data.auth.AuthorizationManager.canAddExtension(isOwner, myRole)) {
             throw SecurityException("Operators cannot add extensions")
         }
@@ -2844,165 +2644,121 @@ class WorkspaceRepository(
             id = id,
             workspaceId = wsId,
             name = cleanName,
-            createdAt = System.currentTimeMillis(),
             createdByUid = actorUid,
-            createdByRole = myRole
+            createdByRole = myRole,
+            createdAt = operationTime
         )
         workTypeExtensionDao.insertExtension(entity)
-        if (isCloudReady() && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.saveExtension(wsId, entity, actorUid)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Offline extension saved locally, cloud sync pending: ${e.message}")
-                }
-            }
+        enqueue("EXTENSION", entity.id, entity.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+
+        return@withTransaction entity
+
         }
-        return entity
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
+    }
+
+    suspend fun updateExtension(extension: WorkTypeExtensionEntity) {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        database.withTransaction {
+            val wsId = _activeWorkspaceId.value.orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            val original = workTypeExtensionDao.getExtensionsForWorkspaceOnce(wsId).firstOrNull { it.id == extension.id }
+                ?: throw SecurityException("Extension is outside this workspace")
+            requireRecordMembersActive(original.createdByUid)
+            if (!com.example.data.auth.AuthorizationManager.canMutateAsset(isOwnerOfWorkspace(wsId), role, getEffectiveActorUid().orEmpty(), original.createdByUid))
+                throw SecurityException("Cannot edit another member's extension")
+            require(extension.name.isNotBlank()) { "Extension name is required" }
+            val saved = original.copy(name = extension.name.trim())
+            workTypeExtensionDao.insertExtension(saved)
+            enqueue("EXTENSION", saved.id, saved.toFirestoreMap(), expectedActorUid = operationActorUid, actionTime = operationTime)
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
     }
 
     suspend fun deleteExtension(extension: WorkTypeExtensionEntity) {
-        val wsId = extension.workspaceId.ifBlank { getOrResolveWorkspaceId() ?: "" }
-        workTypeExtensionDao.deleteExtension(extension)
-        if (wsId.isNotBlank()) {
-            pendingDeleteManager.recordPendingDelete("EXTENSION", extension.id, wsId)
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        database.withTransaction {
+            val wsId = _activeWorkspaceId.value.orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            val original = workTypeExtensionDao.getExtensionsForWorkspaceOnce(wsId).firstOrNull { it.id == extension.id }
+                ?: throw SecurityException("Extension is outside this workspace")
+            requireRecordMembersActive(original.createdByUid)
+            if (!com.example.data.auth.AuthorizationManager.canMutateAsset(isOwnerOfWorkspace(wsId), role, getEffectiveActorUid().orEmpty(), original.createdByUid))
+                throw SecurityException("Cannot delete another member's extension")
+            workTypeExtensionDao.deleteExtension(original)
+            enqueue("EXTENSION", original.id, original.toFirestoreMap(), "DELETE", expectedActorUid = operationActorUid, actionTime = operationTime)
         }
-        if (isCloudReady() && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.deleteExtension(wsId, extension.id)
-                    pendingDeleteManager.removePendingDelete("EXTENSION", extension.id, wsId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Cloud delete extension failed: ${e.message}")
-                }
-            }
-        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
     }
 
     suspend fun updateTractor(tractor: TractorEntity) {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
+
         val isReady = isCloudReady()
         val wsId = getOrResolveWorkspaceId() ?: tractor.workspaceId
-        val scoped = tractor.copy(workspaceId = wsId)
+        val original = tractorDao.getTractorsForWorkspace(wsId).firstOrNull()?.firstOrNull { it.id == tractor.id } ?: throw SecurityException("Tractor is not in the active workspace")
+        val role = requireWorkspaceActor(wsId)
+        if (!com.example.data.auth.AuthorizationManager.canMutateAsset(isOwnerOfWorkspace(wsId), role, getEffectiveActorUid().orEmpty(), original.createdByUid)) throw SecurityException("Cannot edit another member's tractor")
+        requireRecordMembersActive(original.createdByUid)
+        val scoped = tractor.copy(workspaceId = wsId, createdByUid = original.createdByUid, createdAt = original.createdAt)
         tractorDao.updateTractor(scoped)
+        enqueue("TRACTOR", scoped.id, scoped.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
 
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.saveTractor(wsId, scoped, activeUid)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Tractor update cloud sync deferred: ${e.message}")
-                }
-            }
+
+
         }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
     suspend fun deleteTractor(tractor: TractorEntity) {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val result = database.withTransaction {
+
         val wsId = tractor.workspaceId.ifBlank { getOrResolveWorkspaceId() ?: "" }
-        val isOwner = isOwnerOfWorkspace(wsId)
-        val actorUid = getEffectiveActorUid() ?: ""
-        val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
-        val actorRole = if (isOwner) com.example.data.auth.RoleUtils.ROLE_OWNER else (currentMember?.role?.takeIf { it.isNotBlank() }?.let { com.example.data.auth.RoleUtils.normalizeRole(it) } ?: com.example.data.auth.RoleUtils.ROLE_PARTNER)
-
-        if (!com.example.data.auth.AuthorizationManager.canDeleteTractor(
-                tractorCreatedByUid = tractor.createdByUid,
-                tractorCreatedAt = tractor.createdAt,
-                isOwner = isOwner,
-                currentUid = actorUid,
-                role = actorRole
-        )) {
-            Log.w(TAG, "Security rejection: Actor (uid=$actorUid, role=$actorRole, isOwner=$isOwner) is not authorized to delete tractor ${tractor.id} (created by ${tractor.createdByUid})")
-            return
-        }
-
-        tractorDao.deleteTractor(tractor)
+        val role = requireWorkspaceActor(wsId)
+        val stored = tractorDao.getTractorsForWorkspace(wsId).firstOrNull()?.firstOrNull { it.id == tractor.id } ?: throw SecurityException("Tractor is not in the active workspace")
+        if (!com.example.data.auth.AuthorizationManager.canMutateAsset(isOwnerOfWorkspace(wsId), role, getEffectiveActorUid().orEmpty(), stored.createdByUid)) throw SecurityException("Cannot delete another member's tractor")
+        requireRecordMembersActive(stored.createdByUid)
+        tractorDao.deleteTractor(stored)
+        enqueue("TRACTOR", stored.id, stored.toFirestoreMap(), "DELETE", expectedActorUid = operationActorUid, actionTime = operationTime)
         if (wsId.isNotBlank()) {
             pendingDeleteManager.recordPendingDelete("TRACTOR", tractor.id, wsId)
         }
 
         val isReady = isCloudReady()
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.deleteTractor(wsId, tractor.id)
-                    pendingDeleteManager.removePendingDelete("TRACTOR", tractor.id, wsId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Tractor delete cloud sync deferred: ${e.message}")
-                }
-            }
+
+
         }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
     suspend fun addPartner(partner: PartnerEntity): Long {
-        val isReady = isCloudReady()
-        val wsId = getOrResolveWorkspaceId() ?: ""
-        val safePartId = if (partner.id > 0) partner.id else IdGenerator.generateId()
-        val saved = partner.copy(id = safePartId, workspaceId = wsId)
-        partnerDao.insertPartner(saved)
-
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.savePartner(wsId, saved, activeUid)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Partner cloud sync deferred: ${e.message}")
-                }
-            }
-        }
-        return safePartId
+        throw SecurityException("Membership creation requires verified invitation OTP")
     }
 
     suspend fun updatePartner(partner: PartnerEntity) {
-        val isReady = isCloudReady()
-        val wsId = getOrResolveWorkspaceId() ?: partner.workspaceId
-        val scoped = partner.copy(workspaceId = wsId)
-        partnerDao.updatePartner(scoped)
-
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.savePartner(wsId, scoped, activeUid)
-                    if (partner.phone.isNotBlank()) {
-                        firestoreRepository.savePendingPartnerPhone(
-                            groupId = wsId,
-                            normalizedPhone = partner.phone,
-                            displayName = partner.name,
-                            role = partner.role,
-                            ownerUid = activeUid ?: ""
-                        )
-                    }
-                    refreshWorkspaceMembers(wsId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Partner update cloud sync deferred: ${e.message}")
-                }
-            }
-        }
+        val wsId = _activeWorkspaceId.value.orEmpty()
+        if (requireWorkspaceActor(wsId) != com.example.data.auth.RoleUtils.ROLE_OWNER) throw SecurityException("Member management is Owner-only")
+        val member = _activeWorkspaceMembers.value.firstOrNull { it.uid == partner.firebaseUid && it.workspaceId == wsId && it.status.equals("active", true) }
+            ?: throw SecurityException("Verified member identity is required")
+        require(com.example.data.auth.RoleUtils.normalizeRole(member.role) == com.example.data.auth.RoleUtils.normalizeRole(partner.role)) { "Role changes are unavailable" }
+        require(partner.phone.filter(Char::isDigit).takeLast(10) == member.phoneNumber.orEmpty().filter(Char::isDigit).takeLast(10)) { "Changing a verified phone requires a new verification workflow" }
+        firestoreRepository.updateMemberDisplayName(wsId, member.uid, partner.name)
+        partnerDao.insertPartner(partner.copy(workspaceId = wsId, role = member.role))
+        refreshWorkspaceMembers(wsId)
     }
 
     suspend fun deletePartner(partner: PartnerEntity) {
-        val wsId = partner.workspaceId.ifBlank { getOrResolveWorkspaceId() ?: "" }
-        partnerDao.deletePartner(partner)
-        if (wsId.isNotBlank()) {
-            pendingDeleteManager.recordPendingDelete("PARTNER", partner.id, wsId)
-        }
-
-        val isReady = isCloudReady()
-        if (isReady && wsId.isNotBlank()) {
-            scope.launch {
-                try {
-                    firestoreRepository.deletePartner(wsId, partner.id)
-                    if (partner.phone.isNotBlank()) {
-                        firestoreRepository.deletePendingPartnerPhone(wsId, partner.phone)
-                    }
-                    pendingDeleteManager.removePendingDelete("PARTNER", partner.id, wsId)
-                    refreshWorkspaceMembers(wsId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Partner delete cloud sync deferred: ${e.message}")
-                }
-            }
-        }
+        removePartnerFromWorkspace(partner)
     }
-
-    // --- Direct Partner Management & Shared Workspace Discovery ---
 
     sealed class DirectAddPartnerResult {
         data class Success(val partner: PartnerEntity, val partnerUid: String) : DirectAddPartnerResult()
@@ -3010,231 +2766,101 @@ class WorkspaceRepository(
         data class Error(val message: String) : DirectAddPartnerResult()
     }
 
+    sealed class PendingInvitationCleanupResult {
+        object Deleted : PendingInvitationCleanupResult()
+        object AlreadyGone : PendingInvitationCleanupResult()
+        object Registered : PendingInvitationCleanupResult()
+        data class Rejected(val message: String) : PendingInvitationCleanupResult()
+        data class Failed(val message: String) : PendingInvitationCleanupResult()
+    }
+
     suspend fun refreshWorkspaceMembers(workspaceId: String? = null) {
-        if (!isCloudReady()) return
-        val currentWs = if (!workspaceId.isNullOrBlank()) workspaceId else (_activeWorkspaceId.value ?: _personalWorkspaceId.value)
-        if (currentWs.isNullOrBlank()) return
-        
-        refreshMembersMutex.lock()
-        try {
-            val visible = setOf(currentWs)
-            val allMembers = mutableListOf<WorkspaceMember>()
-            for (wsId in visible) {
-                val members = firestoreRepository.getWorkspaceMembers(wsId)
-                allMembers.addAll(members)
-                val collabMembers = firestoreRepository.getCollaborationGroupMembersList(wsId)
-                allMembers.addAll(collabMembers)
-                val pendingPhones = firestoreRepository.getPendingPartnerPhones(wsId)
-                for (pending in pendingPhones) {
-                    val registeredUid = if (isCloudReady()) {
-                        firestoreRepository.lookupPhoneInDirectory(pending.normalizedPhone)
-                    } else null
-
-                    if (!registeredUid.isNullOrBlank() && registeredUid != activeUid) {
-                        try {
-                            val currentSettings = appSettingsDao.getSettingsForWorkspaceOnce(wsId)
-                            val businessName = currentSettings?.businessName?.ifBlank { "" } ?: ""
-                            firestoreRepository.addPartnerMemberDirectly(
-                                workspaceId = wsId,
-                                partnerUid = registeredUid,
-                                partnerName = pending.displayName.ifBlank { "Partner" },
-                                partnerPhone = pending.normalizedPhone,
-                                role = pending.role.ifBlank { "partner" },
-                                ownerUid = activeUid ?: "",
-                                businessName = businessName
-                            )
-                            firestoreRepository.deletePendingPartnerPhone(wsId, pending.normalizedPhone)
-                            allMembers.add(
-                                WorkspaceMember(
-                                    uid = registeredUid,
-                                    role = pending.role.ifBlank { "partner" },
-                                    status = "active",
-                                    phoneNumber = pending.normalizedPhone,
-                                    displayName = pending.displayName.ifBlank { null },
-                                    addedByUid = activeUid ?: "",
-                                    invitedByUid = activeUid ?: ""
-                                )
-                            )
-                            continue
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Auto-promote pending partner error: ${e.message}")
-                        }
-                    }
-
-                    allMembers.add(
-                        WorkspaceMember(
-                            uid = "",
-                            role = pending.role.ifBlank { "partner" },
-                            status = "waiting_for_registration",
-                            phoneNumber = pending.normalizedPhone,
-                            displayName = pending.displayName.ifBlank { null },
-                            addedByUid = pending.addedByUid,
-                            invitedByUid = pending.addedByUid
-                        )
-                    )
-                }
-            }
-            val distinctMembers = allMembers.distinctBy {
-                val phoneDigits = it.phoneNumber?.filter { c -> c.isDigit() }?.takeLast(10) ?: ""
-                if (it.uid.isNotBlank()) it.uid else "pending_$phoneDigits"
-            }
-            
-            // Only update if current active workspace matches the one we refreshed for
-            val latestActive = _activeWorkspaceId.value ?: _personalWorkspaceId.value
-            if (currentWs == latestActive) {
-                for (wsId in visible) {
-                    for (m in distinctMembers) {
-                        if (m.uid.isNotBlank() && m.defaultHourlyRate != null && m.defaultHourlyRate > 0.0) {
-                            val key = "hourly_rate_${wsId}_${m.uid}"
-                            if (!userHourlyRatesPrefs.contains(key)) {
-                                userHourlyRatesPrefs.edit().putFloat(key, m.defaultHourlyRate.toFloat()).apply()
-                            }
-                        }
-                    }
-                }
-                _workspaceMembers.value = distinctMembers
-            } else {
-                Log.d(TAG, "Skipping members update: workspace changed during refresh ($currentWs -> $latestActive)")
-            }
-        } finally {
-            refreshMembersMutex.unlock()
-        }
+        val activeId = _activeWorkspaceId.value ?: return
+        val members = firestoreRepository.getWorkspaceMembers(activeId)
+        _activeWorkspaceMembers.value = members
+        _workspaceMembers.value = members
+        cacheVerifiedMembership(getEffectiveActorUid().orEmpty(), activeId, members)
     }
 
     suspend fun addPartnerDirectly(name: String, phone: String, role: String): DirectAddPartnerResult {
-        val wsId = getOrResolveWorkspaceId() ?: ""
-        if (wsId.isBlank()) {
-            return DirectAddPartnerResult.Error("Workspace is not ready")
-        }
-
-        val isOwner = isOwnerOfWorkspace(wsId)
-        val normalizedTargetRole = com.example.data.auth.RoleUtils.normalizeRole(role)
-        if (!isOwner && (normalizedTargetRole == com.example.data.auth.RoleUtils.ROLE_OWNER || normalizedTargetRole == com.example.data.auth.RoleUtils.ROLE_CO_OWNER)) {
-            return DirectAddPartnerResult.Error("Partners can only add Partner or Operator roles.")
-        }
-
-        val normalizedPhone = normalizePhoneNumber(phone)
-        val cleanDigits = normalizedPhone.filter { it.isDigit() }.takeLast(10)
-
-        if (cleanDigits.length < 10) {
-            return DirectAddPartnerResult.Error("Please enter a valid 10-digit phone number.")
-        }
-
-        // Perform Phone Directory Lookup first to validate single business per partner constraint
-        val partnerUid = if (isCloudReady()) firestoreRepository.lookupPhoneInDirectory(normalizedPhone) else null
-
-        if (partnerUid != null && partnerUid == activeUid) {
-            return DirectAddPartnerResult.Error("Owner cannot add themselves as Partner.")
-        }
-
-        if (isCloudReady()) {
-            val isAlreadyPartner = firestoreRepository.checkIsUserOrPhoneAlreadyPartner(partnerUid, normalizedPhone, wsId)
-            if (isAlreadyPartner) {
-                return DirectAddPartnerResult.Error("This partner is already added to this business.")
-            }
-        }
-
-        // 1. Create or update local PartnerEntity (used for local driver/operator functionality)
-        val existingPartners = partnerDao.getPartnersForWorkspace(wsId).firstOrNull() ?: emptyList()
-        val existing = existingPartners.firstOrNull { it.phone.filter { ch -> ch.isDigit() }.takeLast(10) == cleanDigits }
-        val partnerEntity = if (existing != null) {
-            val updated = existing.copy(name = name.trim(), phone = normalizedPhone, role = role.trim().ifBlank { "Partner" })
-            partnerDao.updatePartner(updated)
-            updated
-        } else {
-            val newPartner = PartnerEntity(
-                id = IdGenerator.generateId(),
-                workspaceId = wsId,
-                name = name.trim(),
-                phone = normalizedPhone,
-                role = role.trim().ifBlank { "Partner" },
-                avatarColorHex = "#1E4D2B",
-                isCurrentActive = false
-            )
-            partnerDao.insertPartner(newPartner)
-            newPartner
-        }
-
-        if (!isCloudReady()) {
-            return DirectAddPartnerResult.AccountNotRegistered(
-                partnerEntity,
-                "Partner account not found. Ask this partner to create/login to their Phone account first."
-            )
-        }
-
-        if (partnerUid.isNullOrBlank()) {
-            val pendingRes = firestoreRepository.savePendingPartnerPhone(
-                groupId = wsId,
-                normalizedPhone = normalizedPhone,
-                displayName = name.trim(),
-                role = role.trim().ifBlank { "partner" },
-                ownerUid = activeUid ?: ""
-            )
-            try {
-                firestoreRepository.savePartner(wsId, partnerEntity, activeUid)
-            } catch (e: Exception) {
-                Log.w(TAG, "Local partner save deferred: ${e.message}")
-            }
-            refreshWorkspaceMembers(wsId)
-            return DirectAddPartnerResult.AccountNotRegistered(
-                partnerEntity,
-                "Partner account not found. It will automatically connect when the partner registers their phone number."
-            )
-        }
-
-        try {
-            firestoreRepository.deletePendingPartnerPhone(wsId, normalizedPhone)
-        } catch (_: Exception) {}
-
-        // 3. Directly create workspace membership and user discovery index
-        val currentSettings = appSettingsDao.getSettingsForWorkspaceOnce(wsId)
-            ?: AppSettingsEntity(workspaceId = wsId)
-        val businessName = currentSettings.businessName.ifBlank { "" }
-
-        val addResult = firestoreRepository.addPartnerMemberDirectly(
-            workspaceId = wsId,
-            partnerUid = partnerUid,
-            partnerName = name.trim(),
-            partnerPhone = normalizedPhone,
-            role = role.trim().ifBlank { "Partner" },
-            ownerUid = activeUid ?: "",
-            businessName = businessName
-        )
-
-        // 4. Link partner to owner's workspace in collaboration group
-        firestoreRepository.addPartnerToCollaborationGroup(
-            ownerWorkspaceId = wsId,
-            ownerUid = activeUid ?: "",
-            partnerUid = partnerUid,
-            partnerWorkspaceId = wsId,
-            partnerPhone = normalizedPhone,
-            partnerDisplayName = name.trim()
-        )
-
-        // Ensure partner's default workspace is set to owner's workspace on Firestore
-        try {
-            firestoreRepository.updateUserDefaultWorkspace(partnerUid, wsId, "partner")
-        } catch (e: Exception) {
-            Log.w(TAG, "updateUserDefaultWorkspace for partner failed: ${e.message}")
-        }
-
-        // Update local visible workspaces
-        val currentVisible = _visibleWorkspaceIds.value.toMutableSet()
-        currentVisible.add(wsId)
-        _visibleWorkspaceIds.value = currentVisible
-        attachRealtimeListenersForVisibleWorkspaces()
-
-        return if (addResult.isSuccess) {
-            refreshWorkspaceMembers(wsId)
-            DirectAddPartnerResult.Success(partnerEntity, partnerUid)
-        } else {
-            val err = addResult.exceptionOrNull()?.message ?: "Could not connect partner"
-            DirectAddPartnerResult.Error(err)
-        }
+        val wsId = _activeWorkspaceId.value.orEmpty()
+        if (requireWorkspaceActor(wsId) != com.example.data.auth.RoleUtils.ROLE_OWNER) return DirectAddPartnerResult.Error("Only Owner can invite members")
+        val normalizedRole = com.example.data.auth.RoleUtils.normalizeRole(role)
+        if (normalizedRole !in setOf(com.example.data.auth.RoleUtils.ROLE_PARTNER, com.example.data.auth.RoleUtils.ROLE_OPERATOR)) return DirectAddPartnerResult.Error("Choose Partner or Operator")
+        val members = firestoreRepository.getWorkspaceMembers(wsId)
+        val digits = phone.filter(Char::isDigit).takeLast(10)
+        val verified = members.firstOrNull { it.uid.isNotBlank() && it.phoneNumber.orEmpty().filter(Char::isDigit).takeLast(10) == digits &&
+            it.status.equals("active", true) && com.example.data.auth.RoleUtils.normalizeRole(it.role) == normalizedRole }
+            ?: return DirectAddPartnerResult.Error("Invitation OTP verification is required before adding this member")
+        val partner = PartnerEntity(id = IdGenerator.generateId(), workspaceId = wsId, name = verified.displayName.orEmpty(),
+            phone = verified.phoneNumber.orEmpty(), role = normalizedRole, firebaseUid = verified.uid)
+        partnerDao.insertPartner(partner)
+        refreshWorkspaceMembers(wsId)
+        return DirectAddPartnerResult.Success(partner, verified.uid)
     }
 
     suspend fun removePartner(partner: PartnerEntity, partnerUid: String? = null) {
         removePartnerFromWorkspace(partner, partnerUid)
+    }
+
+    /**
+     * Removes only a waiting-for-registration invitation from the active
+     * workspace. This is deliberately separate from normal member removal.
+     */
+    suspend fun removePendingPartnerInvitation(
+        pending: WorkspaceMember
+    ): PendingInvitationCleanupResult {
+        val workspaceId = _activeWorkspaceId.value?.trim().orEmpty()
+        val actorUid = getEffectiveActorUid()?.trim().orEmpty()
+        if (workspaceId.isBlank() || actorUid.isBlank()) {
+            return PendingInvitationCleanupResult.Rejected("Session or workspace is not ready")
+        }
+        val actorRole = if (isOwnerOfWorkspace(workspaceId)) "Owner" else
+            _activeWorkspaceMembers.value.firstOrNull { it.uid == actorUid && it.status.equals("active", true) }?.role.orEmpty()
+        if (!com.example.data.auth.canCleanupPendingInvitation(pending, workspaceId, actorUid, actorRole)) {
+            return PendingInvitationCleanupResult.Rejected("Only the workspace Owner or the creating Partner may remove this unresolved Operator invitation")
+        }
+        val pendingPhone = pending.phoneNumber?.trim().orEmpty()
+        if (pendingPhone.isBlank()) {
+            return PendingInvitationCleanupResult.Rejected("Pending invitation has no valid phone identity")
+        }
+        if (!isCloudReady()) {
+            return PendingInvitationCleanupResult.Failed("Connect to the workspace before removing this pending invitation")
+        }
+
+        val cloudResult = firestoreRepository.deletePendingPartnerInvitation(
+            workspaceId = workspaceId,
+            normalizedPhone = pendingPhone,
+            actorUid = actorUid
+        ).getOrElse { error ->
+            return PendingInvitationCleanupResult.Failed(
+                error.message ?: "Pending invitation cleanup failed"
+            )
+        }
+
+        if (cloudResult == FirestoreRepository.PendingPartnerCleanupResult.REGISTERED) {
+            refreshWorkspaceMembers(workspaceId)
+            return PendingInvitationCleanupResult.Registered
+        }
+
+        if (_activeWorkspaceId.value != workspaceId || getEffectiveActorUid() != actorUid) {
+            return PendingInvitationCleanupResult.Rejected("Session or workspace changed during cleanup")
+        }
+        // The cloud operation has confirmed that no active member exists for
+        // this pending phone. Remove only local unresolved placeholders from
+        // the same workspace; never delete by name or across workspaces.
+        val cleanPhone = pendingPhone.filter { it.isDigit() }.takeLast(10)
+        if (cleanPhone.length == 10) {
+            partnerDao.getPartnersForWorkspaceOnce(workspaceId)
+                .filter { it.phone.filter { ch -> ch.isDigit() }.takeLast(10) == cleanPhone }
+                .forEach { partnerDao.deletePartner(it) }
+        }
+        refreshWorkspaceMembers(workspaceId)
+        return when (cloudResult) {
+            FirestoreRepository.PendingPartnerCleanupResult.DELETED -> PendingInvitationCleanupResult.Deleted
+            FirestoreRepository.PendingPartnerCleanupResult.ALREADY_GONE -> PendingInvitationCleanupResult.AlreadyGone
+            FirestoreRepository.PendingPartnerCleanupResult.REGISTERED -> PendingInvitationCleanupResult.Registered
+        }
     }
 
     suspend fun checkForInvitations(phoneNumber: String): List<WorkspaceInvitation> {
@@ -3243,24 +2869,25 @@ class WorkspaceRepository(
     }
 
     suspend fun switchActiveWorkspace(targetWorkspaceId: String, userProfile: UserProfile): Result<String> {
+        if (com.example.BuildConfig.PHYSICAL_TEST && !com.example.data.firebase.FirebaseEnvironment.isStagingWorkspace(targetWorkspaceId))
+            return Result.failure(SecurityException("Physical test can use only the staging workspace"))
         val uid = userProfile.uid
         if (targetWorkspaceId.isBlank()) {
             return Result.failure(IllegalArgumentException("Target workspace ID cannot be blank"))
         }
-        if (targetWorkspaceId == _activeWorkspaceId.value && _isInitialized.value) {
-            return Result.success(targetWorkspaceId)
-        }
 
         return try {
+            if (getEffectiveActorUid() != uid) throw SecurityException("Authenticated identity mismatch")
+            val normalizedTargetRole = firestoreRepository.resolveAuthoritativeRole(uid, targetWorkspaceId)
+                ?: throw SecurityException("Target workspace membership is inactive or missing")
+            val targetMembers = firestoreRepository.getWorkspaceMembers(targetWorkspaceId)
             _workspaceInitState.value = WorkspaceInitState.Loading
             _settingsSyncState.value = SettingsSyncState.Loading
 
             // Load settings for target workspace
             val localSettings = appSettingsDao.getSettingsForWorkspaceOnce(targetWorkspaceId)
                 ?: AppSettingsEntity(workspaceId = targetWorkspaceId)
-            val resolvedSettings = if (isCloudReady() && uid.isNotBlank()) {
-                firestoreRepository.fetchOrCreateWorkspaceSettings(targetWorkspaceId, uid, localSettings)
-            } else localSettings
+            val resolvedSettings = firestoreRepository.fetchOrCreateWorkspaceSettings(targetWorkspaceId, uid, localSettings)
 
             val savedLang = getSavedUserLanguage(uid) ?: localSettings.language
             val personalWsId = _personalWorkspaceId.value
@@ -3291,17 +2918,16 @@ class WorkspaceRepository(
 
             // Switch active workspace ID
             _activeWorkspaceId.value = targetWorkspaceId
+            _activeWorkspaceMembers.value = targetMembers
+            _workspaceMembers.value = targetMembers
+            cacheVerifiedMembership(uid, targetWorkspaceId, targetMembers)
             _isInitialized.value = true
             _workspaceInitState.value = WorkspaceInitState.Ready(targetWorkspaceId)
 
             // Re-evaluate role for target workspace using the AUTHORITATIVE MEMBERSHIP RECORD only.
             // Workspace ownership (ownerUid) must never be used to infer the role.
-            val targetRole = firestoreRepository.resolveAuthoritativeRole(uid, targetWorkspaceId)
-                ?: (currentUserRole?.takeIf { it.isNotBlank() } ?: com.example.data.auth.RoleUtils.ROLE_PARTNER)
-            val normalizedTargetRole = com.example.data.auth.RoleUtils.normalizeRole(targetRole)
             currentUserRole = normalizedTargetRole
-            val isOwner = normalizedTargetRole == com.example.data.auth.RoleUtils.ROLE_OWNER ||
-                normalizedTargetRole == com.example.data.auth.RoleUtils.ROLE_CO_OWNER
+            val isOwner = normalizedTargetRole == com.example.data.auth.RoleUtils.ROLE_OWNER
             _isCollaborationOwner.value = isOwner
             Log.d("TRAC_ROLE", "ACTIVATE uid=$uid workspace=$targetWorkspaceId role=$normalizedTargetRole isOwner=$isOwner")
 
@@ -3311,11 +2937,11 @@ class WorkspaceRepository(
                 attachRealtimeListenersForVisibleWorkspaces()
                 refreshWorkspaceMembers(targetWorkspaceId)
                 pushUnsyncedToCloud(targetWorkspaceId)
-                
+
                 // Load profit share allocations from cloud for new workspace
                 scope.launch {
                     loadProfitShareAllocationsFromCloud(targetWorkspaceId)
-                    migrateLegacyPercentagesToUidAllocations(targetWorkspaceId)
+                    // No automatic identity migration during workspace switching.
                 }
             }
 
@@ -3329,49 +2955,79 @@ class WorkspaceRepository(
     }
 
     suspend fun removePartnerFromWorkspace(partner: PartnerEntity, targetPartnerUid: String? = null) {
-        val currentWsId = _personalWorkspaceId.value ?: _activeWorkspaceId.value ?: partner.workspaceId
-        val isOwner = _isCollaborationOwner.value
-        if (!isOwner && !targetPartnerUid.isNullOrBlank()) {
-            Log.w(TAG, "Unauthorized: Non-owner cannot remove active connected members")
-            return
+        val wsId = _activeWorkspaceId.value.orEmpty()
+        if (requireWorkspaceActor(wsId) != com.example.data.auth.RoleUtils.ROLE_OWNER) throw SecurityException("Only Owner can remove members")
+        val targetUid = targetPartnerUid?.takeIf { it.isNotBlank() } ?: partner.firebaseUid.takeIf { it.isNotBlank() } ?: throw SecurityException("Verified member UID is required; names and phone numbers cannot authorize removal")
+        val archived = firestoreRepository.archiveMember(wsId, targetUid)
+        database.withTransaction { database.deletedMemberDao().save(archived) }
+        refreshWorkspaceMembers(wsId)
+    }
+
+    fun deletedMembers(wsId: String) = database.deletedMemberDao().observe(wsId)
+
+    suspend fun refreshDeletedMembers() {
+        val wsId = _activeWorkspaceId.value.orEmpty()
+        if (requireWorkspaceActor(wsId) != com.example.data.auth.RoleUtils.ROLE_OWNER) throw SecurityException("Deleted Users is Owner-only")
+        firestoreRepository.getDeletedMembers(wsId).forEach { database.deletedMemberDao().save(it) }
+    }
+
+    suspend fun permanentlyDeleteMember(uid: String, confirmation: String) = syncMutex.withLock {
+        val wsId = _activeWorkspaceId.value.orEmpty()
+        if (requireWorkspaceActor(wsId) != com.example.data.auth.RoleUtils.ROLE_OWNER) throw SecurityException("Permanent deletion is Owner-only")
+        require(confirmation == "PERMANENTLY DELETE") { "Explicit permanent-delete confirmation is required" }
+        val archive = database.deletedMemberDao().get(wsId, uid) ?: throw SecurityException("Member is not in Deleted Users")
+        val plan = com.example.data.sync.MemberPurgePlan.build(wsId, uid,
+            jobEntryDao.getJobsForWorkspaceOnce(wsId), expenseDao.getExpensesForWorkspace(wsId).firstOrNull().orEmpty(),
+            withdrawalDao.getWithdrawalsForWorkspaceOnce(wsId), tractorDao.getTractorsForWorkspaceOnce(wsId),
+            workTypeExtensionDao.getExtensionsForWorkspace(wsId).firstOrNull().orEmpty(),
+            paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty(), customerDao.getCustomersForWorkspace(wsId).firstOrNull().orEmpty())
+        database.withTransaction {
+            database.deletedMemberDao().save(archive.copy(purgeState = "PURGE_PENDING"))
+            operations.invalidateActor(wsId, uid)
+            plan.jobs.forEach { operations.invalidateEntity(wsId, "JOB", it.id) }
+            plan.expenses.forEach { operations.invalidateEntity(wsId, "EXPENSE", it.id) }
+            plan.withdrawals.forEach { operations.invalidateEntity(wsId, "WITHDRAWAL", it.id) }
+            plan.collections.forEach { operations.invalidateEntity(wsId, "PAYMENT", it.id) }
+            plan.tractors.forEach { operations.invalidateEntity(wsId, "TRACTOR", it.id) }
+            plan.extensions.forEach { operations.invalidateEntity(wsId, "EXTENSION", it.id) }
+            plan.customers.forEach { operations.invalidateEntity(wsId, "CUSTOMER", it.id) }
         }
+        firestoreRepository.stopRealtimeListeners()
         try {
-            partnerDao.deletePartner(partner)
-            if (isCloudReady() && currentWsId.isNotBlank()) {
-                scope.launch {
-                    try {
-                        firestoreRepository.deletePartner(currentWsId, partner.id)
-                        val normPhone = normalizePhoneNumber(partner.phone)
-                        if (normPhone.isNotBlank()) {
-                            firestoreRepository.deletePendingPartnerPhone(currentWsId, normPhone)
-                        }
-                        if (isOwner) {
-                            val partnerUid = targetPartnerUid?.ifBlank { null }
-                                ?: firestoreRepository.lookupPhoneInDirectory(partner.phone)
-                            firestoreRepository.removePartnerFromWorkspace(
-                                workspaceId = currentWsId,
-                                partnerUid = partnerUid,
-                                partnerPhone = partner.phone
-                            )
-                            if (!partnerUid.isNullOrBlank()) {
-                                firestoreRepository.removePartnerFromCollaborationGroup(currentWsId, partnerUid)
-                                val partnerPersonalWsId = "ws_${partnerUid.replace(Regex("[^a-zA-Z0-9]"), "").take(16).ifBlank { "main" }}"
-                                val currentVisible = _visibleWorkspaceIds.value.toMutableSet()
-                                currentVisible.remove(partnerPersonalWsId)
-                                _visibleWorkspaceIds.value = currentVisible
-                                attachRealtimeListenersForVisibleWorkspaces()
-                            }
-                        }
-                        refreshWorkspaceMembers(currentWsId)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error removing partner in cloud: ${e.message}", e)
-                    }
-                }
+        val backup = firestoreRepository.permanentlyDeleteMember(wsId, uid)
+        val manifest = firestoreRepository.memberPurgeManifest(wsId, uid)
+        database.withTransaction {
+            for ((type, id) in manifest) operations.invalidateEntity(wsId, type, id)
+            // Also invalidate queued owner-created target records that never reached the cloud/Room plan.
+            for (op in operations.outstandingOperations(wsId)) {
+                val data = org.json.JSONObject(op.payloadJson)
+                if (listOf("createdByUid", "entryForUid", "expenseForUid", "targetPartnerUid", "financialAttributionUid", "collectedByUid").any { data.optString(it) == uid })
+                    operations.invalidateEntity(wsId, op.entityType, op.entityId)
             }
-            Log.d("TRAC_PARTNER", "Removed partner ${partner.name} from workspace $currentWsId")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error removing partner: ${e.message}", e)
         }
+        val deletedJobIds = plan.jobs.map { it.id }.toSet()
+        val retainedSources = plan.collections.filter { it.status == "ACTIVE" && it.jobEntryId !in deletedJobIds }
+            .map { it.jobEntryId }.distinct().map { id ->
+                firestoreRepository.getEntryFromServer(wsId, id)
+                    ?: throw IllegalStateException("Retained source is missing after cloud reconciliation")
+            }
+        database.withTransaction {
+            retainedSources.forEach { reconciled ->
+                jobEntryDao.insertJob(reconciled.copy(isSynced = true))
+            }
+            plan.collections.forEach { paymentDao.deletePayment(it) }
+            plan.expenses.forEach { expenseDao.deleteExpense(it) }
+            plan.withdrawals.forEach { withdrawalDao.deleteWithdrawal(it) }
+            plan.jobs.forEach { jobEntryDao.deleteJob(it) }
+            plan.tractors.forEach { tractorDao.deleteTractor(it) }
+            plan.extensions.forEach { workTypeExtensionDao.deleteExtension(it) }
+            plan.customers.forEach { customerDao.deleteCustomer(it) }
+            customerDao.getCustomersForWorkspace(wsId).firstOrNull().orEmpty().forEach { recalculateCustomerStats(it.id) }
+            database.deletedMemberDao().save(archive.copy(purgeState = "PURGE_PENDING", backupPath = backup))
+        }
+        firestoreRepository.completeMemberPurge(wsId, uid)
+        database.deletedMemberDao().save(archive.copy(purgeState = "PURGED", backupPath = backup))
+        } finally { attachRealtimeListenersForVisibleWorkspaces() }
     }
 
     suspend fun leaveCollaborationGroup(ownerWorkspaceId: String) {
@@ -3393,7 +3049,7 @@ class WorkspaceRepository(
                 attachRealtimeListenersForVisibleWorkspaces()
                 refreshWorkspaceMembers()
                 Log.d("TRAC_PARTNER", "User $uid left collaboration group $ownerWorkspaceId")
-                
+
                 if (_activeWorkspaceId.value == ownerWorkspaceId) {
                     val available = getAvailableWorkspaces(UserProfile(uid = uid))
                     val fallbackId = available.firstOrNull()?.workspaceId ?: _personalWorkspaceId.value
@@ -3408,6 +3064,7 @@ class WorkspaceRepository(
     }
 
     suspend fun getGenuinePartnerWorkspaces(userProfile: UserProfile, personalWsId: String): List<Workspace> {
+        if (com.example.BuildConfig.PHYSICAL_TEST) return emptyList()
         val uid = userProfile.uid
         if (uid.isBlank()) return emptyList()
         val genuinePartners = mutableMapOf<String, Workspace>()
@@ -3503,12 +3160,17 @@ class WorkspaceRepository(
 
     suspend fun getAvailableWorkspaces(userProfile: UserProfile): List<Workspace> {
         val uid = userProfile.uid
-        val personalWsId = _personalWorkspaceId.value 
-            ?: userProfile.defaultWorkspaceId?.ifBlank { null }
-            ?: "ws_${uid.replace(Regex("[^a-zA-Z0-9]"), "").take(16).ifBlank { "main" }}"
-        val list = getGenuinePartnerWorkspaces(userProfile, personalWsId)
-        _genuinePartnerWorkspaces.value = list
-        return list
+        require(uid.isNotBlank() && uid == getEffectiveActorUid()) { "Authenticated identity mismatch" }
+        val memberships = firestoreRepository.discoverAuthoritativeMemberships(uid, _activeWorkspaceId.value)
+        val available = mutableListOf<Workspace>()
+        for (membership in memberships) {
+            if (com.example.BuildConfig.PHYSICAL_TEST && membership.workspaceId != com.example.data.firebase.FirebaseEnvironment.STAGING_WORKSPACE) continue
+            if (uid != getEffectiveActorUid()) throw SecurityException("Session changed during workspace discovery")
+            firestoreRepository.getWorkspaceDetails(membership.workspaceId)?.let { available.add(it.copy(workspaceId = membership.workspaceId, accessRole = membership.role)) }
+        }
+        if (uid != getEffectiveActorUid()) throw SecurityException("Session changed during workspace discovery")
+        _genuinePartnerWorkspaces.value = available
+        return available
     }
 
     suspend fun getWorkspaceMembers(workspaceId: String? = null): List<WorkspaceMember> {
@@ -3517,13 +3179,20 @@ class WorkspaceRepository(
     }
 
     suspend fun updateSettings(settings: AppSettingsEntity) {
+        com.example.ui.util.requireOptionalContactPhone(settings.activePartnerPhone)
         val isReady = isCloudReady()
-        val wsId = getOrResolveWorkspaceId() ?: settings.workspaceId
-        val isOwner = _isCollaborationOwner.value
+        val wsId = _activeWorkspaceId.value.orEmpty()
+        val settingsRole = requireWorkspaceActor(wsId)
+        require(settings.workspaceId == wsId) { "Settings workspace mismatch" }
+        val isOwner = settingsRole == com.example.data.auth.RoleUtils.ROLE_OWNER
         val existing = appSettingsDao.getSettingsForWorkspaceOnce(wsId)
         val scoped = if (!isOwner && existing != null) {
             settings.copy(
                 workspaceId = wsId,
+                defaultHourlyRate = existing.defaultHourlyRate,
+                currency = existing.currency,
+                sharedAccountId = existing.sharedAccountId,
+                lockedTractorLabel = existing.lockedTractorLabel,
                 businessName = existing.businessName,
                 businessPhone = existing.businessPhone,
                 businessAddress = existing.businessAddress,
@@ -3531,12 +3200,34 @@ class WorkspaceRepository(
                 ownerName = existing.ownerName
             )
         } else {
-            settings.copy(workspaceId = wsId)
+            settings.copy(workspaceId = wsId, businessPhone = com.example.ui.util.requireOptionalContactPhone(settings.businessPhone))
         }
         appSettingsDao.insertOrUpdateSettings(scoped)
 
         val actorUid = getEffectiveActorUid()
         saveUserLanguage(settings.language, actorUid)
+
+        val personalName = if (isOwner) scoped.ownerName.trim() else scoped.activePartnerName.trim()
+        val profileActorUid = actorUid.orEmpty()
+        if (wsId.isNotBlank() && profileActorUid.isNotBlank() && personalName.isNotBlank()) {
+            // Keep the active workspace membership mirror current immediately. The cloud
+            // membership write below remains the cross-session source of truth.
+            _workspaceMembers.value = _workspaceMembers.value.map { member ->
+                if (member.uid == profileActorUid) member.copy(displayName = personalName) else member
+            }
+            _activeWorkspaceMembers.value = _activeWorkspaceMembers.value.map { member ->
+                if (member.uid == profileActorUid) member.copy(displayName = personalName) else member
+            }
+        }
+        if (isReady && wsId.isNotBlank() && profileActorUid.isNotBlank() && personalName.isNotBlank()) {
+            scope.launch {
+                try {
+                    firestoreRepository.updateMemberDisplayName(wsId, profileActorUid, personalName)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Member display name sync deferred: ${e.message}")
+                }
+            }
+        }
 
         // Only push shared business profile to cloud workspace if user is the business owner or editing their personal workspace
         val syncState = _settingsSyncState.value
@@ -3556,191 +3247,128 @@ class WorkspaceRepository(
      * Records are pushed according to their own record.workspaceId.
      */
     suspend fun pushUnsyncedToCloud(targetWorkspaceId: String? = null, isOnline: Boolean = true): SyncResult {
-        if (!isOnline) {
-            return SyncResult(
-                isSuccess = false,
-                syncedItemsCount = 0,
-                message = "Device offline. Records stored safely in local Room database."
-            )
-        }
-
-        val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
-        if (activeUid == null) {
-            activeUid = currentUid
-        }
-        if (activeUid == null || (currentUid != null && activeUid != currentUid)) {
-            return SyncResult(
-                isSuccess = false,
-                syncedItemsCount = 0,
-                message = "Workspace not ready or sign-in mismatch."
-            )
-        }
-
-        val fallbackWsId = targetWorkspaceId
-            ?: (_workspaceInitState.value as? WorkspaceInitState.Ready)?.workspaceId
-            ?: _activeWorkspaceId.value
-            ?: _personalWorkspaceId.value
-            ?: ""
-
-        var syncedCount = 0
-
-        // 1. Process all pending deletions first so cloud copies are deleted
-        val pendingDeletions = pendingDeleteManager.getAllPendingDeletions()
-        for (del in pendingDeletions) {
+        if (!isOnline) return SyncResult(false, 0, "Offline actions are saved on this device")
+        return kotlinx.coroutines.withContext(Dispatchers.IO) { syncMutex.withLock {
+            val uid = getEffectiveActorUid().orEmpty()
+            val wsId = targetWorkspaceId ?: _activeWorkspaceId.value.orEmpty()
+            if (uid.isBlank() || wsId.isBlank() || wsId != _activeWorkspaceId.value) return@withLock SyncResult(false, 0, "No authorized active workspace")
+            val verifiedRole: String
+            val members: List<WorkspaceMember>
             try {
-                when (del.entityType) {
-                    "JOB" -> firestoreRepository.deleteJob(del.workspaceId, del.recordId)
-                    "EXPENSE" -> firestoreRepository.deleteExpense(del.workspaceId, del.recordId)
-                    "CUSTOMER" -> firestoreRepository.deleteCustomer(del.workspaceId, del.recordId)
-                    "WITHDRAWAL" -> firestoreRepository.deleteWithdrawal(del.workspaceId, del.recordId)
-                    "TRACTOR" -> firestoreRepository.deleteTractor(del.workspaceId, del.recordId)
-                    "PARTNER" -> firestoreRepository.deletePartner(del.workspaceId, del.recordId)
+                val role = firestoreRepository.resolveAuthoritativeRole(uid, wsId)
+                if (role == null) {
+                    context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE).edit().clear().commit()
+                    _activeWorkspaceMembers.value = emptyList()
+                    _workspaceMembers.value = emptyList()
+                    currentUserRole = ""
+                    _isCollaborationOwner.value = false
+                    stopWorkspaceListeners()
+                    _workspaceInitState.value = WorkspaceInitState.Error(SecurityException("Workspace access removed"))
+                    return@withLock SyncResult(false, 0, "Workspace access removed; pending actions retained")
                 }
-                pendingDeleteManager.removePendingDelete(del.entityType, del.recordId, del.workspaceId)
-                syncedCount++
+                verifiedRole = role
+                members = firestoreRepository.getWorkspaceMembers(wsId)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Log.w(TAG, "Pending delete for ${del.entityType} ${del.recordId} deferred: ${e.message}")
+                return@withLock SyncResult(false, 0, "Connection unavailable; pending actions retained")
             }
-        }
-
-        // 1.5 Process all pending audit events
-        val pendingAudits = pendingAuditManager.getAllPendingAudits()
-        for (audit in pendingAudits) {
-            val recordWsId = audit.workspaceId.ifBlank { fallbackWsId }
-            if (recordWsId.isNotBlank()) {
+            if (getEffectiveActorUid() != uid || _activeWorkspaceId.value != wsId)
+                return@withLock SyncResult(false, 0, "Session or workspace changed; pending actions retained")
+            currentUserRole = verifiedRole
+            _isCollaborationOwner.value = verifiedRole == com.example.data.auth.RoleUtils.ROLE_OWNER
+            _activeWorkspaceMembers.value = members
+            cacheVerifiedMembership(uid, wsId, members)
+            // Offline cold start restores Room context without attaching cloud listeners.
+            // Reconnect only after authoritative membership and the original session are verified.
+            if (firestoreRepository.cloudListenerStates.value[wsId] == null ||
+                firestoreRepository.cloudListenerStates.value[wsId] == com.example.data.firebase.CloudConnectionState.IDLE)
+                attachRealtimeListenersForVisibleWorkspaces()
+            var count = 0
+            var failed = operations.rejectedCount(wsId, uid) > 0
+            var authenticationMessage: String? = null
+            var blockingMessage: String? = null
+            // Recovery failures remain durable and retry separately from permanently rejected mutations.
+            for (rejected in operations.outstandingOperations(wsId).filter { it.actorUid == uid && it.state == "REJECTED" &&
+                (it.failureReason.contains("Local reconciliation pending") ||
+                    (it.entityType == "EXPENSE" && it.mutationType == "DELETE" && it.failureReason.startsWith("Confirmed state restored;"))) }) {
                 try {
-                    firestoreRepository.recordAuditEvent(recordWsId, audit.copy(workspaceId = recordWsId))
-                    pendingAuditManager.removePendingAudit(audit.eventId)
-                    syncedCount++
-                } catch (e: Exception) {
-                    Log.w(TAG, "Pending audit ${audit.eventId} deferred: ${e.message}")
-                }
-            }
-        }
-
-        // 2. Fetch unsynced items sorted by creation time
-        val unsyncedCustomers = customerDao.getUnsyncedCustomers().sortedBy { it.createdAt }
-        val unsyncedJobs = jobEntryDao.getUnsyncedJobs().sortedBy { it.createdAt }
-        val unsyncedExpenses = expenseDao.getUnsyncedExpenses().sortedBy { it.createdAt }
-        val unsyncedWithdrawals = withdrawalDao.getUnsyncedWithdrawals().sortedBy { it.createdAt }
-
-        val totalRecordsCount = pendingDeletions.size + pendingAudits.size + unsyncedJobs.size + unsyncedExpenses.size + unsyncedWithdrawals.size + unsyncedCustomers.size
-        if (totalRecordsCount == 0) {
-            // Even when no local operational rows are pending, update cloud sync status when explicitly pushed
-            if (fallbackWsId.isNotBlank()) {
-                try {
-                    val currentActorUid = activeUid ?: ""
-                    val currentSettings = appSettingsDao.getSettingsForWorkspaceOnce(fallbackWsId)
-                    val currentActorName = if (isCollaborationOwner.value) {
-                        currentSettings?.ownerName?.ifBlank { "Owner" } ?: "Owner"
-                    } else {
-                        currentSettings?.activePartnerName?.ifBlank { "Partner" } ?: "Partner"
+                    if (reconcileRejectedOperation(rejected)) {
+                        clearCompoundDeleteMarkers(rejected)
+                        val originalFailure = rejected.failureReason.substringBefore("; Local reconciliation pending")
+                            .substringAfterLast("Confirmed state restored; ")
+                        operations.waitingRecovery(rejected.operationId, "Confirmed state restored; " + originalFailure)
                     }
-                    val currentRole = if (isCollaborationOwner.value) "Owner" else "Partner"
-                    firestoreRepository.updateLastSuccessfulSync(fallbackWsId, currentActorUid, currentActorName, currentRole)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to update lastSuccessfulSync on cloud: ${e.message}")
-                }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Keep the warning and original payload; retry recovery next sync. */ }
             }
-            return SyncResult(
-                isSuccess = true,
-                syncedItemsCount = 0,
-                message = "All records are already in sync with Cloud."
-            )
-        }
-
-        // 3. Sync Customers first so FK relationships exist
-        for (cust in unsyncedCustomers) {
-            val recordWsId = cust.workspaceId.ifBlank { fallbackWsId }
-            if (recordWsId.isNotBlank()) {
-                try {
-                    firestoreRepository.saveCustomer(recordWsId, cust.copy(workspaceId = recordWsId), activeUid)
-                    customerDao.markCustomersSynced(listOf(cust.id))
-                    syncedCount++
-                } catch (e: Exception) {
-                    Log.w(TAG, "Retry sync for customer ${cust.id} failed: ${e.message}")
+            var cursor = 0L
+            while (true) {
+                if (getEffectiveActorUid() != uid || _activeWorkspaceId.value != wsId) return@withLock SyncResult(false, count, "Session or workspace changed; remaining actions retained")
+                val batch = operations.pendingAfter(wsId, uid, cursor)
+                if (batch.isEmpty()) break
+                for (op in batch) {
+                    cursor = op.sequence
+                    if (getEffectiveActorUid() != uid || _activeWorkspaceId.value != wsId) return@withLock SyncResult(false, count, "Session or workspace changed; remaining actions retained")
+                    try {
+                        val freshRole = firestoreRepository.resolveAuthoritativeRole(uid, wsId) ?: throw SecurityException("Workspace access removed")
+                        com.example.data.sync.OperationPolicy.requireAuthorized(op, freshRole, firestoreRepository.getWorkspaceMembers(wsId))
+                    val refs = com.example.data.sync.OperationDependencies.references(op)
+                    var waiting = false
+                    var rejectedPredecessor = false
+                    for ((type, id) in refs) if (operations.unresolvedPredecessors(wsId, type, id, op.sequence) > 0) {
+                        waiting = true
+                        if (operations.rejectedPredecessors(wsId, type, id, op.sequence) > 0) {
+                            rejectedPredecessor = true
+                            break
+                        }
+                    }
+                    if (waiting) {
+                        val reason = if (rejectedPredecessor)
+                            "Blocked by a rejected earlier action. Resolve that action before retrying."
+                        else "Waiting for an earlier related action"
+                        operations.waiting(op.operationId, reason)
+                        if (rejectedPredecessor) blockingMessage = reason
+                        failed = true
+                        continue
+                    }
+                        var attempt = 0
+                        while (true) {
+                            try {
+                                if (getEffectiveActorUid() != uid || _activeWorkspaceId.value != wsId) throw kotlinx.coroutines.CancellationException("Sync context changed")
+                                firestoreRepository.applyPendingOperation(op)
+                                break
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e
+                            } catch (e: com.google.firebase.firestore.FirebaseFirestoreException) {
+                                if (e.code !in setOf(com.google.firebase.firestore.FirebaseFirestoreException.Code.UNAVAILABLE, com.google.firebase.firestore.FirebaseFirestoreException.Code.ABORTED, com.google.firebase.firestore.FirebaseFirestoreException.Code.DEADLINE_EXCEEDED, com.google.firebase.firestore.FirebaseFirestoreException.Code.RESOURCE_EXHAUSTED) || attempt >= 2) throw e
+                                kotlinx.coroutines.delay(1000L shl attempt++)
+                            }
+                        }
+                        acknowledge(op); count++
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e
+                    } catch (e: Exception) {
+                        if (e is com.example.data.firebase.WorkspaceAuthenticationRequiredException || e is com.example.data.firebase.WorkspaceSessionChangedException) authenticationMessage = e.message
+                        val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code
+                        val permanent = e is SecurityException || e is IllegalArgumentException || e is org.json.JSONException || code in setOf(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED, com.google.firebase.firestore.FirebaseFirestoreException.Code.INVALID_ARGUMENT, com.google.firebase.firestore.FirebaseFirestoreException.Code.FAILED_PRECONDITION, com.google.firebase.firestore.FirebaseFirestoreException.Code.NOT_FOUND)
+                        operations.failed(op.operationId, if (permanent) "REJECTED" else "PENDING", e.message ?: "Sync failed")
+                        if (permanent && op.entityType in setOf("JOB", "CUSTOMER", "EXPENSE", "WITHDRAWAL", "PAYMENT") && e !is com.example.data.firebase.WorkspaceUpgradeRequiredException) {
+                            var recovered = false
+                            try { recovered = reconcileRejectedOperation(op) }
+                            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                            catch (_: Exception) { }
+                            if (recovered) {
+                                clearCompoundDeleteMarkers(op)
+                                operations.waitingRecovery(op.operationId, "Confirmed state restored; " + (e.message ?: "Action rejected"))
+                            }
+                            if (!recovered) operations.waitingRecovery(op.operationId, (e.message ?: "Action rejected") + "; Local reconciliation pending — reconnect to restore shared state")
+                        }
+                        failed = true
+                    }
                 }
+                kotlinx.coroutines.yield()
             }
-        }
-
-        // 4. Sync Jobs
-        for (job in unsyncedJobs) {
-            val recordWsId = job.workspaceId.ifBlank { fallbackWsId }
-            if (recordWsId.isNotBlank()) {
-                try {
-                    firestoreRepository.saveJobEntry(recordWsId, job.copy(workspaceId = recordWsId), activeUid)
-                    jobEntryDao.markJobsSynced(listOf(job.id))
-                    syncedCount++
-                } catch (e: Exception) {
-                    Log.w(TAG, "Retry sync for job ${job.id} failed: ${e.message}")
-                }
-            }
-        }
-
-        // 5. Sync Expenses
-        for (exp in unsyncedExpenses) {
-            val recordWsId = exp.workspaceId.ifBlank { fallbackWsId }
-            if (recordWsId.isNotBlank()) {
-                try {
-                    firestoreRepository.saveExpense(recordWsId, exp.copy(workspaceId = recordWsId), activeUid)
-                    expenseDao.markExpensesSynced(listOf(exp.id))
-                    syncedCount++
-                } catch (e: Exception) {
-                    Log.w(TAG, "Retry sync for expense ${exp.id} failed: ${e.message}")
-                }
-            }
-        }
-
-        // 6. Sync Withdrawals
-        for (wth in unsyncedWithdrawals) {
-            val recordWsId = wth.workspaceId.ifBlank { fallbackWsId }
-            if (recordWsId.isNotBlank()) {
-                try {
-                    firestoreRepository.saveWithdrawal(recordWsId, wth.copy(workspaceId = recordWsId), activeUid)
-                    withdrawalDao.markWithdrawalsSynced(listOf(wth.id))
-                    syncedCount++
-                } catch (e: Exception) {
-                    Log.w(TAG, "Retry sync for withdrawal ${wth.id} failed: ${e.message}")
-                }
-            }
-        }
-
-        // 7. Ensure settings for visible workspaces are synchronized
-        val visible = _visibleWorkspaceIds.value.ifEmpty { setOf(fallbackWsId).filter { it.isNotBlank() } }
-        for (ws in visible) {
-            val localSettings = appSettingsDao.getSettingsForWorkspaceOnce(ws)
-            if (localSettings != null) {
-                try {
-                    firestoreRepository.saveSettings(ws, localSettings, activeUid)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Settings sync for $ws deferred: ${e.message}")
-                }
-            }
-        }
-
-        if (fallbackWsId.isNotBlank()) {
-            try {
-                val currentActorUid = activeUid ?: ""
-                val currentSettings = appSettingsDao.getSettingsForWorkspaceOnce(fallbackWsId)
-                val currentActorName = if (isCollaborationOwner.value) {
-                    currentSettings?.ownerName?.ifBlank { "Owner" } ?: "Owner"
-                } else {
-                    currentSettings?.activePartnerName?.ifBlank { "Partner" } ?: "Partner"
-                }
-                val currentRole = if (isCollaborationOwner.value) "Owner" else "Partner"
-                firestoreRepository.updateLastSuccessfulSync(fallbackWsId, currentActorUid, currentActorName, currentRole)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to update lastSuccessfulSync on cloud: ${e.message}")
-            }
-        }
-
-        val success = (syncedCount >= totalRecordsCount)
-        return SyncResult(
-            isSuccess = success,
-            syncedItemsCount = syncedCount,
-            message = if (success) "Pushed $syncedCount offline records to Cloud successfully!"
-                      else "Synced $syncedCount of $totalRecordsCount items. Cloud sync pending for remainder."
-        )
+            SyncResult(!failed, count, if (failed) authenticationMessage ?: blockingMessage ?: "An action could not sync; check pending actions" else "Synced $count actions")
+        } }
     }
 
     companion object {

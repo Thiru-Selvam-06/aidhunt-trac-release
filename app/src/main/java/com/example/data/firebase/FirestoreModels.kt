@@ -56,7 +56,7 @@ data class CollaborationGroup(
                 groupId = map["groupId"] as? String ?: "",
                 ownerUid = map["ownerUid"] as? String ?: "",
                 ownerWorkspaceId = map["ownerWorkspaceId"] as? String ?: "",
-                createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
                 updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
             )
         }
@@ -158,7 +158,7 @@ data class PendingPartnerPhone(
                 role = map["role"] as? String ?: "partner",
                 addedByUid = map["addedByUid"] as? String ?: "",
                 groupId = map["groupId"] as? String ?: "",
-                createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
                 status = map["status"] as? String ?: "waiting_for_registration"
             )
         }
@@ -171,7 +171,8 @@ data class Workspace(
     val name: String = "",
     val ownerUid: String = "",
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    @get:com.google.firebase.firestore.Exclude val accessRole: String = ""
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
         "workspaceId" to workspaceId,
@@ -187,7 +188,7 @@ data class Workspace(
                 workspaceId = map["workspaceId"] as? String ?: "",
                 name = map["name"] as? String ?: "",
                 ownerUid = map["ownerUid"] as? String ?: "",
-                createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
                 updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
             )
         }
@@ -197,18 +198,22 @@ data class Workspace(
 @Keep
 data class WorkspaceMember(
     val uid: String = "",
-    val role: String = "partner", // "owner", "partner"
-    val status: String = "active", // "active"
+    val workspaceId: String = "",
+    val role: String = "", // "owner", "partner"
+    val status: String = "", // "active"
     val phoneNumber: String? = null,
     val joinedAt: Long = System.currentTimeMillis(),
     val addedByUid: String? = null,
     val invitedByUid: String? = null,
     val displayName: String? = null,
     val email: String? = null,
-    val defaultHourlyRate: Double? = null
+    val defaultHourlyRate: Double? = null,
+    // Local provenance for pending cleanup; not a Room column or a persisted membership field.
+    val pendingWorkspaceId: String = ""
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
         "uid" to uid,
+        "workspaceId" to workspaceId,
         "role" to role,
         "status" to status,
         "phoneNumber" to phoneNumber,
@@ -225,8 +230,9 @@ data class WorkspaceMember(
         fun fromMap(map: Map<String, Any?>): WorkspaceMember {
             return WorkspaceMember(
                 uid = map["uid"] as? String ?: "",
-                role = map["role"] as? String ?: "partner",
-                status = map["status"] as? String ?: "active",
+                workspaceId = map["workspaceId"] as? String ?: "",
+                role = map["role"] as? String ?: "",
+                status = map["status"] as? String ?: "",
                 phoneNumber = map["phoneNumber"] as? String,
                 joinedAt = (map["joinedAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
                 addedByUid = map["addedByUid"] as? String ?: map["invitedByUid"] as? String,
@@ -294,7 +300,7 @@ data class WorkspaceInvitation(
                 role = map["role"] as? String ?: "partner",
                 status = map["status"] as? String ?: "pending",
                 acceptedByUid = map["acceptedByUid"] as? String,
-                createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
                 updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
             )
         }
@@ -370,6 +376,10 @@ data class ProfitShareAllocation(
 fun JobEntryEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any?> = mapOf(
     "id" to id,
     "workspaceId" to workspaceId,
+    "isHistorical" to isHistorical,
+    "entryForUid" to entryForUid,
+    "financialAttributionUid" to financialAttributionUid,
+
     "customerId" to customerId,
     "customerName" to customerName,
     "customerPhone" to customerPhone,
@@ -391,7 +401,7 @@ fun JobEntryEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any
     "createdByUid" to (this.createdByUid.ifBlank { createdByUid ?: "" }),
     "createdByName" to addedByPartner,
     "createdByRole" to createdByRole,
-    "createdAt" to (if (createdAt > 0) createdAt else System.currentTimeMillis()),
+    "createdAt" to createdAt,
     "editedByUid" to editedByUid,
     "editedByName" to editedByName,
     "editedByRole" to editedByRole,
@@ -405,6 +415,9 @@ fun jobEntryFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallb
     val resolvedCreatedByRole = map["createdByRole"] as? String ?: ""
     return JobEntryEntity(
         id = id,
+        isHistorical = map["isHistorical"] as? Boolean ?: false,
+        entryForUid = map["entryForUid"] as? String ?: "",
+        financialAttributionUid = map["financialAttributionUid"] as? String ?: "",
         workspaceId = wsId,
         customerId = (map["customerId"] as? Number)?.toLong() ?: 0L,
         customerName = map["customerName"] as? String ?: "",
@@ -424,7 +437,7 @@ fun jobEntryFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallb
         addedByPartner = map["createdByName"] as? String ?: map["addedByPartner"] as? String ?: (map["createdBy"] as? String ?: "Partner"),
         notes = map["notes"] as? String ?: "",
         isSynced = true,
-        createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
         createdByUid = resolvedCreatedByUid,
         createdByRole = resolvedCreatedByRole,
         editedByUid = map["editedByUid"] as? String ?: "",
@@ -437,6 +450,11 @@ fun jobEntryFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallb
 fun PaymentEntity.toFirestoreMap(): Map<String, Any?> = mapOf(
     "id" to id,
     "workspaceId" to workspaceId,
+    "status" to status,
+    "reversedAt" to reversedAt,
+    "reversedByUid" to reversedByUid,
+    "allocationsJson" to allocationsJson,
+
     "jobEntryId" to jobEntryId,
     "customerId" to customerId,
     "customerName" to customerName,
@@ -448,13 +466,45 @@ fun PaymentEntity.toFirestoreMap(): Map<String, Any?> = mapOf(
     "collectedByUid" to collectedByUid,
     "collectedByName" to collectedByName,
     "collectedByRole" to collectedByRole,
-    "collectedAt" to collectedAt,
-    "createdAt" to createdAt
+    "createdAt" to createdAt,
+    "collectedAt" to collectedAt
+) + if (collectorUid.isNotBlank()) mapOf("collectorUid" to collectorUid, "collectorName" to collectorName, "collectorRole" to collectorRole) else emptyMap()
+
+fun exactCollectionDocumentId(documentId: String, fields: Map<String, Any?>): Long? {
+    val pathId = documentId.toLongOrNull()?.takeIf { it > 0 } ?: return null
+    val declared = fields["id"] ?: return pathId
+    val declaredId = when (declared) {
+        is Long -> declared
+        is Int -> declared.toLong()
+        is String -> declared.toLongOrNull()
+        else -> null // Floating-point identities cannot preserve every 64-bit integer.
+    }
+    return pathId.takeIf { declaredId == it }
+}
+
+/** Mutable command fields only; delete staging must retain Firestore's original record provenance. */
+fun deleteTombstoneFields(
+    operationId: String, actorUid: String, actionTime: Long,
+    dependencies: Any, authorizationDeletedAt: Any
+): Map<String, Any> = mapOf(
+    "protocolVersion" to 2,
+    "operationType" to "DELETE",
+    "dependencies" to dependencies,
+    "operationId" to operationId,
+    "actorUid" to actorUid,
+    "actionTime" to actionTime,
+    "isDeleted" to true,
+    "authorizationDeletedAt" to authorizationDeletedAt
 )
 
 fun paymentFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallbackWorkspaceId: String = ""): PaymentEntity {
     return PaymentEntity(
         id = (map["id"] as? Number)?.toLong() ?: fallbackId,
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
+        status = map["status"] as? String ?: "ACTIVE",
+        reversedAt = (map["reversedAt"] as? Number)?.toLong() ?: 0L,
+        reversedByUid = map["reversedByUid"] as? String ?: "",
+        allocationsJson = map["allocationsJson"] as? String ?: "[]",
         workspaceId = map["workspaceId"] as? String ?: fallbackWorkspaceId,
         jobEntryId = (map["jobEntryId"] as? Number)?.toLong() ?: 0L,
         customerId = (map["customerId"] as? Number)?.toLong() ?: 0L,
@@ -464,11 +514,13 @@ fun paymentFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallba
         amount = (map["amount"] as? Number)?.toDouble() ?: 0.0,
         paymentMethod = map["paymentMethod"] as? String ?: "Cash",
         notes = map["notes"] as? String ?: "",
+        collectorUid = map["collectorUid"] as? String ?: "",
+        collectorName = map["collectorName"] as? String ?: "",
+        collectorRole = map["collectorRole"] as? String ?: "",
         collectedByUid = map["collectedByUid"] as? String ?: "",
         collectedByName = map["collectedByName"] as? String ?: "",
         collectedByRole = map["collectedByRole"] as? String ?: "",
-        collectedAt = (map["collectedAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-        createdAt = (map["createdAt"] as? Number)?.toLong() ?: (map["collectedAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+        collectedAt = (map["collectedAt"] as? Number)?.toLong() ?: 0L,
         isSynced = true
     )
 }
@@ -476,6 +528,9 @@ fun paymentFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallba
 fun ExpenseEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any?> = mapOf(
     "id" to id,
     "workspaceId" to workspaceId,
+    "expenseForUid" to expenseForUid,
+    "financialAttributionUid" to financialAttributionUid,
+
     "expenseType" to expenseType,
     "amount" to amount,
     "tractorId" to tractorId,
@@ -485,14 +540,14 @@ fun ExpenseEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any?
     "addedByPartner" to addedByPartner,
     "dateTimestamp" to dateTimestamp,
     "relatedJobId" to relatedJobId,
-    "createdBy" to (createdByUid ?: this.createdByUid.ifBlank { addedByPartner }),
-    "createdByUid" to (createdByUid ?: this.createdByUid),
+    "createdBy" to this.createdByUid,
+    "createdByUid" to this.createdByUid,
     "createdByRole" to createdByRole,
     "createdByName" to (addedByPartner.ifBlank { operatorName }),
     "paidBy" to paidBy,
     "paidByPartner" to paidByPartner,
     "paidByUid" to paidByUid,
-    "createdAt" to (if (createdAt > 0) createdAt else System.currentTimeMillis()),
+    "createdAt" to createdAt,
     "updatedAt" to System.currentTimeMillis()
 )
 
@@ -504,6 +559,8 @@ fun expenseFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallba
     val pUid = map["paidByUid"] as? String ?: ""
     return ExpenseEntity(
         id = id,
+        expenseForUid = map["expenseForUid"] as? String ?: "",
+        financialAttributionUid = map["financialAttributionUid"] as? String ?: "",
         workspaceId = wsId,
         expenseType = map["expenseType"] as? String ?: "Diesel",
         amount = (map["amount"] as? Number)?.toDouble() ?: 0.0,
@@ -515,7 +572,7 @@ fun expenseFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallba
         dateTimestamp = (map["dateTimestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
         relatedJobId = (map["relatedJobId"] as? Number)?.toLong(),
         isSynced = true,
-        createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
         paidBy = map["paidBy"] as? String ?: "I Paid",
         paidByPartner = map["paidByPartner"] as? String ?: "",
         paidByUid = pUid,
@@ -527,6 +584,8 @@ fun expenseFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallba
 fun CustomerEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any?> = mapOf(
     "id" to id,
     "workspaceId" to workspaceId,
+    "createdByUid" to this.createdByUid,
+
     "name" to name,
     "phone" to phone,
     "location" to location,
@@ -534,7 +593,7 @@ fun CustomerEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any
     "totalPaid" to totalPaid,
     "balanceDue" to balanceDue,
     "createdBy" to createdByUid,
-    "createdAt" to (if (createdAt > 0) createdAt else System.currentTimeMillis()),
+    "createdAt" to createdAt,
     "updatedAt" to updatedAt
 )
 
@@ -543,6 +602,7 @@ fun customerFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallb
     val wsId = map["workspaceId"] as? String ?: fallbackWorkspaceId
     return CustomerEntity(
         id = id,
+        createdByUid = map["createdByUid"] as? String ?: "",
         workspaceId = wsId,
         name = map["name"] as? String ?: "",
         phone = map["phone"] as? String ?: "",
@@ -551,7 +611,7 @@ fun customerFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallb
         totalPaid = (map["totalPaid"] as? Number)?.toDouble() ?: 0.0,
         balanceDue = (map["balanceDue"] as? Number)?.toDouble() ?: 0.0,
         isSynced = true,
-        createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
         updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
     )
 }
@@ -559,15 +619,16 @@ fun customerFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallb
 fun TractorEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any?> = mapOf(
     "id" to id,
     "workspaceId" to workspaceId,
+    "createdByUid" to this.createdByUid,
+    "createdByRole" to this.createdByRole,
+
     "label" to label,
     "chassisNo" to chassisNo,
     "modelYear" to modelYear,
     "operatorName" to operatorName,
     "isActive" to isActive,
-    "createdByUid" to (createdByUid ?: this.createdByUid),
-    "createdByRole" to this.createdByRole,
-    "createdBy" to (createdByUid ?: this.createdByUid),
-    "createdAt" to (if (createdAt > 0) createdAt else System.currentTimeMillis()),
+    "createdBy" to createdByUid,
+    "createdAt" to createdAt,
     "updatedAt" to System.currentTimeMillis()
 )
 
@@ -576,20 +637,21 @@ fun tractorFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallba
     val wsId = map["workspaceId"] as? String ?: fallbackWorkspaceId
     return TractorEntity(
         id = id,
+        createdByUid = map["createdByUid"] as? String ?: "",
+        createdByRole = map["createdByRole"] as? String ?: "",
         workspaceId = wsId,
         label = map["label"] as? String ?: "Tractor",
         chassisNo = map["chassisNo"] as? String ?: "",
         modelYear = map["modelYear"] as? String ?: "",
         operatorName = map["operatorName"] as? String ?: "",
         isActive = map["isActive"] as? Boolean ?: true,
-        createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-        createdByUid = map["createdByUid"] as? String ?: map["createdBy"] as? String ?: "",
-        createdByRole = map["createdByRole"] as? String ?: ""
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L
     )
 }
 
 fun PartnerEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any?> = mapOf(
     "id" to id,
+    "firebaseUid" to firebaseUid,
     "workspaceId" to workspaceId,
     "name" to name,
     "phone" to phone,
@@ -598,7 +660,7 @@ fun PartnerEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any?
     "photoUri" to photoUri,
     "isCurrentActive" to isCurrentActive,
     "createdBy" to createdByUid,
-    "createdAt" to (if (createdAt > 0) createdAt else System.currentTimeMillis()),
+    "createdAt" to createdAt,
     "updatedAt" to System.currentTimeMillis()
 )
 
@@ -608,13 +670,14 @@ fun partnerFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallba
     return PartnerEntity(
         id = id,
         workspaceId = wsId,
+        firebaseUid = map["firebaseUid"] as? String ?: "",
         name = map["name"] as? String ?: "Partner",
         phone = map["phone"] as? String ?: "",
         role = map["role"] as? String ?: "Partner",
         avatarColorHex = map["avatarColorHex"] as? String ?: "#1E4D2B",
         photoUri = map["photoUri"] as? String ?: "",
         isCurrentActive = map["isCurrentActive"] as? Boolean ?: false,
-        createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L
     )
 }
 
@@ -632,7 +695,7 @@ fun WithdrawalEntity.toFirestoreMap(createdByUid: String? = null): Map<String, A
     "createdByName" to partnerName,
     "createdByRole" to createdByRole,
     "targetPartnerUid" to targetPartnerUid,
-    "createdAt" to (if (createdAt > 0) createdAt else System.currentTimeMillis()),
+    "createdAt" to createdAt,
     "updatedAt" to System.currentTimeMillis()
 )
 
@@ -649,7 +712,7 @@ fun withdrawalFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fal
         note = map["note"] as? String ?: "",
         timestamp = (map["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
         isSynced = true,
-        createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
         targetPartnerUid = map["targetPartnerUid"] as? String ?: "",
         createdByUid = map["createdByUid"] as? String ?: map["createdBy"] as? String ?: "",
         createdByRole = map["createdByRole"] as? String ?: ""
@@ -692,11 +755,12 @@ fun appSettingsFromFirestoreMap(map: Map<String, Any?>, currentSettings: AppSett
 fun WorkTypeExtensionEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any?> = mapOf(
     "id" to id,
     "workspaceId" to workspaceId,
-    "name" to name,
-    "createdByUid" to (createdByUid ?: this.createdByUid),
+    "createdByUid" to this.createdByUid,
     "createdByRole" to this.createdByRole,
-    "createdBy" to (createdByUid ?: this.createdByUid),
-    "createdAt" to (if (createdAt > 0) createdAt else System.currentTimeMillis()),
+
+    "name" to name,
+    "createdBy" to (createdByUid ?: ""),
+    "createdAt" to createdAt,
     "updatedAt" to System.currentTimeMillis()
 )
 
@@ -705,10 +769,10 @@ fun extensionFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fall
     val wsId = map["workspaceId"] as? String ?: fallbackWorkspaceId
     return WorkTypeExtensionEntity(
         id = id,
+        createdByUid = map["createdByUid"] as? String ?: "",
+        createdByRole = map["createdByRole"] as? String ?: "",
         workspaceId = wsId,
         name = map["name"] as? String ?: "",
-        createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-        createdByUid = map["createdByUid"] as? String ?: map["createdBy"] as? String ?: "",
-        createdByRole = map["createdByRole"] as? String ?: ""
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L
     )
 }

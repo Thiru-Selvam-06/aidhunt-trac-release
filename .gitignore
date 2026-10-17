@@ -20,3 +20,16 @@ keystore.properties
 trac-release-key.jks
 /ci-reports/
 
+
+/.codex/
+**/node_modules/
+**/firebase-debug.log
+**/firestore-debug.log
+
+/migration-private/
+
+# Local production-backed test variant uses existing Firebase project config; never commit this copy.
+/app/src/liveTest/google-services.json
+/release.jks
+**/hs_err_pid*.log
+**/replay_pid*.log

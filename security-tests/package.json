@@ -1,0 +1,6 @@
+{
+  "name": "aidhunt-security-tests",
+  "private": true,
+  "scripts": { "test": "node --test architecture.test.cjs" },
+  "dependencies": { "@firebase/rules-unit-testing": "^6.0.0", "firebase": "^13.0.0" }
+}

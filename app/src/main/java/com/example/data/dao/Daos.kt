@@ -149,9 +149,6 @@ interface CustomerDao {
     @Query("SELECT * FROM customers WHERE workspaceId = :workspaceId AND id = :id LIMIT 1")
     suspend fun getCustomerById(workspaceId: String, id: Long): CustomerEntity?
 
-    @Query("SELECT * FROM customers WHERE id = :id LIMIT 1")
-    suspend fun getCustomerById(id: Long): CustomerEntity?
-
     @Query("SELECT * FROM customers WHERE workspaceId = :workspaceId AND (LOWER(name) LIKE '%' || LOWER(:query) || '%' OR phone LIKE '%' || :query || '%')")
     fun searchCustomers(workspaceId: String, query: String): Flow<List<CustomerEntity>>
 
@@ -188,8 +185,8 @@ interface CustomerDao {
     @Query("SELECT * FROM customers WHERE isSynced = 0")
     suspend fun getUnsyncedCustomers(): List<CustomerEntity>
 
-    @Query("UPDATE customers SET isSynced = 1 WHERE id IN (:ids)")
-    suspend fun markCustomersSynced(ids: List<Long>)
+    @Query("UPDATE customers SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)")
+    suspend fun markCustomersSynced(workspaceId: String, ids: List<Long>)
 
     @Query("SELECT COUNT(*) FROM customers WHERE workspaceId = :workspaceId AND isSynced = 0")
     fun getUnsyncedCountForWorkspace(workspaceId: String): Flow<Int>
@@ -212,8 +209,8 @@ interface JobEntryDao {
     @Query("SELECT * FROM job_entries WHERE workspaceId IN (:workspaceIds) ORDER BY createdAt DESC")
     suspend fun getJobsForWorkspacesOnce(workspaceIds: List<String>): List<JobEntryEntity>
 
-    @Query("SELECT * FROM job_entries WHERE id = :id LIMIT 1")
-    suspend fun getJobById(id: Long): JobEntryEntity?
+    @Query("SELECT * FROM job_entries WHERE workspaceId = :workspaceId AND id = :id LIMIT 1")
+    suspend fun getJobById(workspaceId: String, id: Long): JobEntryEntity?
 
     @Query("SELECT * FROM job_entries ORDER BY createdAt DESC")
     fun getAllJobs(): Flow<List<JobEntryEntity>>
@@ -223,9 +220,6 @@ interface JobEntryDao {
 
     @Query("SELECT * FROM job_entries WHERE workspaceId IN (:workspaceIds) AND customerId = :customerId ORDER BY startTimeMillis DESC")
     fun getJobsForCustomer(workspaceIds: List<String>, customerId: Long): Flow<List<JobEntryEntity>>
-
-    @Query("SELECT * FROM job_entries WHERE customerId = :customerId ORDER BY startTimeMillis DESC")
-    fun getJobsForCustomer(customerId: Long): Flow<List<JobEntryEntity>>
 
     @Query("SELECT * FROM job_entries WHERE workspaceId = :workspaceId AND (LOWER(customerName) LIKE '%' || LOWER(:query) || '%' OR LOWER(operatorName) LIKE '%' || LOWER(:query) || '%' OR LOWER(tractorLabel) LIKE '%' || LOWER(:query) || '%')")
     fun searchJobs(workspaceId: String, query: String): Flow<List<JobEntryEntity>>
@@ -293,8 +287,8 @@ interface JobEntryDao {
     @Query("SELECT * FROM job_entries WHERE isSynced = 0")
     suspend fun getUnsyncedJobs(): List<JobEntryEntity>
 
-    @Query("UPDATE job_entries SET isSynced = 1 WHERE id IN (:ids)")
-    suspend fun markJobsSynced(ids: List<Long>)
+    @Query("UPDATE job_entries SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)")
+    suspend fun markJobsSynced(workspaceId: String, ids: List<Long>)
 
     @Query("SELECT COUNT(*) FROM job_entries WHERE workspaceId = :workspaceId AND isSynced = 0")
     fun getUnsyncedCountForWorkspace(workspaceId: String): Flow<Int>
@@ -323,8 +317,11 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses ORDER BY dateTimestamp DESC")
     fun getAllExpenses(): Flow<List<ExpenseEntity>>
 
-    @Query("SELECT * FROM expenses WHERE relatedJobId IN (SELECT id FROM job_entries WHERE customerId = :customerId) ORDER BY dateTimestamp DESC")
-    suspend fun getExpensesForCustomer(customerId: Long): List<ExpenseEntity>
+    @Query("SELECT * FROM expenses WHERE workspaceId = :workspaceId AND relatedJobId IN (SELECT id FROM job_entries WHERE workspaceId = :workspaceId AND customerId = :customerId) ORDER BY dateTimestamp DESC")
+    suspend fun getExpensesForCustomer(workspaceId: String, customerId: Long): List<ExpenseEntity>
+
+    @Query("SELECT * FROM expenses WHERE workspaceId = :workspaceId AND id = :id LIMIT 1")
+    suspend fun getExpenseById(workspaceId: String, id: Long): ExpenseEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertExpense(expense: ExpenseEntity): Long
@@ -350,11 +347,11 @@ interface ExpenseDao {
     @Query("DELETE FROM expenses WHERE isSynced = 1")
     suspend fun deleteAllSynced()
 
-    @Query("SELECT * FROM expenses WHERE relatedJobId = :jobId")
-    suspend fun getExpensesForJob(jobId: Long): List<ExpenseEntity>
+    @Query("SELECT * FROM expenses WHERE workspaceId = :workspaceId AND relatedJobId = :jobId")
+    suspend fun getExpensesForJob(workspaceId: String, jobId: Long): List<ExpenseEntity>
 
-    @Query("DELETE FROM expenses WHERE relatedJobId = :jobId")
-    suspend fun deleteExpensesForJob(jobId: Long)
+    @Query("DELETE FROM expenses WHERE workspaceId = :workspaceId AND relatedJobId = :jobId")
+    suspend fun deleteExpensesForJob(workspaceId: String, jobId: Long)
 
     @Query("SELECT SUM(amount) FROM expenses WHERE workspaceId = :workspaceId")
     fun getTotalExpensesForWorkspace(workspaceId: String): Flow<Double?>
@@ -371,8 +368,8 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE isSynced = 0")
     suspend fun getUnsyncedExpenses(): List<ExpenseEntity>
 
-    @Query("UPDATE expenses SET isSynced = 1 WHERE id IN (:ids)")
-    suspend fun markExpensesSynced(ids: List<Long>)
+    @Query("UPDATE expenses SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)")
+    suspend fun markExpensesSynced(workspaceId: String, ids: List<Long>)
 
     @Query("SELECT COUNT(*) FROM expenses WHERE workspaceId = :workspaceId AND isSynced = 0")
     fun getUnsyncedCountForWorkspace(workspaceId: String): Flow<Int>
@@ -400,6 +397,9 @@ interface WithdrawalDao {
 
     @Query("SELECT * FROM withdrawals ORDER BY timestamp DESC")
     fun getAllWithdrawals(): Flow<List<WithdrawalEntity>>
+
+    @Query("SELECT * FROM withdrawals WHERE workspaceId = :workspaceId AND id = :id LIMIT 1")
+    suspend fun getWithdrawalById(workspaceId: String, id: Long): WithdrawalEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWithdrawal(withdrawal: WithdrawalEntity): Long
@@ -440,8 +440,8 @@ interface WithdrawalDao {
     @Query("SELECT * FROM withdrawals WHERE isSynced = 0")
     suspend fun getUnsyncedWithdrawals(): List<WithdrawalEntity>
 
-    @Query("UPDATE withdrawals SET isSynced = 1 WHERE id IN (:ids)")
-    suspend fun markWithdrawalsSynced(ids: List<Long>)
+    @Query("UPDATE withdrawals SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)")
+    suspend fun markWithdrawalsSynced(workspaceId: String, ids: List<Long>)
 
     @Query("SELECT COUNT(*) FROM withdrawals WHERE workspaceId = :workspaceId AND isSynced = 0")
     fun getUnsyncedCountForWorkspace(workspaceId: String): Flow<Int>
@@ -485,11 +485,11 @@ interface PaymentDao {
     @Query("SELECT * FROM payments WHERE workspaceId IN (:workspaceIds) ORDER BY collectedAt DESC")
     fun getPaymentsForWorkspaces(workspaceIds: List<String>): Flow<List<PaymentEntity>>
 
-    @Query("SELECT * FROM payments WHERE customerId = :customerId ORDER BY collectedAt DESC")
-    suspend fun getPaymentsForCustomer(customerId: Long): List<PaymentEntity>
+    @Query("SELECT * FROM payments WHERE workspaceId = :workspaceId AND customerId = :customerId ORDER BY collectedAt DESC")
+    suspend fun getPaymentsForCustomer(workspaceId: String, customerId: Long): List<PaymentEntity>
 
-    @Query("SELECT * FROM payments WHERE id = :id")
-    suspend fun getPaymentById(id: Long): PaymentEntity?
+    @Query("SELECT * FROM payments WHERE workspaceId = :workspaceId AND id = :id")
+    suspend fun getPaymentById(workspaceId: String, id: Long): PaymentEntity?
 
     @Query("SELECT * FROM payments ORDER BY collectedAt DESC")
     fun getAllPayments(): Flow<List<PaymentEntity>>
@@ -500,26 +500,26 @@ interface PaymentDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPayments(payments: List<PaymentEntity>)
 
-    @Query("DELETE FROM payments WHERE id = :id")
-    suspend fun deletePayment(id: Long)
+    @Query("DELETE FROM payments WHERE workspaceId = :workspaceId AND id = :id")
+    suspend fun deletePayment(workspaceId: String, id: Long)
 
     @Delete
     suspend fun deletePayment(payment: PaymentEntity)
 
-    @Query("DELETE FROM payments WHERE workspaceId = :workspaceId AND isSynced = 1 AND id NOT IN (:validIds)")
-    suspend fun deleteSyncedNotIn(workspaceId: String, validIds: List<Long>)
+    @Query("DELETE FROM payments WHERE workspaceId = :workspaceId")
+    suspend fun deleteAllForWorkspace(workspaceId: String)
+
+    @Query("DELETE FROM payments WHERE workspaceId = :workspaceId AND isSynced = 1 AND id NOT IN (:retainedIds)")
+    suspend fun deleteSyncedNotIn(workspaceId: String, retainedIds: List<Long>)
 
     @Query("DELETE FROM payments WHERE workspaceId = :workspaceId AND isSynced = 1")
     suspend fun deleteAllSyncedForWorkspace(workspaceId: String)
 
-    @Query("DELETE FROM payments WHERE workspaceId = :workspaceId")
-    suspend fun deleteAllForWorkspace(workspaceId: String)
-
     @Query("SELECT * FROM payments WHERE workspaceId = :workspaceId AND isSynced = 0")
     suspend fun getUnsyncedPaymentsForWorkspace(workspaceId: String): List<PaymentEntity>
 
-    @Query("UPDATE payments SET isSynced = 1 WHERE id IN (:ids)")
-    suspend fun markPaymentsSynced(ids: List<Long>)
+    @Query("UPDATE payments SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)")
+    suspend fun markPaymentsSynced(workspaceId: String, ids: List<Long>)
 }
 
 @Dao
@@ -536,8 +536,8 @@ interface ChecklistItemDao {
     @Delete
     suspend fun deleteChecklistItem(item: ChecklistItemEntity)
 
-    @Query("DELETE FROM checklist_items WHERE id = :id")
-    suspend fun deleteChecklistItemById(id: Long)
+    @Query("DELETE FROM checklist_items WHERE workspaceId = :workspaceId AND id = :id")
+    suspend fun deleteChecklistItemById(workspaceId: String, id: Long)
 
     @Query("DELETE FROM checklist_items WHERE workspaceId = :workspaceId")
     suspend fun deleteAllForWorkspace(workspaceId: String)

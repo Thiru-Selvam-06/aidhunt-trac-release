@@ -46,7 +46,7 @@ class PendingDeleteManager private constructor(context: Context) {
     fun isPendingDelete(entityType: String, recordId: Long, workspaceId: String): Boolean {
         synchronized(lock) {
             val list = loadAllInternal()
-            return list.any { it.entityType == entityType && it.recordId == recordId && (it.workspaceId == workspaceId || it.workspaceId.isBlank() || workspaceId.isBlank()) }
+            return list.any { it.entityType == entityType && it.recordId == recordId && (workspaceId.isNotBlank() && it.workspaceId == workspaceId) }
         }
     }
 
@@ -54,7 +54,7 @@ class PendingDeleteManager private constructor(context: Context) {
         synchronized(lock) {
             val list = loadAllInternal()
             return list
-                .filter { it.entityType == entityType && (it.workspaceId == workspaceId || it.workspaceId.isBlank() || workspaceId.isBlank()) }
+                .filter { it.entityType == entityType && (workspaceId.isNotBlank() && it.workspaceId == workspaceId) }
                 .map { it.recordId }
                 .toSet()
         }

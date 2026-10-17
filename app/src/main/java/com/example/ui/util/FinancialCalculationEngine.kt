@@ -4,6 +4,7 @@ import com.example.data.entity.CustomerEntity
 import com.example.data.entity.ExpenseEntity
 import com.example.data.entity.JobEntryEntity
 import com.example.data.entity.PartnerEntity
+import com.example.data.entity.PaymentEntity
 import com.example.data.entity.WithdrawalEntity
 import com.example.data.firebase.ProfitShareAllocation
 import com.example.data.firebase.WorkspaceMember
@@ -20,7 +21,8 @@ data class FinancialScope(
     val mode: FinancialScopeMode = FinancialScopeMode.OVERALL,
     val dateMillis: Long = System.currentTimeMillis(),
     val year: Int = Calendar.getInstance().get(Calendar.YEAR),
-    val month: Int = Calendar.getInstance().get(Calendar.MONTH) + 1 // 1..12
+    val month: Int = Calendar.getInstance().get(Calendar.MONTH) + 1, // 1..12
+    val workspaceId: String = ""
 )
 
 data class FinancialSummary(
@@ -75,17 +77,20 @@ object FinancialCalculationEngine {
         scope: FinancialScope = FinancialScope(FinancialScopeMode.OVERALL),
         businessName: String = ""
     ): List<PartnerShareInvestmentStatus> {
+        val workspaceIds = (jobs.map { it.workspaceId } + expenses.map { it.workspaceId } + withdrawals.map { it.workspaceId }).filter { it.isNotBlank() }.distinct()
+        if (scope.workspaceId.isBlank() && workspaceIds.size > 1) throw SecurityException("Financial calculations require one authorized workspace")
+        val authorizedWorkspace = scope.workspaceId.ifBlank { workspaceIds.singleOrNull().orEmpty() }
         val scopedJobs = jobs.filter { job ->
             val ts = if (job.startTimeMillis > 0) job.startTimeMillis else job.createdAt
-            isTimestampInScope(ts, scope)
+            (authorizedWorkspace.isBlank() || job.workspaceId == authorizedWorkspace) && isTimestampInScope(ts, scope)
         }
         val scopedExpenses = expenses.filter { exp ->
             val ts = if (exp.dateTimestamp > 0) exp.dateTimestamp else exp.createdAt
-            isTimestampInScope(ts, scope)
+            (authorizedWorkspace.isBlank() || exp.workspaceId == authorizedWorkspace) && isTimestampInScope(ts, scope)
         }
         val scopedWithdrawals = withdrawals.filter { w ->
             val ts = if (w.timestamp > 0) w.timestamp else w.createdAt
-            isTimestampInScope(ts, scope)
+            (authorizedWorkspace.isBlank() || w.workspaceId == authorizedWorkspace) && isTimestampInScope(ts, scope)
         }
 
         // 1. Distributable Profit calculation:
@@ -105,15 +110,20 @@ object FinancialCalculationEngine {
         val bizName = businessName.trim()
 
         workspaceMembers.forEach { member ->
-            if (member.status.isBlank() || member.status.equals("active", ignoreCase = true)) {
+            if (member.uid.isNotBlank() && (authorizedWorkspace.isBlank() || member.workspaceId == authorizedWorkspace) && member.status.equals("active", ignoreCase = true)) {
                 val normalizedRole = com.example.data.auth.RoleUtils.normalizeRole(member.role)
-                if (normalizedRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR) {
-                    val isOwnerRole = normalizedRole == com.example.data.auth.RoleUtils.ROLE_OWNER || normalizedRole == com.example.data.auth.RoleUtils.ROLE_CO_OWNER
+                if (normalizedRole in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) {
+                    val isOwnerRole = normalizedRole == com.example.data.auth.RoleUtils.ROLE_OWNER
                     val detail = profitShareAllocationDetails[member.uid]
-                    val rawName = detail?.displayName?.takeIf { it.isNotBlank() } ?: member.displayName ?: member.email ?: if (isOwnerRole) "Owner" else "Partner"
+                    // Membership is the authoritative, current workspace display identity.
+                    // Allocation details retain historical metadata and must not resurrect a stale name.
+                    val rawName = member.displayName?.takeIf { it.isNotBlank() }
+                        ?: detail?.displayName?.takeIf { it.isNotBlank() }
+                        ?: member.email
+                        ?: if (isOwnerRole) "Owner" else "Partner"
                     val cleanName = rawName.trim()
                     if (cleanName.isNotBlank() && (bizName.isBlank() || !cleanName.equals(bizName, ignoreCase = true))) {
-                        val uid = member.uid.ifBlank { "member_${member.phoneNumber ?: cleanName}" }
+                        val uid = member.uid
                         if (!processedUids.contains(uid)) {
                             processedUids.add(uid)
                             processedNames.add(cleanName.lowercase())
@@ -134,34 +144,7 @@ object FinancialCalculationEngine {
             }
         }
 
-        // Local partners fallback (if not in workspace members, excluding operators and business name)
-        partners.forEach { partner ->
-            val pName = partner.name.trim()
-            val isOperator = partner.role.equals("Operator", ignoreCase = true)
-            if (pName.isNotBlank() && !isOperator && (bizName.isBlank() || !pName.equals(bizName, ignoreCase = true))) {
-                val matchingMember = workspaceMembers.find { m ->
-                    m.phoneNumber?.filter { it.isDigit() }?.takeLast(10) == partner.phone.filter { it.isDigit() }?.takeLast(10)
-                }
-                if (matchingMember == null && !processedNames.contains(pName.lowercase())) {
-                    val pUid = "partner_${partner.id}"
-                    if (!processedUids.contains(pUid)) {
-                        processedUids.add(pUid)
-                        processedNames.add(pName.lowercase())
-                        val configuredPct = if (hasCustomAllocation) (profitShareAllocations[pUid] ?: 0) else 0
-                        eligibleParticipants.add(
-                            ParticipantInfo(
-                                uid = pUid,
-                                displayName = pName,
-                                role = partner.role.ifBlank { "Partner" },
-                                percentage = configuredPct,
-                                phoneNumber = partner.phone,
-                                isActive = configuredPct > 0 || !hasCustomAllocation
-                            )
-                        )
-                    }
-                }
-            }
-        }
+        // Local name/phone mirrors never manufacture financial participant identities.
 
         // 4. Calculate shares:
         // When valid custom allocation exists:
@@ -226,28 +209,10 @@ object FinancialCalculationEngine {
             // Total Investment: Sum of all expenses paid personally by this partner ("I Paid")
             // Match by paidByUid first, then by display name
             val pInvestments = scopedExpenses.filter { exp ->
-                val paidByMatches = if (exp.paidByUid.isNotBlank() && pUid.isNotBlank()) {
-                    exp.paidByUid == pUid
-                } else if (pUid.isNotBlank()) {
-                    exp.paidByPartner.isNotBlank() && exp.paidByPartner.equals(pName, ignoreCase = true)
-                } else {
-                    exp.paidByPartner.equals(pName, ignoreCase = true) ||
-                    exp.addedByPartner.equals(pName, ignoreCase = true) ||
-                    exp.operatorName.equals(pName, ignoreCase = true)
-                }
-                exp.paidBy.equals("I Paid", ignoreCase = true) && paidByMatches
+                exp.paidBy.equals("I Paid", ignoreCase = true) && exp.paidByUid == pUid
             }
             val totalInvestment = roundToPositiveWholeRupee(pInvestments.sumOf { it.amount })
-
-            // Partner withdrawals - match by UID if available, otherwise by name
-            val pWithdrawals = scopedWithdrawals.filter { w ->
-                if (pUid.isNotBlank()) {
-                    w.targetPartnerUid.equals(pUid, ignoreCase = true) ||
-                    w.partnerName.equals(pName, ignoreCase = true)
-                } else {
-                    w.partnerName.equals(pName, ignoreCase = true)
-                }
-            }
+            val pWithdrawals = scopedWithdrawals.filter { it.targetPartnerUid == pUid }
 
             // Strict category-based deductions:
             // 1. "Share" -> deductions ONLY from Profit Share
@@ -268,11 +233,11 @@ object FinancialCalculationEngine {
                         pTakenShare += sharePart
                         pTakenInvestment += invPart
                     }
-                    cat.contains("investment") || cat.contains("reimburse") -> {
-                        pTakenInvestment += w.amount
-                    }
                     cat.contains("share") || cat.contains("withdrawal") -> {
                         pTakenShare += w.amount
+                    }
+                    cat.contains("investment") || cat.contains("reimburse") -> {
+                        pTakenInvestment += w.amount
                     }
                     cat.contains("personal use") || cat.contains("advance") -> {
                         pTakenPersonalUse += w.amount
@@ -375,31 +340,51 @@ object FinancialCalculationEngine {
                 job.workType.equals("Payment Received", ignoreCase = true)
     }
 
+    fun cashAvailable(
+        payments: List<PaymentEntity>, expenses: List<ExpenseEntity>,
+        withdrawals: List<WithdrawalEntity>, scope: FinancialScope
+    ): Double {
+        val ids = (payments.map { it.workspaceId } + expenses.map { it.workspaceId } +
+            withdrawals.map { it.workspaceId }).filter { it.isNotBlank() }.distinct()
+        if (scope.workspaceId.isBlank() && ids.size > 1) throw SecurityException("Cash balance requires one authorized workspace")
+        val workspace = scope.workspaceId.ifBlank { ids.singleOrNull().orEmpty() }
+        val cash = payments.filter { (workspace.isBlank() || it.workspaceId == workspace) &&
+            it.status.equals("ACTIVE", true) && it.paymentMethod.trim().equals("Cash", true) &&
+            isTimestampInScope(it.collectedAt, scope) }.sumOf { it.amount }
+        // Personally funded "I Paid" expenses are member investments, not
+        // withdrawals from the workspace's cash drawer.
+        val spent = expenses.filter { (workspace.isBlank() || it.workspaceId == workspace) &&
+            it.paidBy.trim().equals("Business Paid", true) &&
+            isTimestampInScope(if (it.dateTimestamp > 0) it.dateTimestamp else it.createdAt, scope) }.sumOf { it.amount }
+        val withdrawn = withdrawals.filter { (workspace.isBlank() || it.workspaceId == workspace) &&
+            isTimestampInScope(if (it.timestamp > 0) it.timestamp else it.createdAt, scope) }.sumOf { it.amount }
+        require(listOf(cash, spent, withdrawn).all { it.isFinite() }) { "Cash balance contains invalid amounts" }
+        return roundToWholeRupee(cash - spent - withdrawn)
+    }
+
     fun calculateSummary(
         jobs: List<JobEntryEntity>,
         expenses: List<ExpenseEntity>,
         withdrawals: List<WithdrawalEntity>,
         scope: FinancialScope,
-        payments: List<com.example.data.entity.PaymentEntity> = emptyList()
+        payments: List<PaymentEntity>? = null
     ): FinancialSummary {
+        val workspaceIds = (jobs.map { it.workspaceId } + expenses.map { it.workspaceId } + withdrawals.map { it.workspaceId }).filter { it.isNotBlank() }.distinct()
+        if (scope.workspaceId.isBlank() && workspaceIds.size > 1) throw SecurityException("Financial calculations require one authorized workspace")
+        val authorizedWorkspace = scope.workspaceId.ifBlank { workspaceIds.singleOrNull().orEmpty() }
         val scopedJobs = jobs.filter { job ->
             val ts = if (job.startTimeMillis > 0) job.startTimeMillis else job.createdAt
-            isTimestampInScope(ts, scope)
+            (authorizedWorkspace.isBlank() || job.workspaceId == authorizedWorkspace) && isTimestampInScope(ts, scope)
         }
 
         val scopedExpenses = expenses.filter { exp ->
             val ts = if (exp.dateTimestamp > 0) exp.dateTimestamp else exp.createdAt
-            isTimestampInScope(ts, scope)
+            (authorizedWorkspace.isBlank() || exp.workspaceId == authorizedWorkspace) && isTimestampInScope(ts, scope)
         }
 
         val scopedWithdrawals = withdrawals.filter { w ->
             val ts = if (w.timestamp > 0) w.timestamp else w.createdAt
-            isTimestampInScope(ts, scope)
-        }
-
-        val scopedPayments = payments.filter { p ->
-            val ts = p.collectedAt
-            isTimestampInScope(ts, scope)
+            (authorizedWorkspace.isBlank() || w.workspaceId == authorizedWorkspace) && isTimestampInScope(ts, scope)
         }
 
         val totalRecorded = roundToPositiveWholeRupee(scopedJobs.sumOf { job ->
@@ -412,18 +397,7 @@ object FinancialCalculationEngine {
             }
         })
 
-        val rawJobReceived = scopedJobs.sumOf { j -> j.amountReceived }
-        val rawPaymentReceived = scopedPayments.sumOf { p -> p.amount }
-
-        val totalReceived = if (payments.isNotEmpty()) {
-            val paymentJobIds = payments.map { it.jobEntryId }.filter { it > 0L }.toSet()
-            val initialAdvanceFromJobsNoPayment = scopedJobs.sumOf { j ->
-                if (!paymentJobIds.contains(j.id) && !isSyntheticPayment(j)) j.amountReceived else 0.0
-            }
-            roundToPositiveWholeRupee(rawPaymentReceived + initialAdvanceFromJobsNoPayment)
-        } else {
-            roundToPositiveWholeRupee(rawJobReceived)
-        }
+        val totalReceived = roundToPositiveWholeRupee(scopedJobs.sumOf { j -> j.amountReceived })
 
         val totalDue = roundToPositiveWholeRupee(scopedJobs.sumOf { job ->
             if (isSyntheticPayment(job)) {
@@ -439,7 +413,8 @@ object FinancialCalculationEngine {
 
         val totalWithdrawals = roundToPositiveWholeRupee(scopedWithdrawals.sumOf { it.amount })
 
-        val availableBalance = maxOf(0.0, roundToWholeRupee(totalReceived - totalExpenses - totalWithdrawals))
+        val availableBalance = if (payments == null) roundToWholeRupee(totalReceived - totalExpenses - totalWithdrawals)
+            else cashAvailable(payments, expenses, withdrawals, scope.copy(workspaceId = authorizedWorkspace))
 
         val jobCount = scopedJobs.count { !isSyntheticPayment(it) }
 
@@ -462,136 +437,49 @@ object FinancialCalculationEngine {
         withdrawals: List<WithdrawalEntity>,
         partners: List<PartnerEntity>,
         workspaceMembers: List<WorkspaceMember>,
-        scope: FinancialScope,
-        payments: List<com.example.data.entity.PaymentEntity> = emptyList()
+        scope: FinancialScope
     ): List<PartnerFinancialBreakdown> {
+        val workspaceIds = (jobs.map { it.workspaceId } + expenses.map { it.workspaceId } + withdrawals.map { it.workspaceId }).filter { it.isNotBlank() }.distinct()
+        if (scope.workspaceId.isBlank() && workspaceIds.size > 1) throw SecurityException("Financial calculations require one authorized workspace")
+        val authorizedWorkspace = scope.workspaceId.ifBlank { workspaceIds.singleOrNull().orEmpty() }
         val scopedJobs = jobs.filter { job ->
             val ts = if (job.startTimeMillis > 0) job.startTimeMillis else job.createdAt
-            isTimestampInScope(ts, scope)
+            (authorizedWorkspace.isBlank() || job.workspaceId == authorizedWorkspace) && isTimestampInScope(ts, scope)
         }
         val scopedExpenses = expenses.filter { exp ->
             val ts = if (exp.dateTimestamp > 0) exp.dateTimestamp else exp.createdAt
-            isTimestampInScope(ts, scope)
+            (authorizedWorkspace.isBlank() || exp.workspaceId == authorizedWorkspace) && isTimestampInScope(ts, scope)
         }
         val scopedWithdrawals = withdrawals.filter { w ->
             val ts = if (w.timestamp > 0) w.timestamp else w.createdAt
-            isTimestampInScope(ts, scope)
+            (authorizedWorkspace.isBlank() || w.workspaceId == authorizedWorkspace) && isTimestampInScope(ts, scope)
         }
 
-        // Discover authoritative active participants strictly from the current workspace
-        data class MemberIdentity(
-            val uid: String,
-            val currentName: String,
-            val role: String,
-            val phone: String?
-        )
+        // A participant is an active member UID, never a record display name.
+        // This keeps the report inside the active workspace membership boundary,
+        // preserves distinct UIDs with the same name, and collapses case-only
+        // display-name differences for one UID.
+        val eligibleMembers = workspaceMembers
+            .asSequence()
+            .filter { it.uid.isNotBlank() && (authorizedWorkspace.isBlank() || it.workspaceId == authorizedWorkspace) && (it.status.equals("active", true) || it.status.equals("removed", true)) }
+            .distinctBy { it.uid }
+            .associateBy { it.uid }
 
-        val activeParticipants = mutableListOf<MemberIdentity>()
-        val seenUids = mutableSetOf<String>()
+        // Unmapped legacy amounts remain visible without guessing their beneficiary.
+        fun beneficiary(uid: String): String = uid.takeIf { it in eligibleMembers }.orEmpty()
+        val participantUids = linkedSetOf<String>()
+        scopedJobs.forEach { participantUids.add(beneficiary(it.financialAttributionUid.ifBlank { it.entryForUid })) }
+        scopedExpenses.forEach { participantUids.add(beneficiary(it.financialAttributionUid.ifBlank { it.expenseForUid })) }
+        scopedWithdrawals.forEach { participantUids.add(beneficiary(it.targetPartnerUid)) }
 
-        // 1. Authoritative: workspaceMembers (active members only)
-        workspaceMembers.forEach { m ->
-            if (m.status.isBlank() || m.status.equals("active", ignoreCase = true)) {
-                val dName = m.displayName?.takeIf { it.isNotBlank() } ?: m.phoneNumber?.takeIf { it.isNotBlank() } ?: m.email ?: ""
-                val normalizedRole = com.example.data.auth.RoleUtils.normalizeRole(m.role)
-                val roleDisplay = if (normalizedRole == com.example.data.auth.RoleUtils.ROLE_OWNER || normalizedRole == com.example.data.auth.RoleUtils.ROLE_CO_OWNER) {
-                    "Owner"
-                } else if (normalizedRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) {
-                    "Operator"
-                } else {
-                    "Partner"
-                }
-                val uid = m.uid.ifBlank { "member_${m.phoneNumber ?: dName}" }
-                if (dName.isNotBlank() && !seenUids.contains(uid)) {
-                    seenUids.add(uid)
-                    activeParticipants.add(MemberIdentity(uid = uid, currentName = dName, role = roleDisplay, phone = m.phoneNumber))
-                }
-            }
-        }
-
-        // 2. Fallback/Inclusion: local partners (even if workspaceMembers not empty)
-        partners.forEach { p ->
-            val pName = p.name.trim()
-            if (pName.isNotBlank()) {
-                val uid = "partner_${p.id}"
-                if (!seenUids.contains(uid)) {
-                    seenUids.add(uid)
-                    activeParticipants.add(MemberIdentity(uid = uid, currentName = pName, role = p.role.ifBlank { "Partner" }, phone = p.phone))
-                }
-            }
-        }
-
-        // 3. Fallback: discover participants from records if both workspaceMembers and partners are empty
-        if (activeParticipants.isEmpty()) {
-            scopedJobs.forEach { j ->
-                val pName = j.operatorName.ifBlank { j.addedByPartner }.trim()
-                if (pName.isNotBlank() && !seenUids.contains(pName.lowercase())) {
-                    seenUids.add(pName.lowercase())
-                    activeParticipants.add(MemberIdentity(uid = j.createdByUid.ifBlank { pName }, currentName = pName, role = "Partner", phone = null))
-                }
-            }
-            scopedExpenses.forEach { exp ->
-                val pName = (if (exp.paidBy == "I Paid" && exp.paidByPartner.isNotBlank()) exp.paidByPartner else exp.operatorName.ifBlank { exp.addedByPartner }).trim()
-                if (pName.isNotBlank() && !seenUids.contains(pName.lowercase())) {
-                    seenUids.add(pName.lowercase())
-                    activeParticipants.add(MemberIdentity(uid = exp.paidByUid.ifBlank { exp.createdByUid.ifBlank { pName } }, currentName = pName, role = "Partner", phone = null))
-                }
-            }
-            scopedWithdrawals.forEach { w ->
-                val pName = w.partnerName.trim()
-                if (pName.isNotBlank() && !seenUids.contains(pName.lowercase())) {
-                    seenUids.add(pName.lowercase())
-                    activeParticipants.add(MemberIdentity(uid = w.targetPartnerUid.ifBlank { pName }, currentName = pName, role = "Partner", phone = null))
-                }
-            }
-        }
-
-        // Resolve job attribution by UID first, then matching active member
-        fun resolveJobMember(j: JobEntryEntity): MemberIdentity? {
-            if (j.createdByUid.isNotBlank()) {
-                val match = activeParticipants.find { it.uid == j.createdByUid }
-                if (match != null) return match
-            }
-            val opName = j.operatorName.ifBlank { j.addedByPartner }.trim()
-            if (opName.isNotBlank()) {
-                val match = activeParticipants.find { it.currentName.equals(opName, ignoreCase = true) }
-                if (match != null) return match
-            }
-            return null
-        }
-
-        // Resolve expense attribution by UID first, then matching active member
-        fun resolveExpenseMember(e: ExpenseEntity): MemberIdentity? {
-            val effectiveUid = if (e.paidBy == "I Paid" && e.paidByUid.isNotBlank()) e.paidByUid else e.createdByUid
-            if (effectiveUid.isNotBlank()) {
-                val match = activeParticipants.find { it.uid == effectiveUid }
-                if (match != null) return match
-            }
-            val pName = (if (e.paidBy == "I Paid" && e.paidByPartner.isNotBlank()) e.paidByPartner else e.operatorName.ifBlank { e.addedByPartner }).trim()
-            if (pName.isNotBlank()) {
-                val match = activeParticipants.find { it.currentName.equals(pName, ignoreCase = true) }
-                if (match != null) return match
-            }
-            return null
-        }
-
-        // Resolve withdrawal attribution by UID first, then matching active member
-        fun resolveWithdrawalMember(w: WithdrawalEntity): MemberIdentity? {
-            if (w.targetPartnerUid.isNotBlank()) {
-                val match = activeParticipants.find { it.uid == w.targetPartnerUid }
-                if (match != null) return match
-            }
-            if (w.partnerName.isNotBlank()) {
-                val match = activeParticipants.find { it.currentName.equals(w.partnerName.trim(), ignoreCase = true) }
-                if (match != null) return match
-            }
-            return null
-        }
-
-        return activeParticipants.map { member ->
-            val pJobs = scopedJobs.filter { resolveJobMember(it)?.uid == member.uid }
-            val pExp = scopedExpenses.filter { resolveExpenseMember(it)?.uid == member.uid }
-            val pWth = scopedWithdrawals.filter { resolveWithdrawalMember(it)?.uid == member.uid }
+        return participantUids.map { uid ->
+            val member = eligibleMembers[uid]
+            val pName = if (member == null) "Unattributed (migration required)"
+                else (member.displayName ?: member.email).orEmpty().trim().ifBlank { "Member" }
+            val pRole = if (member == null) "" else if (member.role.equals("owner", true)) "Owner" else member.role
+            val pJobs = scopedJobs.filter { beneficiary(it.financialAttributionUid.ifBlank { it.entryForUid }) == uid }
+            val pExp = scopedExpenses.filter { beneficiary(it.financialAttributionUid.ifBlank { it.expenseForUid }) == uid }
+            val pWth = scopedWithdrawals.filter { beneficiary(it.targetPartnerUid) == uid }
 
             val recorded = roundToPositiveWholeRupee(pJobs.sumOf {
                 if (isSyntheticPayment(it)) 0.0
@@ -608,9 +496,9 @@ object FinancialCalculationEngine {
             val wth = roundToPositiveWholeRupee(pWth.sumOf { it.amount })
 
             PartnerFinancialBreakdown(
-                partnerUid = member.uid,
-                partnerName = member.currentName,
-                role = member.role,
+                partnerUid = uid,
+                partnerName = pName,
+                role = pRole,
                 recorded = recorded,
                 received = received,
                 due = due,
@@ -631,11 +519,7 @@ object FinancialCalculationEngine {
         customer: CustomerEntity,
         jobs: List<JobEntryEntity>
     ): CustomerFinancialBreakdown {
-        val customerJobs = jobs.filter {
-            it.customerId == customer.id ||
-            (customer.phone.isNotBlank() && it.customerPhone == customer.phone) ||
-            (customer.name.isNotBlank() && it.customerName.equals(customer.name, ignoreCase = true))
-        }
+        val customerJobs = jobs.filter { it.workspaceId == customer.workspaceId && it.customerId == customer.id }
 
         if (customerJobs.isEmpty()) {
             return CustomerFinancialBreakdown(
@@ -679,32 +563,5 @@ object FinancialCalculationEngine {
         jobs: List<JobEntryEntity>
     ): List<CustomerEntity> {
         return customers.map { synchronizeCustomerWithJobs(it, jobs) }
-    }
-
-    fun countConsolidatedCollectionRecords(
-        payments: List<com.example.data.entity.PaymentEntity>,
-        jobs: List<JobEntryEntity>
-    ): Int {
-        var count = payments.size
-        val seenPaymentIds = payments.map { it.id }.toSet()
-        val seenJobEntryIds = payments.mapNotNull { if (it.jobEntryId > 0L) it.jobEntryId else null }.toSet()
-
-        val syntheticJobs = jobs.filter { isSyntheticPayment(it) && it.amountReceived > 0.0 }
-        syntheticJobs.forEach { j ->
-            if (!seenJobEntryIds.contains(j.id) && !seenPaymentIds.contains(j.id)) {
-                count++
-            }
-        }
-
-        val workJobsWithReceived = jobs.filter { !isSyntheticPayment(it) && it.amountReceived > 0.0 }
-        workJobsWithReceived.forEach { j ->
-            val explicitPaymentsForJob = payments.filter { it.jobEntryId == j.id }.sumOf { it.amount }
-            val initialAdvance = roundToPositiveWholeRupee(j.amountReceived - explicitPaymentsForJob)
-            if (initialAdvance > 0.0) {
-                count++
-            }
-        }
-
-        return count
     }
 }

@@ -31,12 +31,13 @@ import kotlinx.coroutines.tasks.await
 import com.example.data.network.NetworkMonitor
 import com.example.data.repository.AuthRepository
 import com.example.data.repository.SettingsSyncState
-import com.example.data.repository.TractorRepository
 import com.example.data.repository.WorkspaceInitState
 import com.example.data.repository.WorkspaceRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -70,13 +71,13 @@ enum class AccountSubPage {
     MANAGE_PARTNERS,
     SETTINGS,
     EDIT_PROFILE,
-    SQLITE_SYNC_STATUS
+    SQLITE_SYNC_STATUS,
+    DELETED_USERS
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = AppDatabase.getInstance(application)
-    private val repository = TractorRepository(database)
     private val authRepository = AuthRepository.getInstance(application)
     private val workspaceRepository = WorkspaceRepository.getInstance(application, database)
     private val networkMonitor = NetworkMonitor(application)
@@ -98,12 +99,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _phoneVerificationId = MutableStateFlow<String?>(null)
     val phoneVerificationId: StateFlow<String?> = _phoneVerificationId.asStateFlow()
 
+    val cloudConnectionState = workspaceRepository.cloudConnectionState
+    fun retryCloudListeners() = workspaceRepository.retryCloudListeners()
+
     // Sync State
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
-    private val _syncMessage = MutableStateFlow("All partner data in sync with Cloud (Offline Ready)")
+    private val _syncMessage = MutableStateFlow("")
     val syncMessage: StateFlow<String> = _syncMessage.asStateFlow()
+    val pendingActions by lazy { authorizedWorkspaceId.flatMapLatest { ws ->
+        if (ws.isNullOrBlank()) flowOf(emptyList<com.example.data.entity.PendingOperationEntity>())
+        else workspaceRepository.pendingOperations(ws)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    }
+
 
     // Force Simulated Offline Toggle for user demonstration/testing
     private val _simulatedOffline = MutableStateFlow(false)
@@ -136,18 +146,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val personalWorkspaceId: StateFlow<String?> = workspaceRepository.personalWorkspaceId
     val visibleWorkspaceIds: StateFlow<Set<String>> = workspaceRepository.visibleWorkspaceIds
     val pendingInvitations: StateFlow<List<WorkspaceInvitation>> = workspaceRepository.pendingInvitations
-    
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val workspaceMembers: StateFlow<List<WorkspaceMember>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
-        if (target.isNullOrBlank()) MutableStateFlow(emptyList<WorkspaceMember>())
-        else workspaceRepository.workspaceMembers.map { members ->
-            // In theory, WorkspaceRepository.refreshWorkspaceMembers(target) already filters.
-            // This is a second layer of defense to ensure the UI only sees members for the active workspace.
-            members.filter { true } // The actual filtering happens in the repository based on 'activeWorkspaceId'
-            members 
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val workspaceMembers: StateFlow<List<WorkspaceMember>> = workspaceRepository.workspaceMembers
+    val activeWorkspaceMembers: StateFlow<List<WorkspaceMember>> = workspaceRepository.activeWorkspaceMembers
     val isCollaborationOwner: StateFlow<Boolean> = workspaceRepository.isCollaborationOwner
     val lockedPages: StateFlow<Set<String>> = workspaceRepository.lockedPagesState
     val accessControlState: StateFlow<com.example.data.auth.AccessControlDocument> = workspaceRepository.accessControlState
@@ -155,38 +155,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     @OptIn(ExperimentalCoroutinesApi::class)
     val currentUserRole: StateFlow<String> = kotlinx.coroutines.flow.combine(
         activeWorkspaceId,
-        workspaceMembers
-    ) { wsId, members ->
+        workspaceRepository.activeWorkspaceMembers,
+        authState,
+        workspaceRepository.verifiedWorkspaceContext
+    ) { wsId, members, state, verifiedContext ->
         // AUTHORITATIVE ROLE SOURCE: workspaces/{workspaceId}/members/{uid}.role
         // The role is NEVER inferred from workspace ownership, so an Owner and a Partner who
         // share the same workspaceId are still distinguished correctly.
         val uid = currentUid ?: ""
-        val member = members.firstOrNull { it.uid == uid && it.role.isNotBlank() }
+        if (uid.isBlank() || state !is AuthState.Authenticated || state.profile.uid != uid || verifiedContext != (uid to wsId)) return@combine ""
+        val member = members.firstOrNull { it.uid == uid && it.workspaceId == wsId && it.status.equals("active", true) && it.role.isNotBlank() }
         val rawRole = member?.role
-            ?: workspaceRepository.resolveRoleForWorkspace(wsId ?: "")
         com.example.data.auth.RoleUtils.normalizeRole(rawRole)
-        // CRITICAL: default is ROLE_PARTNER, never ROLE_OWNER. Partner is the safe default
-        // while membership state settles and can never over-grant Owner privileges.
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, com.example.data.auth.RoleUtils.ROLE_PARTNER)
+        // Unverified membership grants no role.
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    private val authorizedWorkspaceId = combine(activeWorkspaceId, currentUserRole) { ws, role ->
+        ws.takeIf { role.isNotBlank() }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val deletedUsers = combine(authorizedWorkspaceId, currentUserRole) { wsId, role -> wsId to role }.flatMapLatest { (wsId, role) ->
+        if (wsId.isNullOrBlank() || role != com.example.data.auth.RoleUtils.ROLE_OWNER) flowOf(emptyList<com.example.data.entity.DeletedMemberEntity>()) else workspaceRepository.deletedMembers(wsId)
+    }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val _deletedUsersError = MutableStateFlow("")
+    val deletedUsersError: StateFlow<String> = _deletedUsersError
+    fun refreshDeletedUsers() { viewModelScope.launch {
+        try { workspaceRepository.refreshDeletedMembers(); _deletedUsersError.value = "" }
+        catch (e: Exception) { _deletedUsersError.value = e.message ?: "Unable to refresh removed members" }
+    } }
+    fun permanentlyDeleteUser(uid: String, confirmation: String) { viewModelScope.launch {
+        try { workspaceRepository.permanentlyDeleteMember(uid, confirmation); _deletedUsersError.value = "" }
+        catch (e: Exception) { _deletedUsersError.value = e.message ?: "Purge pending; retry when connected" }
+    } }
 
     val isOperator: StateFlow<Boolean> = currentUserRole.map { it == com.example.data.auth.RoleUtils.ROLE_OPERATOR }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val workTypeExtensions: StateFlow<List<WorkTypeExtensionEntity>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
-        if (target.isNullOrBlank()) MutableStateFlow(emptyList())
-        else workspaceRepository.getWorkTypeExtensionsFlow(target)
+    val workTypeExtensions: StateFlow<List<WorkTypeExtensionEntity>> = combine(
+        activeWorkspaceId,
+        personalWorkspaceId,
+        visibleWorkspaceIds
+    ) { active, personal, visible ->
+        val targetWorkspaces = mutableSetOf<String>()
+        if (!active.isNullOrBlank()) targetWorkspaces.add(active)
+        if (!personal.isNullOrBlank()) targetWorkspaces.add(personal)
+        targetWorkspaces.addAll(visible.filter { it.isNotBlank() })
+        targetWorkspaces.toList()
+    }.flatMapLatest { targetWorkspaces ->
+        if (targetWorkspaces.isEmpty()) MutableStateFlow(emptyList())
+        else database.workTypeExtensionDao().getExtensionsForWorkspaces(targetWorkspaces)
+    }.map { list ->
+        list.distinctBy { it.name.trim().lowercase() }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun isAccountBlocked(): Boolean = com.example.data.auth.AuthorizationManager.isAccountBlocked()
 
-    fun canCreateNewEntry(): Boolean = com.example.data.auth.AuthorizationManager.canCreateNewEntry(isCollaborationOwner.value)
+    fun canCreateNewEntry(): Boolean = currentUserRole.value in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER, com.example.data.auth.RoleUtils.ROLE_OPERATOR)
 
     fun canCreateOldEntry(): Boolean = com.example.data.auth.AuthorizationManager.canCreateOldEntry(isCollaborationOwner.value, currentUserRole.value)
 
     fun canEditEntry(job: com.example.data.entity.JobEntryEntity): Boolean {
+        if (job.workspaceId != activeWorkspaceId.value || activeWorkspaceMembers.value.any {
+            it.uid in setOf(job.createdByUid, job.entryForUid, job.financialAttributionUid) && it.status.equals("removed", true)
+        }) return false
         val currentActorName = settings.value.activePartnerName.ifBlank { null } ?: settings.value.ownerName.ifBlank { null } ?: "Partner"
         return com.example.data.auth.AuthorizationManager.canEditEntry(
             job = job,
@@ -198,6 +232,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun canDeleteEntry(job: com.example.data.entity.JobEntryEntity): Boolean {
+        if (job.workspaceId != activeWorkspaceId.value || activeWorkspaceMembers.value.any {
+            it.uid in setOf(job.createdByUid, job.entryForUid, job.financialAttributionUid) && it.status.equals("removed", true)
+        }) return false
         val currentActorName = settings.value.activePartnerName.ifBlank { null } ?: settings.value.ownerName.ifBlank { null } ?: "Partner"
         return com.example.data.auth.AuthorizationManager.canDeleteEntry(
             job = job,
@@ -212,56 +249,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun canCollectPayment(): Boolean = com.example.data.auth.AuthorizationManager.canCollectPayment(isCollaborationOwner.value, currentUserRole.value)
 
-    fun canDeleteCollection(
-        payment: PaymentEntity,
-        isOwner: Boolean,
-        currentUid: String,
-        role: String
-    ): Boolean = com.example.data.auth.AuthorizationManager.canDeleteCollection(
-        collectionCreatedByUid = payment.collectedByUid,
-        collectionCreatedAt = if (payment.createdAt > 0L) payment.createdAt else payment.collectedAt,
-        isOwner = isOwner,
-        currentUid = currentUid,
-        role = role
-    )
+    fun canDeleteCollection(): Boolean = canCollectPayment()
 
-    fun deleteCollection(payment: PaymentEntity, currentUid: String, role: String, isOwner: Boolean, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
-        if (!canDeleteCollection(payment, isOwner, currentUid, role)) {
-            onError("Collection deletion is restricted")
-            return
-        }
-        viewModelScope.launch {
-            try {
-                workspaceRepository.deletePayment(payment.id)
-                onSuccess()
-            } catch (e: Exception) {
-                android.util.Log.w("TRAC_FIRESTORE", "deleteCollection failed: ${e.message}")
-                onError(e.message ?: "Collection deletion failed")
-            }
-        }
-    }
-
-    fun deleteCollection(
-        paymentId: Long,
-        collectorUid: String,
-        createdAt: Long,
-        currentUid: String,
-        role: String,
-        isOwner: Boolean,
-        onSuccess: () -> Unit = {},
-        onError: (String) -> Unit = {}
-    ) {
-        android.util.Log.d("TRAC_DELETE", "MainViewModel.deleteCollection: paymentId=$paymentId, collectorUid=$collectorUid, createdAt=$createdAt, currentUid=$currentUid, role=$role, isOwner=$isOwner")
-        val canDelete = com.example.data.auth.AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = collectorUid,
-            collectionCreatedAt = createdAt,
-            isOwner = isOwner,
-            currentUid = currentUid,
-            role = role
-        )
-        android.util.Log.d("TRAC_DELETE", "MainViewModel.deleteCollection: authorization canDelete=$canDelete")
-        if (!canDelete) {
-            onError("Collection deletion is restricted")
+    fun deleteCollection(paymentId: Long, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        if (!canDeleteCollection()) {
+            onError("Collection reversal is unavailable for this role")
             return
         }
         viewModelScope.launch {
@@ -270,12 +262,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess()
             } catch (e: Exception) {
                 android.util.Log.w("TRAC_FIRESTORE", "deleteCollection failed: ${e.message}")
-                onError(e.message ?: "Collection deletion failed")
+                onError(e.message ?: "Collection reversal failed")
             }
         }
     }
 
-    fun canExportPdf(): Boolean = com.example.data.auth.AuthorizationManager.canExportPdf()
+    fun canExportPdf(): Boolean = com.example.data.auth.AuthorizationManager.canCollectPayment(isCollaborationOwner.value, currentUserRole.value)
 
     fun canManageTractors(): Boolean = com.example.data.auth.AuthorizationManager.canManageTractors(isCollaborationOwner.value, currentUserRole.value)
 
@@ -328,10 +320,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val genuinePartnerWorkspaces: StateFlow<List<Workspace>> = workspaceRepository.genuinePartnerWorkspaces
     val availableWorkspaces: StateFlow<List<Workspace>> = workspaceRepository.genuinePartnerWorkspaces
 
+    fun retryWorkspaceDiscovery() {
+        val profile = currentUserProfile.value ?: return
+        viewModelScope.launch {
+            workspaceRepository.initializeForUser(profile)
+            loadAvailableWorkspaces()
+        }
+    }
+
     fun loadAvailableWorkspaces() {
         val profile = currentUserProfile.value ?: return
         viewModelScope.launch {
-            workspaceRepository.getAvailableWorkspaces(profile)
+            try {
+                workspaceRepository.getAvailableWorkspaces(profile)
+            } catch (e: Exception) {
+                _syncMessage.value = e.message ?: "Could not load workspaces"
+            }
         }
     }
 
@@ -347,9 +351,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             _isSyncing.value = true
-            val result = workspaceRepository.switchActiveWorkspace(targetWorkspaceId, profile)
+            val result = if (workspaceInitState.value is WorkspaceInitState.SelectionRequired)
+                workspaceRepository.initializeForUser(profile, selectedWorkspaceId = targetWorkspaceId)
+            else workspaceRepository.switchActiveWorkspace(targetWorkspaceId, profile)
             _isSyncing.value = false
             result.onSuccess {
+                _newEntryDraft.value = null
+                setReportSubPage(ReportSubPage.MENU)
+                setAccountSubPage(AccountSubPage.MAIN)
+                setBottomTab(BottomTab.HOME)
                 loadAvailableWorkspaces()
                 onSuccess()
             }.onFailure { e ->
@@ -360,46 +370,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Unsynced entity counters scoped by active workspace
     @OptIn(ExperimentalCoroutinesApi::class)
-    val unsyncedJobsCount: StateFlow<Int> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
+    val unsyncedJobsCount: StateFlow<Int> = authorizedWorkspaceId.flatMapLatest { wsId ->
+        val target = wsId
         if (target.isNullOrBlank()) MutableStateFlow(0)
         else database.jobEntryDao().getUnsyncedCountForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val unsyncedExpensesCount: StateFlow<Int> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
+    val unsyncedExpensesCount: StateFlow<Int> = authorizedWorkspaceId.flatMapLatest { wsId ->
+        val target = wsId
         if (target.isNullOrBlank()) MutableStateFlow(0)
         else database.expenseDao().getUnsyncedCountForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val unsyncedWithdrawalsCount: StateFlow<Int> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
+    val unsyncedWithdrawalsCount: StateFlow<Int> = authorizedWorkspaceId.flatMapLatest { wsId ->
+        val target = wsId
         if (target.isNullOrBlank()) MutableStateFlow(0)
         else database.withdrawalDao().getUnsyncedCountForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val unsyncedCustomersCount: StateFlow<Int> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
+    val unsyncedCustomersCount: StateFlow<Int> = authorizedWorkspaceId.flatMapLatest { wsId ->
+        val target = wsId
         if (target.isNullOrBlank()) MutableStateFlow(0)
         else database.customerDao().getUnsyncedCountForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    val totalUnsyncedCount: StateFlow<Int> = combine(
-        unsyncedJobsCount,
-        unsyncedExpensesCount,
-        unsyncedWithdrawalsCount,
-        unsyncedCustomersCount
-    ) { jobs, exp, wth, cust ->
-        jobs + exp + wth + cust
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val actorOperations = combine(authorizedWorkspaceId, currentUserProfile) { ws, profile -> ws to profile?.uid }.flatMapLatest { (ws, uid) ->
+        if (ws.isNullOrBlank() || uid.isNullOrBlank()) MutableStateFlow(emptyList<com.example.data.entity.PendingOperationEntity>())
+        else database.pendingOperationDao().observeActor(ws, uid)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val totalUnsyncedCount: StateFlow<Int> = actorOperations.map { rows -> rows.count { it.state == "PENDING" } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    val rejectedOperationCount = actorOperations.map { rows -> rows.count { it.state == "REJECTED" } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    val blockedOperationCount = actorOperations.map { rows -> rows.count {
+        it.state == "REJECTED" && it.entityType == "PAYMENT" &&
+            it.failureReason.contains("PERMISSION_DENIED", ignoreCase = true)
+    } }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    val retainedOperationWarning = combine(actorOperations, currentUserRole) { rows, role ->
+        com.example.ui.util.RetainedOperationWarning.from(rows, role)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
 
     // 1. Settings & Profile scoped to active workspace
     @OptIn(ExperimentalCoroutinesApi::class)
-    val settings: StateFlow<AppSettingsEntity> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
+    val settings: StateFlow<AppSettingsEntity> = authorizedWorkspaceId.flatMapLatest { wsId ->
+        val target = wsId
         if (target.isNullOrBlank()) MutableStateFlow(AppSettingsEntity())
         else database.appSettingsDao().getSettingsForWorkspace(target)
     }.combine(MutableStateFlow(Unit)) { set, _ -> set ?: AppSettingsEntity(workspaceId = activeWorkspaceId.value ?: personalWorkspaceId.value ?: "") }
@@ -413,8 +431,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // 2. Partners scoped to active workspace
     @OptIn(ExperimentalCoroutinesApi::class)
-    val partners: StateFlow<List<PartnerEntity>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
+    val partners: StateFlow<List<PartnerEntity>> = authorizedWorkspaceId.flatMapLatest { wsId ->
+        val target = wsId
         if (target.isNullOrBlank()) MutableStateFlow(emptyList())
         else database.partnerDao().getPartnersForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -429,9 +447,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val user = try { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser } catch (_: Exception) { null }
         val uid = currentUid ?: profile?.uid ?: user?.uid ?: ""
         val phone = profile?.phoneNumber ?: user?.phoneNumber
-        val member = members.firstOrNull { 
-            (uid.isNotBlank() && it.uid == uid) || 
-            (!phone.isNullOrBlank() && it.phoneNumber == phone) 
+        val member = members.firstOrNull {
+            (uid.isNotBlank() && it.uid == uid) ||
+            (!phone.isNullOrBlank() && it.phoneNumber == phone)
         }
         val matchedPartner = pts.firstOrNull { p ->
             (!phone.isNullOrBlank() && p.phone.isNotBlank() && p.phone == phone) ||
@@ -463,9 +481,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val user = try { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser } catch (_: Exception) { null }
         val uid = currentUid ?: user?.uid ?: ""
         val phone = user?.phoneNumber
-        val member = members.firstOrNull { 
-            (uid.isNotBlank() && it.uid == uid) || 
-            (!phone.isNullOrBlank() && it.phoneNumber == phone) 
+        val member = members.firstOrNull {
+            (uid.isNotBlank() && it.uid == uid) ||
+            (!phone.isNullOrBlank() && it.phoneNumber == phone)
         }
         when {
             isOwner -> com.example.data.auth.RoleUtils.ROLE_OWNER
@@ -477,77 +495,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // 3. Tractors scoped to active workspace
     @OptIn(ExperimentalCoroutinesApi::class)
-    val tractors: StateFlow<List<TractorEntity>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
+    val tractors: StateFlow<List<TractorEntity>> = authorizedWorkspaceId.flatMapLatest { wsId ->
+        val target = wsId
         if (target.isNullOrBlank()) MutableStateFlow(emptyList())
         else database.tractorDao().getTractorsForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // 4. Customers scoped to active workspace
     @OptIn(ExperimentalCoroutinesApi::class)
-    val customers: StateFlow<List<CustomerEntity>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
-        if (target.isNullOrBlank()) MutableStateFlow(emptyList())
+    val customers: StateFlow<List<CustomerEntity>> = combine(activeWorkspaceId, currentUserRole, authState) { wsId, role, state -> Triple(wsId, role, state) }.flatMapLatest { (target, role, state) ->
+        if (target.isNullOrBlank() || state !is AuthState.Authenticated || !(role in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER))) MutableStateFlow(emptyList())
         else database.customerDao().getCustomersForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val customersWithDue: StateFlow<List<CustomerEntity>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
-        if (target.isNullOrBlank()) MutableStateFlow(emptyList())
+    val customersWithDue: StateFlow<List<CustomerEntity>> = combine(activeWorkspaceId, currentUserRole, authState) { wsId, role, state -> Triple(wsId, role, state) }.flatMapLatest { (target, role, state) ->
+        if (target.isNullOrBlank() || state !is AuthState.Authenticated || !(role in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER))) MutableStateFlow(emptyList())
         else database.customerDao().getCustomersWithDueForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // 5. Jobs scoped to active workspace
     @OptIn(ExperimentalCoroutinesApi::class)
-    val jobs: StateFlow<List<JobEntryEntity>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
-        if (target.isNullOrBlank()) MutableStateFlow(emptyList())
-        else database.jobEntryDao().getJobsForWorkspace(target)
+    val jobs: StateFlow<List<JobEntryEntity>> = combine(activeWorkspaceId, currentUserRole, authState) { wsId, role, state -> Triple(wsId, role, state) }.flatMapLatest { (target, role, state) ->
+        if (target.isNullOrBlank() || state !is AuthState.Authenticated || !(role in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER, com.example.data.auth.RoleUtils.ROLE_OPERATOR))) MutableStateFlow(emptyList())
+        else database.jobEntryDao().getJobsForWorkspace(target).map { records -> if (role == com.example.data.auth.RoleUtils.ROLE_OPERATOR) records.filter { !it.isHistorical && it.entryForUid.isNotBlank() } else records }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // 6. Expenses scoped to active workspace
     @OptIn(ExperimentalCoroutinesApi::class)
-    val expenses: StateFlow<List<ExpenseEntity>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
-        if (target.isNullOrBlank()) MutableStateFlow(emptyList())
+    val expenses: StateFlow<List<ExpenseEntity>> = combine(activeWorkspaceId, currentUserRole) { wsId, role -> wsId to role }.flatMapLatest { (target, role) ->
+        if (target.isNullOrBlank() || role !in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) MutableStateFlow(emptyList())
         else database.expenseDao().getExpensesForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // 7. Withdrawals scoped to active workspace
     @OptIn(ExperimentalCoroutinesApi::class)
-    val withdrawals: StateFlow<List<WithdrawalEntity>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
-        if (target.isNullOrBlank()) MutableStateFlow(emptyList())
+    val withdrawals: StateFlow<List<WithdrawalEntity>> = combine(activeWorkspaceId, currentUserRole) { wsId, role -> wsId to role }.flatMapLatest { (target, role) ->
+        if (target.isNullOrBlank() || role !in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) MutableStateFlow(emptyList())
         else database.withdrawalDao().getWithdrawalsForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // 8. Payments scoped to active workspace
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val payments: StateFlow<List<PaymentEntity>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
-        if (target.isNullOrBlank()) MutableStateFlow(emptyList())
-        else workspaceRepository.getPaymentsFlow(target)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
     // Aggregates & Financial calculations scoped to active workspace (derived directly from jobs as single source of truth)
-    val totalReceived: StateFlow<Double> = combine(jobs, payments) { jobList, paymentList ->
-        val rawPaymentReceived = paymentList.sumOf { it.amount }
-        
-        // For each work job, the initial advance is its amountReceived minus any explicit payments linked to it.
-        // This ensures we don't double count and also captures the initial collection correctly.
-        val initialAdvances = jobList.filter { !com.example.ui.util.FinancialCalculationEngine.isSyntheticPayment(it) }.sumOf { j ->
-            val explicitPaymentsForJob = paymentList.filter { it.jobEntryId == j.id }.sumOf { it.amount }
-            maxOf(0.0, j.amountReceived - explicitPaymentsForJob)
-        }
-        
-        // Synthetic jobs (direct payments) are already covered by rawPaymentReceived IF they are backed by PaymentEntity.
-        // If not, Section 2 of CollectionHistoryTab would pick them up.
-        // To keep this summary consistent with history, we also count synthetic jobs not in paymentList.
-        val paymentIds = paymentList.map { it.id }.toSet()
-        val standaloneSyntheticReceived = jobList.filter { com.example.ui.util.FinancialCalculationEngine.isSyntheticPayment(it) && it.id !in paymentIds }.sumOf { it.amountReceived }
-
-        com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(rawPaymentReceived + initialAdvances + standaloneSyntheticReceived)
+    val totalReceived: StateFlow<Double> = jobs.map { jobList ->
+        jobList.sumOf { it.amountReceived }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     val totalRecorded: StateFlow<Double> = jobs.map { jobList ->
@@ -565,31 +555,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val totalCustomerDue: StateFlow<Double> = totalPending
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val totalExpenses: StateFlow<Double> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
-        if (target.isNullOrBlank()) MutableStateFlow(0.0)
-        else database.expenseDao().getTotalExpensesForWorkspace(target)
-    }.combine(MutableStateFlow(Unit)) { total, _ -> total ?: 0.0 }
-     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+    val totalExpenses: StateFlow<Double> = expenses.map { records -> records.sumOf { it.amount } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val totalWithdrawn: StateFlow<Double> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
-        if (target.isNullOrBlank()) MutableStateFlow(0.0)
-        else database.withdrawalDao().getTotalWithdrawnForWorkspace(target)
-    }.combine(MutableStateFlow(Unit)) { total, _ -> total ?: 0.0 }
-     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+    val totalWithdrawn: StateFlow<Double> = withdrawals.map { records -> records.sumOf { it.amount } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
-    // Available Business Balance for Home = Total Received - Total Expenses - Total Withdrawn
-    // CASH-BASIS FORMULA: This represents actual cash available (collected payments minus expenses and withdrawals).
-    // It does NOT include unpaid invoices (totalRecorded - totalReceived) which would be accrual-basis.
-    // For withdrawal validation, this cash-basis amount is used to prevent over-withdrawal.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val cashPayments: StateFlow<List<PaymentEntity>> = combine(activeWorkspaceId, currentUserRole) { wsId, role -> wsId to role }.flatMapLatest { (target, role) ->
+        if (target.isNullOrBlank() || role !in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) MutableStateFlow(emptyList())
+        else workspaceRepository.getPaymentsFlow(target)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Cash Collections are the receipt source. Entry amountReceived includes non-cash methods.
     val availableAmount: StateFlow<Double> = combine(
-        totalReceived,
-        totalExpenses,
-        totalWithdrawn
-    ) { rec, exp, wth ->
-        maxOf(0.0, rec - exp - wth)
+        cashPayments, expenses, withdrawals, activeWorkspaceId
+    ) { payments, expenseRows, withdrawalRows, wsId ->
+        if (wsId.isNullOrBlank()) 0.0 else com.example.ui.util.FinancialCalculationEngine.cashAvailable(
+            payments, expenseRows, withdrawalRows,
+            com.example.ui.util.FinancialScope(mode = com.example.ui.util.FinancialScopeMode.OVERALL, workspaceId = wsId))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     // Today-specific operational metrics for Home Dashboard
@@ -621,26 +606,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val todayJobs: StateFlow<List<JobEntryEntity>> = jobs.map { jobList ->
         val now = System.currentTimeMillis()
-        val cal = java.util.Calendar.getInstance().apply {
-            timeInMillis = now
-            set(java.util.Calendar.HOUR_OF_DAY, 0)
-            set(java.util.Calendar.MINUTE, 0)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }
-        val startOfDay = cal.timeInMillis
-        cal.apply {
-            set(java.util.Calendar.HOUR_OF_DAY, 23)
-            set(java.util.Calendar.MINUTE, 59)
-            set(java.util.Calendar.SECOND, 59)
-            set(java.util.Calendar.MILLISECOND, 999)
-        }
-        val endOfDay = cal.timeInMillis
-
-        jobList.filter { job ->
-            val ts = if (job.startTimeMillis > 0) job.startTimeMillis else job.createdAt
-            ts in startOfDay..endOfDay
-        }
+        jobList.filter { com.example.ui.util.isRecentJobToday(it, now) }
+            .sortedWith(com.example.ui.util.RecentJobOrder)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val todayTotalDue: StateFlow<Double> = jobs.map { jobList ->
@@ -747,31 +714,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val allPayments: StateFlow<List<PaymentEntity>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
-        if (target.isNullOrBlank()) MutableStateFlow(emptyList())
-        else workspaceRepository.getPaymentsFlow(target)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    @OptIn(ExperimentalCoroutinesApi::class)
     val balanceSheetSummary: StateFlow<com.example.ui.util.FinancialSummary> = combine(
         jobs,
         expenses,
         withdrawals,
-        allPayments,
+        cashPayments,
         balanceSheetScope
-    ) { args: Array<Any> ->
-        @Suppress("UNCHECKED_CAST")
-        val jList = args[0] as List<JobEntryEntity>
-        @Suppress("UNCHECKED_CAST")
-        val eList = args[1] as List<ExpenseEntity>
-        @Suppress("UNCHECKED_CAST")
-        val wList = args[2] as List<WithdrawalEntity>
-        @Suppress("UNCHECKED_CAST")
-        val pList = args[3] as List<com.example.data.entity.PaymentEntity>
-        val sc = args[4] as com.example.ui.util.FinancialScope
+    ) { jList, eList, wList, pList, sc ->
         com.example.ui.util.FinancialCalculationEngine.calculateSummary(jList, eList, wList, sc, pList)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.ui.util.FinancialSummary())
+
+    private var draftActorUid: String? = null
 
     init {
         // Start listening to Firebase Auth state
@@ -783,25 +736,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
-            authState.collect { state ->
+            authState.collectLatest { state ->
                 when (state) {
                     is AuthState.Authenticated -> {
                         _isStartupAuthResolved.value = true
                         val prof = state.profile
-                        launch(kotlinx.coroutines.Dispatchers.IO) {
-                            workspaceRepository.initializeForUser(prof)
+                        if (draftActorUid != prof.uid) {
+                            _newEntryDraft.value = null
+                            setBottomTab(BottomTab.HOME)
+                            draftActorUid = prof.uid
+                        }
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            val initialized = workspaceRepository.initializeForUser(prof)
                             loadAvailableWorkspaces()
+                            if (initialized.isSuccess && isEffectiveOnline.value) workspaceRepository.pushUnsyncedToCloud(isOnline = true)
                         }
                     }
                     is AuthState.Unauthenticated -> {
                         _isStartupAuthResolved.value = true
                         // Stop real-time listeners on logout
                         workspaceRepository.stopWorkspaceListeners()
-                        clearNewEntryDraft()
-                        val current = settings.value
-                        if (current.isLoggedIn) {
-                            repository.updateSettings(current.copy(isLoggedIn = false))
-                        }
+                        _newEntryDraft.value = null
+                        draftActorUid = null
                     }
                     is AuthState.Error -> {
                         _isStartupAuthResolved.value = true
@@ -818,7 +774,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             isEffectiveOnline.collect { online ->
                 if (online) {
-                    pushUnsyncedToCloud()
+                    val profile = currentUserProfile.value
+                    if (profile != null) {
+                        val verified = workspaceRepository.initializeForUser(profile)
+                        loadAvailableWorkspaces()
+                        if (verified.isSuccess && workspaceInitState.value is WorkspaceInitState.Ready &&
+                            currentUserProfile.value?.uid == profile.uid) pushUnsyncedToCloud()
+                    }
                 }
             }
         }
@@ -960,11 +922,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val isEditing = job.updatedAt > 0L
-        if (isEditing && !isCollaborationOwner.value && !com.example.data.auth.AuthorizationManager.currentAccessControl.permissions.canEditEntry) {
-            onError("Job editing is restricted by administration")
-            return
-        }
-        val isHistorical = newEntryDraft.value?.isOldEntry == true || !com.example.data.auth.AuthorizationManager.isSameCalendarDay(job.startTimeMillis)
+
+        val isHistorical = job.isHistorical
         if (isHistorical && !com.example.data.auth.AuthorizationManager.canCreateOldEntry(isCollaborationOwner.value, currentUserRole.value)) {
             val isTamil = settings.value.language.equals("TA", ignoreCase = true)
             onError(if (isTamil) "பழைய பதிவு உருவாக்கம் உரிமையாளருக்கு மட்டுமே அனுமதிக்கப்படுகிறது" else "Old/historical entry creation is restricted to the workspace Owner")
@@ -986,36 +945,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 workspaceRepository.saveJobEntry(job, linkedExpense, linkedExpenses)
                 clearNewEntryDraft()
-                _syncMessage.value = "Saved successfully and synced to Cloud Workspace"
+                _syncMessage.value = "Saved on this device; cloud sync pending"
                 _isSavingJob.value = false
                 onSuccess()
             } catch (e: Exception) {
                 _isSavingJob.value = false
                 val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code?.name ?: "SYNC_FAILED"
                 val errorMsg = e.message ?: "Failed to save job entry"
-                _syncMessage.value = "Saved locally. Cloud sync pending ($code)"
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
                 android.util.Log.e("TRAC_ENTRY", "Error saving entry: $code $errorMsg", e)
                 onError(errorMsg)
             }
         }
     }
 
-    fun deleteJob(job: JobEntryEntity) {
+    fun deleteJob(job: JobEntryEntity, onResult: (String) -> Unit = {}) {
         // Pre-check permissions before calling repository (defense in depth)
         val isOwner = isCollaborationOwner.value
         val currentActorName = settings.value.activePartnerName.ifBlank { null } ?: settings.value.ownerName.ifBlank { null } ?: "Partner"
         val actorUid = currentUid ?: currentUserProfile.value?.uid ?: ""
-        
+
         if (!com.example.data.auth.AuthorizationManager.canDeleteEntry(job, isOwner, currentActorName, actorUid, role = currentUserRole.value)) {
             _syncMessage.value = "Unauthorized: You cannot delete this entry"
+            onResult(_syncMessage.value)
             return
         }
-        
+
         viewModelScope.launch {
             try {
                 workspaceRepository.deleteJob(job)
+                _syncMessage.value = "Entry removed locally; cloud deletion remains pending until confirmed"
+                onResult(_syncMessage.value)
             } catch (e: Exception) {
-                android.util.Log.w("TRAC_ENTRY", "Cloud delete job failed: ${e.message}")
+                _syncMessage.value = e.message ?: "Entry deletion failed; refresh and retry"
+                onResult(_syncMessage.value)
+                android.util.Log.w("TRAC_ENTRY", "Entry deletion blocked: ${e.message}")
             }
         }
     }
@@ -1023,26 +987,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun getExpensesForJob(jobId: Long): List<ExpenseEntity> = workspaceRepository.getExpensesForJob(jobId)
 
     fun addExpense(expense: ExpenseEntity, onSuccess: () -> Unit = {}) {
-        if (isAccountBlocked() || !com.example.data.auth.AuthorizationManager.currentAccessControl.permissions.canViewExpenses) {
+        if (!com.example.data.auth.AuthorizationManager.canViewExpenses(isCollaborationOwner.value, role = currentUserRole.value)) {
             _syncMessage.value = "Expense operations restricted by administration"
             return
         }
         viewModelScope.launch {
             try {
                 workspaceRepository.addExpense(expense)
-                _syncMessage.value = "Expense saved and synced with Cloud"
+                _syncMessage.value = "Expense saved on this device; cloud sync pending"
                 onSuccess()
             } catch (e: Exception) {
                 val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code?.name ?: "SYNC_FAILED"
-                _syncMessage.value = "Expense saved locally. Cloud sync pending ($code)"
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
                 android.util.Log.e("TRAC_FIRESTORE", "Cloud sync failed for expense: $code ${e.message}", e)
-                onSuccess()
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
             }
         }
     }
 
     fun updateExpense(expense: ExpenseEntity, onSuccess: () -> Unit = {}) {
-        if (isAccountBlocked() || !com.example.data.auth.AuthorizationManager.currentAccessControl.permissions.canViewExpenses) {
+        if (!com.example.data.auth.AuthorizationManager.canViewExpenses(isCollaborationOwner.value, role = currentUserRole.value)) {
             _syncMessage.value = "Expense operations restricted by administration"
             return
         }
@@ -1052,38 +1016,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess()
             } catch (e: Exception) {
                 val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code?.name ?: "SYNC_FAILED"
-                _syncMessage.value = "Expense updated locally. Cloud sync pending ($code)"
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
                 android.util.Log.e("TRAC_FIRESTORE", "Cloud update failed for expense: $code ${e.message}", e)
-                onSuccess()
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
             }
         }
     }
 
-    fun canDeleteExpense(expense: ExpenseEntity): Boolean {
-        val actorUid = currentUid ?: ""
-        val isOwner = isCollaborationOwner.value
-        val role = currentUserRole.value
-        val effectiveCreatedAt = if (expense.createdAt > 0) expense.createdAt else expense.dateTimestamp
-        return com.example.data.auth.AuthorizationManager.canDeleteExpense(
-            expenseCreatedByUid = expense.createdByUid,
-            expensePaidByUid = expense.paidByUid,
-            expenseCreatedAt = effectiveCreatedAt,
-            isOwner = isOwner,
-            currentUid = actorUid,
-            role = role
-        )
-    }
-
-    fun deleteExpense(expense: ExpenseEntity) {
-        if (!canDeleteExpense(expense)) {
-            _syncMessage.value = "Expense deletion restricted by authorization policy"
+    fun deleteExpense(expense: ExpenseEntity, onQueued: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        if (!com.example.data.auth.AuthorizationManager.canViewExpenses(isCollaborationOwner.value, role = currentUserRole.value)) {
+            _syncMessage.value = "Expense deletion restricted by administration"
+            onError("Expense deletion restricted by administration")
             return
         }
         viewModelScope.launch {
             try {
                 workspaceRepository.deleteExpense(expense)
+                onQueued()
             } catch (e: Exception) {
                 android.util.Log.w("TRAC_FIRESTORE", "Cloud delete expense failed: ${e.message}")
+                onError(e.message ?: "Expense deletion could not be saved")
             }
         }
     }
@@ -1093,7 +1045,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
-        if (isAccountBlocked() || !com.example.data.auth.AuthorizationManager.currentAccessControl.permissions.canViewWithdrawals) {
+        if (!com.example.data.auth.AuthorizationManager.canViewWithdrawals(isCollaborationOwner.value, role = currentUserRole.value)) {
             onError("Withdrawal operations restricted by administration")
             return
         }
@@ -1120,23 +1072,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ?: com.example.data.auth.RoleUtils.normalizeRole(currentUserRole.value)
         }
 
-        // 3. Resolve Target UID (authoritative UID matching, not display names)
-        var targetUid = withdrawal.targetPartnerUid.trim()
-        if (targetUid.isBlank()) {
-            if (actorRole == com.example.data.auth.RoleUtils.ROLE_PARTNER) {
-                // For a partner, target must be themselves. If partnerName points to another member,
-                // resolve that member's UID so authorization correctly rejects it.
-                val targetMember = members.firstOrNull {
-                    it.displayName?.trim()?.equals(withdrawal.partnerName.trim(), ignoreCase = true) == true
-                }
-                targetUid = targetMember?.uid ?: if (withdrawal.partnerName.isBlank() || withdrawal.partnerName.trim().equals(actorMember?.displayName?.trim(), ignoreCase = true)) actorUid else "unresolved_target"
-            } else {
-                val targetMember = members.firstOrNull {
-                    it.displayName?.trim()?.equals(withdrawal.partnerName.trim(), ignoreCase = true) == true
-                }
-                targetUid = targetMember?.uid ?: if (withdrawal.partnerName.isBlank() || withdrawal.partnerName.trim().equals(actorMember?.displayName?.trim(), ignoreCase = true)) actorUid else ""
-            }
-        }
+        val targetUid = withdrawal.targetPartnerUid.trim().ifBlank { actorUid }
 
         // 4. Centralized Identity & Role Authorization Gate BEFORE Room insertion
         val isAuthorized = com.example.data.auth.AuthorizationManager.canCreateWithdrawal(
@@ -1185,7 +1121,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 workspaceRepository.addWithdrawal(stampedWithdrawal)
-                _syncMessage.value = "Withdrawal saved and synced with Cloud"
+                _syncMessage.value = "Withdrawal saved on this device; cloud sync pending"
                 onSuccess()
             } catch (e: SecurityException) {
                 onError(e.message ?: "Withdrawal rejected by security policy")
@@ -1195,15 +1131,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onError(e.message ?: "Invalid withdrawal amount")
             } catch (e: Exception) {
                 val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code?.name ?: "SYNC_FAILED"
-                _syncMessage.value = "Withdrawal saved locally. Cloud sync pending ($code)"
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
                 android.util.Log.e("TRAC_FIRESTORE", "Cloud sync failed for withdrawal: $code ${e.message}", e)
-                onSuccess()
+                onError(e.message ?: "Withdrawal was not saved")
             }
         }
     }
 
     fun deleteWithdrawal(withdrawal: WithdrawalEntity) {
-        if (isAccountBlocked() || !com.example.data.auth.AuthorizationManager.currentAccessControl.permissions.canViewWithdrawals) {
+        if (!com.example.data.auth.AuthorizationManager.canViewWithdrawals(isCollaborationOwner.value, role = currentUserRole.value)) {
             _syncMessage.value = "Withdrawal deletion restricted by administration"
             return
         }
@@ -1223,16 +1159,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess()
             } catch (e: Exception) {
                 val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code?.name ?: "SYNC_FAILED"
-                _syncMessage.value = "Customer updated locally. Cloud sync pending ($code)"
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
                 android.util.Log.e("TRAC_FIRESTORE", "Cloud update customer failed: $code ${e.message}", e)
-                onSuccess()
             }
         }
     }
 
+    val allPayments: StateFlow<List<PaymentEntity>> = cashPayments
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    val checklistItems: StateFlow<List<ChecklistItemEntity>> = activeWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId ?: personalWorkspaceId.value
+    val checklistItems: StateFlow<List<ChecklistItemEntity>> = authorizedWorkspaceId.flatMapLatest { wsId ->
+        val target = wsId
         if (target.isNullOrBlank()) MutableStateFlow(emptyList())
         else workspaceRepository.getChecklistFlow(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -1286,13 +1223,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     collectedByName = collectedByName,
                     collectedByRole = collectedByRole
                 )
-                _syncMessage.value = "Payment recorded and synced with Cloud"
+                _syncMessage.value = "Collection saved on this device; cloud sync pending"
                 onSuccess()
             } catch (e: Exception) {
                 val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code?.name ?: "SYNC_FAILED"
-                _syncMessage.value = "Payment recorded locally. Cloud sync pending ($code)"
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
                 android.util.Log.e("TRAC_FIRESTORE", "Cloud payment recording failed: $code ${e.message}", e)
-                onSuccess()
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
             }
         }
     }
@@ -1308,7 +1245,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess()
             } catch (e: Exception) {
                 android.util.Log.w("TRAC_FIRESTORE", "Cloud delete customer failed: ${e.message}")
-                onSuccess()
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
             }
         }
     }
@@ -1324,7 +1261,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess()
             } catch (e: Exception) {
                 android.util.Log.w("TRAC_FIRESTORE", "Cloud add tractor failed: ${e.message}")
-                onSuccess()
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
             }
         }
     }
@@ -1340,34 +1277,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess()
             } catch (e: Exception) {
                 android.util.Log.w("TRAC_FIRESTORE", "Cloud update tractor failed: ${e.message}")
-                onSuccess()
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
             }
         }
     }
 
-    fun canDeleteTractor(tractor: TractorEntity): Boolean {
-        return com.example.data.auth.AuthorizationManager.canDeleteTractor(
-            tractorCreatedByUid = tractor.createdByUid,
-            tractorCreatedAt = tractor.createdAt,
-            isOwner = isCollaborationOwner.value,
-            currentUid = currentUid ?: "",
-            role = currentUserRole.value
-        )
-    }
-
-    fun canDeleteExtension(extension: WorkTypeExtensionEntity): Boolean {
-        return com.example.data.auth.AuthorizationManager.canDeleteExtension(
-            extensionCreatedByUid = extension.createdByUid,
-            extensionCreatedAt = extension.createdAt,
-            isOwner = isCollaborationOwner.value,
-            currentUid = currentUid ?: "",
-            role = currentUserRole.value
-        )
-    }
-
     fun deleteTractor(tractor: TractorEntity) {
-        if (!canManageTractors() || !canDeleteTractor(tractor)) {
-            _syncMessage.value = "Tractor deletion restricted or unauthorized"
+        if (!canManageTractors()) {
+            _syncMessage.value = "Tractor fleet operations restricted by administration"
             return
         }
         viewModelScope.launch {
@@ -1375,20 +1292,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 workspaceRepository.deleteTractor(tractor)
             } catch (e: Exception) {
                 android.util.Log.w("TRAC_FIRESTORE", "Cloud delete tractor failed: ${e.message}")
-            }
-        }
-    }
-
-    fun deleteExtension(extension: WorkTypeExtensionEntity) {
-        if (!canDeleteExtension(extension)) {
-            _syncMessage.value = "Unauthorized extension deletion"
-            return
-        }
-        viewModelScope.launch {
-            try {
-                workspaceRepository.deleteExtension(extension)
-            } catch (e: Exception) {
-                android.util.Log.w("TRAC_FIRESTORE", "Cloud delete extension failed: ${e.message}")
             }
         }
     }
@@ -1456,20 +1359,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess()
             } catch (e: Exception) {
                 android.util.Log.w("TRAC_FIRESTORE", "Cloud update partner failed: ${e.message}")
-                onSuccess()
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
             }
         }
     }
 
-    fun deletePartner(partner: PartnerEntity, partnerUid: String? = null, onComplete: () -> Unit = {}) {
+    fun deletePartner(partner: PartnerEntity, partnerUid: String? = null, onComplete: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        if (!canManagePartners()) {
+            onError("Only Owner may remove member access")
+            return
+        }
         viewModelScope.launch {
             try {
                 workspaceRepository.removePartner(partner, partnerUid)
                 onComplete()
             } catch (e: Exception) {
                 android.util.Log.w("TRAC_FIRESTORE", "Delete partner failed: ${e.message}")
-                onComplete()
+                _syncMessage.value = "Member removal failed: ${e.message ?: "refresh and retry"}"
+                onError(_syncMessage.value)
             }
+        }
+    }
+
+    fun removePendingPartnerInvitation(
+        pending: com.example.data.firebase.WorkspaceMember,
+        onResult: (WorkspaceRepository.PendingInvitationCleanupResult) -> Unit = {}
+    ) {
+        val actorUid = currentUid.orEmpty()
+        val role = if (isCollaborationOwner.value) "Owner" else activeWorkspaceMembers.value
+            .firstOrNull { it.uid == actorUid && it.status.equals("active", true) }?.role.orEmpty()
+        if (!com.example.data.auth.canCleanupPendingInvitation(pending, activeWorkspaceId.value.orEmpty(), actorUid, role)) {
+            onResult(WorkspaceRepository.PendingInvitationCleanupResult.Rejected("This pending record is not yours to manage in the active workspace"))
+            return
+        }
+        viewModelScope.launch {
+            _isSyncing.value = true
+            val result = try {
+                workspaceRepository.removePendingPartnerInvitation(pending)
+            } catch (e: Exception) {
+                WorkspaceRepository.PendingInvitationCleanupResult.Failed(
+                    e.message ?: "Pending invitation cleanup failed"
+                )
+            } finally {
+                _isSyncing.value = false
+            }
+            onResult(result)
         }
     }
 
@@ -1596,7 +1530,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess()
             } catch (e: Exception) {
                 android.util.Log.w("TRAC_FIRESTORE", "Cloud update settings failed: ${e.message}")
-                onSuccess()
+                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
             }
         }
     }
@@ -1678,18 +1612,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _syncMessage.value = "Pushing local SQLite entries to Cloud..."
             delay(800) // Smooth sync visual feedback
 
-            val result = workspaceRepository.pushUnsyncedToCloud(isOnline = true)
-            _isSyncing.value = false
-            _syncMessage.value = result.message
-            onComplete(result.isSuccess)
+            try {
+                val result = workspaceRepository.pushUnsyncedToCloud(isOnline = true)
+                _syncMessage.value = result.message
+                onComplete(result.isSuccess)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _syncMessage.value = e.message ?: "Sync unavailable; pending actions are retained"
+                onComplete(false)
+            } finally {
+                _isSyncing.value = false
+            }
         }
+    }
+
+    fun retryRejectedCollection(operationId: String) {
+        viewModelScope.launch {
+            if (!isEffectiveOnline.value) {
+                _syncMessage.value = "Connect to the network before retrying; original action retained"
+                return@launch
+            }
+            _isSyncing.value = true
+            try {
+                workspaceRepository.retryRejectedCollection(operationId)
+                val result = workspaceRepository.pushUnsyncedToCloud(isOnline = true)
+                _syncMessage.value = result.message
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _syncMessage.value = e.message ?: "Retry unavailable; original action retained"
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    fun updateExtension(extension: com.example.data.entity.WorkTypeExtensionEntity) {
+        viewModelScope.launch { try { workspaceRepository.updateExtension(extension) } catch (e: Exception) { _syncMessage.value = e.message ?: "Extension update failed" } }
+    }
+    fun deleteExtension(extension: com.example.data.entity.WorkTypeExtensionEntity) {
+        viewModelScope.launch { try { workspaceRepository.deleteExtension(extension) } catch (e: Exception) { _syncMessage.value = e.message ?: "Extension deletion failed" } }
     }
 
     fun triggerSync() {
         pushUnsyncedToCloud()
     }
 
-    fun getJobsForCustomer(customerId: Long) = database.jobEntryDao().getJobsForCustomer(customerId)
+    fun getJobsForCustomer(customerId: Long) = database.jobEntryDao().getJobsForCustomer(activeWorkspaceId.value.orEmpty(), customerId)
 
     // --- Firebase Authentication ---
 
@@ -1775,186 +1745,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onError: (String) -> Unit = {}
     ) {
         val user = FirebaseAuth.getInstance().currentUser
-        if (user == null) {
-            onError("Authentication session expired. Please verify OTP again.")
+        if (user == null || user.isAnonymous || user.phoneNumber.isNullOrBlank()) {
+            onError("Please verify your phone number with OTP before creating an account.")
             return
         }
 
         viewModelScope.launch {
             _isSyncing.value = true
             try {
-                val db = FirebaseFirestore.getInstance()
-                val uid = user.uid
-                val rawPhone = user.phoneNumber ?: ""
-                val normPhone = normalizePhoneNumber(rawPhone)
-                val clean10 = normPhone.filter { it.isDigit() }.takeLast(10)
-
-                // 1. Check duplicate prevention
-                // Check if users/{uid} already exists
-                val userDocRef = db.collection("users").document(uid)
-                val existingUserSnap = userDocRef.get().await()
-                if (existingUserSnap.exists() && existingUserSnap.data != null) {
-                    val existingProfile = UserProfile.fromMap(existingUserSnap.data!!)
-                    val initResult = workspaceRepository.initializeForUser(existingProfile)
-                    authRepository.setAuthenticatedProfile(existingProfile)
-                    _isSyncing.value = false
-                    initResult.onSuccess {
-                        loadAvailableWorkspaces()
-                        onSuccess(existingProfile)
-                    }.onFailure { e ->
-                        onError(e.message ?: "Failed to initialize workspace")
-                    }
-                    return@launch
-                }
-
-                // Check if phoneDirectory is already bound to another UID
-                if (normPhone.isNotBlank()) {
-                    val dirDocRef = db.collection("phoneDirectory").document(normPhone)
-                    val dirSnap = dirDocRef.get().await()
-                    if (dirSnap.exists() && dirSnap.data != null) {
-                        val boundUid = dirSnap.getString("uid")
-                        if (!boundUid.isNullOrBlank() && boundUid != uid) {
-                            _isSyncing.value = false
-                            onError("This phone number is already registered to another account.")
-                            return@launch
-                        }
-                    }
-                }
-
-                // 2. Check pending partner invitations by normalized phone
-                var role = "owner"
-                var targetWsId = "ws_${uid.replace(Regex("[^a-zA-Z0-9]"), "").take(16).ifBlank { "main" }}"
-                val finalBusinessName = businessName.ifBlank { "${fullName.ifBlank { "Owner" }}'s Tractor Services" }
-
-                if (normPhone.isNotBlank()) {
-                    try {
-                        val pendingQuery = db.collectionGroup("pendingPhones")
-                            .whereEqualTo("normalizedPhone", normPhone)
-                            .limit(1)
-                            .get().await()
-                        if (!pendingQuery.isEmpty) {
-                            val pendingDoc = pendingQuery.documents.first()
-                            val pendingWsId = pendingDoc.getString("groupId")
-                                ?: pendingDoc.reference.parent.parent?.id
-                                ?: ""
-                            if (pendingWsId.isNotBlank()) {
-                                role = "partner"
-                                targetWsId = pendingWsId
-                            }
-                        }
-                    } catch (pe: Exception) {
-                        Log.w("TRAC_AUTH", "pendingPhones check skipped: ${pe.message}")
-                    }
-                }
-
-                val now = System.currentTimeMillis()
-
-                if (role == "owner") {
-                    // Create workspace document
-                    val wsDocRef = db.collection("workspaces").document(targetWsId)
-                    val wsData = mapOf(
-                        "workspaceId" to targetWsId,
-                        "name" to finalBusinessName,
-                        "ownerUid" to uid,
-                        "createdAt" to now,
-                        "updatedAt" to now
-                    )
-                    wsDocRef.set(wsData, SetOptions.merge()).await()
-
-                    // Create workspace member document
-                    val memberDocRef = wsDocRef.collection("members").document(uid)
-                    val memberData = mapOf(
-                        "uid" to uid,
-                        "role" to "owner",
-                        "status" to "active",
-                        "joinedAt" to now,
-                        "displayName" to fullName.ifBlank { "Owner" },
-                        "phoneNumber" to normPhone
-                    )
-                    memberDocRef.set(memberData, SetOptions.merge()).await()
-
-                    // Create collaboration group
-                    val groupDocRef = db.collection("collaborationGroups").document(targetWsId)
-                    val groupData = mapOf(
-                        "groupId" to targetWsId,
-                        "ownerUid" to uid,
-                        "ownerWorkspaceId" to targetWsId,
-                        "createdAt" to now,
-                        "updatedAt" to now
-                    )
-                    groupDocRef.set(groupData, SetOptions.merge()).await()
-
-                    // Create owner member in collaboration group
-                    val groupMemberRef = groupDocRef.collection("members").document(uid)
-                    val groupMemberData = mapOf(
-                        "uid" to uid,
-                        "workspaceId" to targetWsId,
-                        "role" to "owner",
-                        "status" to "active",
-                        "joinedAt" to now
-                    )
-                    groupMemberRef.set(groupMemberData, SetOptions.merge()).await()
-
-                    // Create user collaboration group discovery index
-                    val userGroupIndexRef = db.collection("userCollaborationGroups").document(uid)
-                        .collection("groups").document(targetWsId)
-                    userGroupIndexRef.set(
-                        mapOf(
-                            "groupId" to targetWsId,
-                            "ownerUid" to uid,
-                            "ownerWorkspaceId" to targetWsId,
-                            "role" to "owner",
-                            "status" to "active",
-                            "joinedAt" to now
-                        ),
-                        SetOptions.merge()
-                    ).await()
-
-                    // Create user workspace membership discovery index
-                    val membershipDocRef = db.collection("userWorkspaceMemberships").document(uid)
-                        .collection("workspaces").document(targetWsId)
-                    val membershipData = mapOf(
-                        "workspaceId" to targetWsId,
-                        "ownerUid" to uid,
-                        "role" to "owner",
-                        "status" to "active",
-                        "joinedAt" to now,
-                        "workspaceName" to finalBusinessName
-                    )
-                    membershipDocRef.set(membershipData, SetOptions.merge()).await()
-                }
-
-                // Create user profile in users/{uid}
-                val newProfile = UserProfile(
-                    uid = uid,
-                    displayName = fullName.ifBlank { "Owner" },
-                    email = user.email,
-                    phoneNumber = normPhone,
-                    photoUrl = user.photoUrl?.toString(),
-                    defaultWorkspaceId = targetWsId,
-                    workspaces = listOf(targetWsId),
-                    createdAt = now,
-                    updatedAt = now
-                )
-                val userMap = newProfile.toMap().toMutableMap()
-                userMap["role"] = role
-                userDocRef.set(userMap, SetOptions.merge()).await()
-
-                // Register/Bind in phoneDirectory under canonical normalizedPhone
-                if (normPhone.isNotBlank()) {
-                    val dirData = mapOf(
-                        "uid" to uid,
-                        "phoneNumber" to normPhone,
-                        "role" to role,
-                        "defaultWorkspaceId" to targetWsId,
-                        "workspaceId" to targetWsId,
-                        "displayName" to fullName.ifBlank { "Owner" },
-                        "workspaces" to listOf(targetWsId),
-                        "createdAt" to now,
-                        "updatedAt" to now
-                    )
-                    db.collection("phoneDirectory").document(normPhone).set(dirData, SetOptions.merge()).await()
-                }
+                val newProfile = workspaceRepository.createPersonalWorkspace(user, fullName, businessName)
 
                 // Update auth repository state
                 authRepository.setAuthenticatedProfile(newProfile)
@@ -1966,8 +1765,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     loadAvailableWorkspaces()
                     onSuccess(newProfile)
                 }.onFailure { e ->
-                    loadAvailableWorkspaces()
-                    onSuccess(newProfile)
+                    onError(e.message ?: "Workspace setup is incomplete. Retry to recover the same workspace.")
                 }
             } catch (e: Exception) {
                 _isSyncing.value = false
@@ -2263,13 +2061,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 e.printStackTrace()
             }
             workspaceRepository.stopWorkspaceListeners()
-            clearNewEntryDraft()
-            val current = settings.value
-            if (current.isLoggedIn) {
-                workspaceRepository.updateSettings(current.copy(isLoggedIn = false))
-            }
+            _newEntryDraft.value = null
+            draftActorUid = null
+            // Authentication is per account; never write shared workspace settings after sign-out.
             onComplete()
         }
     }
 }
-

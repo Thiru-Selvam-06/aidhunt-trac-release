@@ -22,31 +22,22 @@ android {
     versionCode = 5
     versionName = "1.0.4"
 
+    buildConfigField("boolean", "DEVICE_TEST", "false")
+    buildConfigField("boolean", "LIVE_TEST", "false")
+    buildConfigField("boolean", "PHYSICAL_TEST", "false")
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   signingConfigs {
     create("release") {
-      val keystorePropertiesFile = rootProject.file("keystore.properties")
-      if (keystorePropertiesFile.exists()) {
-        val keystoreProperties = Properties()
-        keystoreProperties.load(FileInputStream(keystorePropertiesFile))
-        storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
-        storePassword = keystoreProperties["storePassword"] as String
-        keyAlias = keystoreProperties["keyAlias"] as String
-        keyPassword = keystoreProperties["keyPassword"] as String
-      } else {
-        storeFile = file("${rootDir}/release.jks")
-        storePassword = "aidhunttrac"
-        keyAlias = "release"
-        keyPassword = "aidhunttrac"
+      val propertiesFile = rootProject.file("keystore.properties")
+      if (propertiesFile.exists()) {
+        val signing = Properties().apply { propertiesFile.inputStream().use { load(it) } }
+        storeFile = rootProject.file(signing.getProperty("storeFile"))
+        storePassword = signing.getProperty("storePassword")
+        keyAlias = signing.getProperty("keyAlias")
+        keyPassword = signing.getProperty("keyPassword")
       }
-    }
-    create("debugConfig") {
-      storeFile = file("${rootDir}/release.jks")
-      storePassword = "aidhunttrac"
-      keyAlias = "release"
-      keyPassword = "aidhunttrac"
     }
   }
 
@@ -57,7 +48,30 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
-    debug { signingConfig = signingConfigs.getByName("debugConfig") }
+    debug {
+      enableUnitTestCoverage = providers.gradleProperty("ciCoverage").orNull == "true"
+    }
+    create("deviceTest") {
+      initWith(getByName("debug"))
+      applicationIdSuffix = ".devicetest"
+      versionNameSuffix = "-emulator"
+      matchingFallbacks += listOf("debug")
+      buildConfigField("boolean", "DEVICE_TEST", "true")
+    }
+    create("liveTest") {
+      initWith(getByName("debug"))
+      applicationIdSuffix = ".livetest"
+      versionNameSuffix = "-live-test"
+      matchingFallbacks += listOf("debug")
+      buildConfigField("boolean", "LIVE_TEST", "true")
+    }
+    create("physicalTest") {
+      initWith(getByName("debug"))
+      applicationIdSuffix = ".physicaltest"
+      versionNameSuffix = "-physical-test"
+      matchingFallbacks += listOf("debug")
+      buildConfigField("boolean", "PHYSICAL_TEST", "true")
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -69,6 +83,7 @@ android {
     compose = true
     buildConfig = true
   }
+  testBuildType = if (providers.gradleProperty("deviceTest").orNull == "true") "deviceTest" else "debug"
   testOptions { unitTests { isIncludeAndroidResources = true } }
   dependenciesInfo {
     includeInApk = false

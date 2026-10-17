@@ -1,0 +1,257 @@
+[
+  {
+    "uid": "fixtureAccount01_identity",
+    "defaultId": "ws_fixtureAccount01",
+    "profileIds": [
+      "ws_fixtureAccount01"
+    ],
+    "indexIds": [
+      "fixture-removed-workspace",
+      "fixture-shared-workspace"
+    ],
+    "documents": [
+      {
+        "id": "ws_fixtureAccount01",
+        "ownerUid": "fixtureAccount01_identity",
+        "member": {
+          "role": "owner",
+          "status": "active",
+          "uid": "fixtureAccount01_identity"
+        }
+      },
+      {
+        "id": "fixture-removed-workspace",
+        "ownerUid": "fixtureAccount01_identity",
+        "member": {
+          "role": "OWNER",
+          "status": "ACTIVE",
+          "uid": "fixtureAccount01_identity",
+          "workspaceId": "fixture-removed-workspace"
+        }
+      },
+      {
+        "id": "fixture-shared-workspace",
+        "ownerUid": "fixtureAccount01_identity",
+        "member": {
+          "role": "OWNER",
+          "status": "ACTIVE",
+          "uid": "fixtureAccount01_identity",
+          "workspaceId": "fixture-shared-workspace"
+        }
+      }
+    ],
+    "expected": [
+      "fixture-removed-workspace",
+      "fixture-shared-workspace",
+      "ws_fixtureAccount01"
+    ]
+  },
+  {
+    "uid": "fixtureAccount02_identity",
+    "defaultId": "",
+    "profileIds": [],
+    "indexIds": [],
+    "documents": [],
+    "expected": []
+  },
+  {
+    "uid": "fixtureAccount03_identity",
+    "defaultId": "ws_fixtureAccount03",
+    "profileIds": [
+      "ws_fixtureAccount03"
+    ],
+    "indexIds": [
+      "ws_fixtureAccount03"
+    ],
+    "documents": [
+      {
+        "id": "ws_fixtureAccount03",
+        "ownerUid": "fixtureAccount03_identity",
+        "member": {
+          "role": "owner",
+          "status": "active",
+          "uid": "fixtureAccount03_identity",
+          "workspaceId": "ws_fixtureAccount03"
+        }
+      }
+    ],
+    "expected": [
+      "ws_fixtureAccount03"
+    ]
+  },
+  {
+    "uid": "fixtureAccount04_identity",
+    "defaultId": "ws_fixtureAccount04",
+    "profileIds": [
+      "ws_fixtureAccount04"
+    ],
+    "indexIds": [
+      "ws_fixtureAccount04"
+    ],
+    "documents": [
+      {
+        "id": "ws_fixtureAccount04",
+        "ownerUid": "fixtureAccount04_identity",
+        "member": {
+          "role": "owner",
+          "status": "active",
+          "uid": "fixtureAccount04_identity",
+          "workspaceId": "ws_fixtureAccount04"
+        }
+      }
+    ],
+    "expected": [
+      "ws_fixtureAccount04"
+    ]
+  },
+  {
+    "uid": "fixtureAccount05_identity",
+    "defaultId": "ws_fixtureAccount01",
+    "profileIds": [
+      "ws_fixtureAccount01"
+    ],
+    "indexIds": [
+      "ws_fixtureAccount01",
+      "fixture-removed-workspace",
+      "fixture-shared-workspace"
+    ],
+    "documents": [
+      {
+        "id": "ws_fixtureAccount01",
+        "ownerUid": "fixtureAccount01_identity",
+        "member": {
+          "role": "Partner",
+          "status": "active",
+          "uid": "fixtureAccount05_identity"
+        }
+      },
+      {
+        "id": "ws_fixtureAccount05",
+        "ownerUid": "fixtureAccount05_identity",
+        "member": {
+          "role": "owner",
+          "status": "active",
+          "uid": "fixtureAccount05_identity"
+        }
+      },
+      {
+        "id": "fixture-removed-workspace",
+        "ownerUid": "fixtureAccount01_identity",
+        "member": {
+          "role": "PARTNER",
+          "status": "REMOVED",
+          "uid": "fixtureAccount05_identity",
+          "workspaceId": "fixture-removed-workspace"
+        }
+      },
+      {
+        "id": "fixture-shared-workspace",
+        "ownerUid": "fixtureAccount01_identity",
+        "member": {
+          "role": "PARTNER",
+          "status": "ACTIVE",
+          "uid": "fixtureAccount05_identity",
+          "workspaceId": "fixture-shared-workspace"
+        }
+      }
+    ],
+    "expected": [
+      "fixture-shared-workspace",
+      "ws_fixtureAccount01",
+      "ws_fixtureAccount05"
+    ]
+  },
+  {
+    "uid": "fixtureAccount06_identity",
+    "defaultId": "ws_fixtureAccount01",
+    "profileIds": [
+      "ws_fixtureAccount01"
+    ],
+    "indexIds": [
+      "ws_fixtureAccount01",
+      "fixture-removed-workspace",
+      "fixture-shared-workspace"
+    ],
+    "documents": [
+      {
+        "id": "ws_fixtureAccount01",
+        "ownerUid": "fixtureAccount01_identity",
+        "member": {
+          "role": "Partner",
+          "status": "active",
+          "uid": "fixtureAccount06_identity"
+        }
+      },
+      {
+        "id": "ws_fixtureAccount06",
+        "ownerUid": "fixtureAccount06_identity",
+        "member": {
+          "role": "owner",
+          "status": "active",
+          "uid": "fixtureAccount06_identity"
+        }
+      },
+      {
+        "id": "fixture-removed-workspace",
+        "ownerUid": "fixtureAccount01_identity",
+        "member": {
+          "role": "PARTNER",
+          "status": "REMOVED",
+          "uid": "fixtureAccount06_identity",
+          "workspaceId": "fixture-removed-workspace"
+        }
+      },
+      {
+        "id": "fixture-shared-workspace",
+        "ownerUid": "fixtureAccount01_identity",
+        "member": {
+          "role": "PARTNER",
+          "status": "ACTIVE",
+          "uid": "fixtureAccount06_identity",
+          "workspaceId": "fixture-shared-workspace"
+        }
+      }
+    ],
+    "expected": [
+      "fixture-shared-workspace",
+      "ws_fixtureAccount01",
+      "ws_fixtureAccount06"
+    ]
+  },
+  {
+    "uid": "fixtureAccount07_identity",
+    "defaultId": "fixture-legacy-personal",
+    "profileIds": [
+      "fixture-legacy-personal",
+      "ws_fixtureAccount03"
+    ],
+    "indexIds": [
+      "fixture-legacy-personal",
+      "ws_fixtureAccount03"
+    ],
+    "documents": [
+      {
+        "id": "fixture-legacy-personal",
+        "ownerUid": "fixtureAccount07_identity",
+        "member": {
+          "role": "owner",
+          "status": "active",
+          "uid": "fixtureAccount07_identity"
+        }
+      },
+      {
+        "id": "ws_fixtureAccount03",
+        "ownerUid": "fixtureAccount03_identity",
+        "member": {
+          "role": "Partner",
+          "status": "active",
+          "uid": "fixtureAccount07_identity"
+        }
+      }
+    ],
+    "expected": [
+      "fixture-legacy-personal",
+      "ws_fixtureAccount03"
+    ]
+  }
+]

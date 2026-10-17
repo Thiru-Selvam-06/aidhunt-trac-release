@@ -210,14 +210,14 @@ class PaymentReversalAndCollectionHistoryTest {
 
         // Step 3: Delete the payment
         // Reversal logic:
-        val jobToRevert = jobDao.getJobById(payment.jobEntryId)!!
+        val jobToRevert = jobDao.getJobById(workspaceId, payment.jobEntryId)!!
         val revertedJob = jobToRevert.copy(
             amountReceived = FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, jobToRevert.amountReceived - payment.amount)),
             pendingAmount = FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, jobToRevert.totalAmount - (jobToRevert.amountReceived - payment.amount))),
             updatedAt = 3000L
         )
         jobDao.insertJob(revertedJob)
-        paymentDao.deletePayment(payment.id)
+        paymentDao.deletePayment(workspaceId, payment.id)
 
         // TEST 2: After deletion
         val jobsAfterDelete = jobDao.getAllJobs().first()
@@ -282,7 +282,7 @@ class PaymentReversalAndCollectionHistoryTest {
         // Now reverse payment
         val revertedJob = paidJob.copy(amountReceived = 0.0, pendingAmount = 27500.0)
         jobDao.insertJob(revertedJob)
-        paymentDao.deletePayment(payment.id)
+        paymentDao.deletePayment(workspaceId, payment.id)
 
         // TEST 3: Home payment received disappears
         val homeReceivedAfterReversal = listOf(revertedJob).filter { !FinancialCalculationEngine.isSyntheticPayment(it) }.sumOf { j ->
@@ -355,7 +355,7 @@ class PaymentReversalAndCollectionHistoryTest {
             pendingAmount = 7500.0
         )
         jobDao.insertJob(jobAfterPartnerReversal)
-        paymentDao.deletePayment(partnerPayment.id)
+        paymentDao.deletePayment(workspaceId, partnerPayment.id)
 
         // Payment 1 (₹20,000) remains, Payment 2 is removed
         val cardsAfterPartnerDelete = getCollectionHistoryCards(emptyList(), listOf(jobAfterPartnerReversal))
@@ -372,154 +372,101 @@ class PaymentReversalAndCollectionHistoryTest {
     @Test
     fun `TEST 1 - Owner deletes Owner payment`() {
         val now = 1_000_000_000L
-        val canDelete = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid_owner",
-            collectionCreatedAt = now - 1000L,
-            isOwner = true,
-            currentUid = "uid_owner",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_OWNER
-        )
+        val canDelete = AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = "uid_owner", createdAt = now - 1000L),
+                isOwner = true, uid = "uid_owner", actionTime = now, role = RoleUtils.ROLE_OWNER
+            )
         assertTrue("Owner can delete Owner payment", canDelete)
     }
 
     @Test
     fun `TEST 2 - Owner deletes Partner payment`() {
         val now = 1_000_000_000L
-        val canDelete = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid_partner_1",
-            collectionCreatedAt = now - 1000L,
-            isOwner = true,
-            currentUid = "uid_owner",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_OWNER
-        )
+        val canDelete = AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = "uid_partner_1", createdAt = now - 1000L),
+                isOwner = true, uid = "uid_owner", actionTime = now, role = RoleUtils.ROLE_OWNER
+            )
         assertTrue("Owner can delete Partner payment", canDelete)
     }
 
     @Test
     fun `TEST 3 - Owner deletes older payment greater than 24h`() {
         val now = 1_000_000_000L
-        val canDelete = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid_partner_1",
-            collectionCreatedAt = now - 100_000_000L, // ~28 hours ago
-            isOwner = true,
-            currentUid = "uid_owner",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_OWNER
-        )
+        val canDelete = AuthorizationManager.canReverseCollection(payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = "uid_partner_1", createdAt = now - 100_000_000L), isOwner = true, uid = "uid_owner", actionTime = now, role = RoleUtils.ROLE_OWNER)
         assertTrue("Owner can delete older payment >24h", canDelete)
     }
 
     @Test
     fun `TEST 4 - Partner deletes own payment within 24h`() {
         val now = 1_000_000_000L
-        val canDelete = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid_partner_1",
-            collectionCreatedAt = now - 3600_000L, // 1 hour ago
-            isOwner = false,
-            currentUid = "uid_partner_1",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_PARTNER
-        )
+        val canDelete = AuthorizationManager.canReverseCollection(payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = "uid_partner_1", createdAt = now - 3600_000L), isOwner = false, uid = "uid_partner_1", actionTime = now, role = RoleUtils.ROLE_PARTNER)
         assertTrue("Partner can delete own payment within 24h", canDelete)
     }
 
     @Test
     fun `TEST 5 - Partner own payment after 24h`() {
         val now = 1_000_000_000L
-        val canDelete = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid_partner_1",
-            collectionCreatedAt = now - 90_000_000L, // 25 hours ago
-            isOwner = false,
-            currentUid = "uid_partner_1",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_PARTNER
-        )
+        val canDelete = AuthorizationManager.canReverseCollection(payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = "uid_partner_1", createdAt = now - 90_000_000L), isOwner = false, uid = "uid_partner_1", actionTime = now, role = RoleUtils.ROLE_PARTNER)
         assertFalse("Partner own payment after 24h is denied", canDelete)
     }
 
     @Test
     fun `TEST 6 - Partner deletes Owner payment`() {
         val now = 1_000_000_000L
-        val canDelete = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid_owner",
-            collectionCreatedAt = now - 3600_000L,
-            isOwner = false,
-            currentUid = "uid_partner_1",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_PARTNER
-        )
+        val canDelete = AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = "uid_owner", createdAt = now - 3600_000L),
+                isOwner = false, uid = "uid_partner_1", actionTime = now, role = RoleUtils.ROLE_PARTNER
+            )
         assertFalse("Partner cannot delete Owner payment", canDelete)
     }
 
     @Test
     fun `TEST 7 - Partner deletes another Partner payment`() {
         val now = 1_000_000_000L
-        val canDelete = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid_partner_2",
-            collectionCreatedAt = now - 3600_000L,
-            isOwner = false,
-            currentUid = "uid_partner_1",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_PARTNER
-        )
+        val canDelete = AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = "uid_partner_2", createdAt = now - 3600_000L),
+                isOwner = false, uid = "uid_partner_1", actionTime = now, role = RoleUtils.ROLE_PARTNER
+            )
         assertFalse("Partner cannot delete another Partner payment", canDelete)
     }
 
     @Test
     fun `TEST 8 - Partner deletes Operator payment`() {
         val now = 1_000_000_000L
-        val canDelete = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid_operator",
-            collectionCreatedAt = now - 3600_000L,
-            isOwner = false,
-            currentUid = "uid_partner_1",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_PARTNER
-        )
+        val canDelete = AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = "uid_operator", createdAt = now - 3600_000L),
+                isOwner = false, uid = "uid_partner_1", actionTime = now, role = RoleUtils.ROLE_PARTNER
+            )
         assertFalse("Partner cannot delete Operator payment", canDelete)
     }
 
     @Test
     fun `TEST 9 - Operator deletes Owner payment`() {
         val now = 1_000_000_000L
-        val canDelete = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid_owner",
-            collectionCreatedAt = now - 1000L,
-            isOwner = false,
-            currentUid = "uid_operator",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_OPERATOR
-        )
+        val canDelete = AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = "uid_owner", createdAt = now - 1000L),
+                isOwner = false, uid = "uid_operator", actionTime = now, role = RoleUtils.ROLE_OPERATOR
+            )
         assertFalse("Operator cannot delete Owner payment", canDelete)
     }
 
     @Test
     fun `TEST 10 - Operator deletes Partner payment`() {
         val now = 1_000_000_000L
-        val canDelete = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid_partner_1",
-            collectionCreatedAt = now - 1000L,
-            isOwner = false,
-            currentUid = "uid_operator",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_OPERATOR
-        )
+        val canDelete = AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = "uid_partner_1", createdAt = now - 1000L),
+                isOwner = false, uid = "uid_operator", actionTime = now, role = RoleUtils.ROLE_OPERATOR
+            )
         assertFalse("Operator cannot delete Partner payment", canDelete)
     }
 
     @Test
     fun `TEST 11 - Operator deletes own payment`() {
         val now = 1_000_000_000L
-        val canDelete = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid_operator",
-            collectionCreatedAt = now - 1000L,
-            isOwner = false,
-            currentUid = "uid_operator",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_OPERATOR
-        )
+        val canDelete = AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = "uid_operator", createdAt = now - 1000L),
+                isOwner = false, uid = "uid_operator", actionTime = now, role = RoleUtils.ROLE_OPERATOR
+            )
         assertFalse("Operator cannot delete own payment", canDelete)
     }
 
@@ -535,13 +482,9 @@ class PaymentReversalAndCollectionHistoryTest {
             paymentCreatorUid: String,
             paymentCreatedAt: Long
         ): Boolean {
-            return AuthorizationManager.canDeleteCollection(
-                collectionCreatedByUid = paymentCreatorUid,
-                collectionCreatedAt = paymentCreatedAt,
-                isOwner = isOwner,
-                currentUid = actorUid,
-                currentTimeMillis = now,
-                role = actorRole
+            return AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = paymentCreatorUid, createdAt = paymentCreatedAt),
+                isOwner = isOwner, uid = actorUid, actionTime = now, role = actorRole
             )
         }
 
@@ -595,23 +538,15 @@ class PaymentReversalAndCollectionHistoryTest {
             createdAt = now - 3600_000L
         )
 
-        val partnerDecisionCollectionHistory = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = payment.collectedByUid,
-            collectionCreatedAt = payment.createdAt,
-            isOwner = false,
-            currentUid = "uid_partner_1",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_PARTNER
-        )
+        val partnerDecisionCollectionHistory = AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = payment.collectedByUid, createdAt = payment.createdAt),
+                isOwner = false, uid = "uid_partner_1", actionTime = now, role = RoleUtils.ROLE_PARTNER
+            )
 
-        val partnerDecisionCustomerCredit = AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = payment.collectedByUid,
-            collectionCreatedAt = payment.createdAt,
-            isOwner = false,
-            currentUid = "uid_partner_1",
-            currentTimeMillis = now,
-            role = RoleUtils.ROLE_PARTNER
-        )
+        val partnerDecisionCustomerCredit = AuthorizationManager.canReverseCollection(
+                payment = PaymentEntity(workspaceId = workspaceId, collectedByUid = payment.collectedByUid, createdAt = payment.createdAt),
+                isOwner = false, uid = "uid_partner_1", actionTime = now, role = RoleUtils.ROLE_PARTNER
+            )
 
         assertEquals(
             "Customer Credit and Collection History must agree identically",
@@ -679,7 +614,7 @@ class PaymentReversalAndCollectionHistoryTest {
         assertEquals("Collection history must display exactly 1 card", 1, cards.size)
 
         // Simulate app restart / re-querying from database
-        val reloadedPayments = database.paymentDao().getPaymentsForCustomer(100L)
+        val reloadedPayments = database.paymentDao().getPaymentsForCustomer(workspaceId, 100L)
         val reloadedJobs = database.jobEntryDao().getAllJobs().first()
         val cardsAfterRestart = getCollectionHistoryCards(reloadedPayments, reloadedJobs)
         assertEquals("Collection history after restart remains exactly 1 card", 1, cardsAfterRestart.size)

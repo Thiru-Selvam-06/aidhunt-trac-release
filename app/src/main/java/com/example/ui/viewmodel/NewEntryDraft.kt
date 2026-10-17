@@ -20,6 +20,10 @@ data class DraftExpenseItem(
     val paidByUid: String = ""
 )
 
+/** Personal funding in New Entry belongs to the selected member; edits retain the original payer. */
+fun linkedExpensePayerUid(paidBy: String, retainedPayerUid: String, selectedMemberUid: String): String =
+    if (paidBy.equals("I Paid", ignoreCase = true)) retainedPayerUid.ifBlank { selectedMemberUid } else ""
+
 /**
  * Authoritative single source of truth for the New Work Entry draft.
  * Preserves user inputs across in-app navigation (Home, Reports, Account, etc.)
@@ -159,11 +163,7 @@ data class NewEntryDraft(
 
             val jobDateMillis = if (job.startTimeMillis > 0L) job.startTimeMillis else job.createdAt
 
-            val isOld = job.notes.contains("Old", ignoreCase = true) ||
-                    job.customerName.contains("old", ignoreCase = true) ||
-                    job.notes.contains("Historical", ignoreCase = true) ||
-                    job.workType.contains("Old", ignoreCase = true) ||
-                    job.tractorLabel.contains("Old", ignoreCase = true)
+            val isOld = job.isHistorical
 
             val cleanPhone = com.example.ui.components.sanitizePhoneNumberForStorage(job.customerPhone)
 
@@ -182,7 +182,7 @@ data class NewEntryDraft(
                 entryId = job.id,
                 selectedTractor = job.tractorLabel,
                 selectedWorkType = job.workType,
-                selectedPersonUid = "",
+                selectedPersonUid = job.entryForUid,
                 selectedPersonName = entryForName,
                 isPersonLocked = false,
                 isEditingExistingEntry = true,
@@ -241,7 +241,7 @@ data class NewEntryDraft(
             return baseDraft.copy(
                 isOldEntry = true,
                 historicalDateMillis = dateMillis,
-                originalCreatedAt = dateMillis
+                originalCreatedAt = null
             )
         }
     }

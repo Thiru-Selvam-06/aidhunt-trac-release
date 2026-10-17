@@ -380,16 +380,17 @@ class ExampleUnitTest {
             createTestJob(id = 3L, operatorName = "Partner 1", addedByPartner = "Owner", totalAmount = 2200.0, amountReceived = 2200.0, pendingAmount = 0.0),
             createTestJob(id = 4L, operatorName = "Partner 1", addedByPartner = "Owner", totalAmount = 2000.0, amountReceived = 0.0, pendingAmount = 2000.0)
         )
+        val attributedJobs = jobs.map { job -> job.copy(workspaceId = "test", createdByUid = "owner", entryForUid = if (job.operatorName == "Owner") "owner" else "partner") }
         val partners = listOf(
             createTestPartner(id = 1L, name = "Owner", role = "Owner"),
             createTestPartner(id = 2L, name = "Partner 1", role = "Partner")
         )
         val breakdowns = com.example.ui.util.FinancialCalculationEngine.calculatePartnerBreakdown(
-            jobs = jobs,
+            jobs = attributedJobs,
             expenses = emptyList(),
             withdrawals = emptyList(),
             partners = partners,
-            workspaceMembers = emptyList(),
+            workspaceMembers = listOf(com.example.data.firebase.WorkspaceMember(uid = "owner", workspaceId = "test", role = "OWNER", status = "ACTIVE", displayName = "Owner"), com.example.data.firebase.WorkspaceMember(uid = "partner", workspaceId = "test", role = "PARTNER", status = "ACTIVE", displayName = "Partner 1")),
             scope = com.example.ui.util.FinancialScope(mode = com.example.ui.util.FinancialScopeMode.OVERALL)
         )
 
@@ -411,18 +412,10 @@ class ExampleUnitTest {
     @Test
     fun testAuthorizationManager_canDeleteCollection() {
         // Owner MUST be allowed to delete collections
-        assertTrue(com.example.data.auth.AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid1",
-            collectionCreatedAt = System.currentTimeMillis(),
-            isOwner = true
-        ))
+        assertTrue(com.example.data.auth.AuthorizationManager.canDeleteCollection(isOwner = true))
 
         // Partner MUST NOT be allowed to delete collections
-        assertFalse(com.example.data.auth.AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid1",
-            collectionCreatedAt = System.currentTimeMillis(),
-            isOwner = false
-        ))
+        assertFalse(com.example.data.auth.AuthorizationManager.canDeleteCollection(isOwner = false))
     }
 
     // =========================================================================
@@ -561,25 +554,25 @@ class ExampleUnitTest {
     // =========================================================================
 
     private val testWorkspaceMembers = listOf(
-        com.example.data.firebase.WorkspaceMember(
+        com.example.data.firebase.WorkspaceMember(workspaceId = "ws_123",
             uid = "uid_owner",
             role = "owner",
             displayName = "Owner Boss",
             status = "active"
         ),
-        com.example.data.firebase.WorkspaceMember(
+        com.example.data.firebase.WorkspaceMember(workspaceId = "ws_123",
             uid = "uid_partner_a",
             role = "partner",
             displayName = "Partner A",
             status = "active"
         ),
-        com.example.data.firebase.WorkspaceMember(
+        com.example.data.firebase.WorkspaceMember(workspaceId = "ws_123",
             uid = "uid_partner_b",
             role = "partner",
             displayName = "Partner B",
             status = "active"
         ),
-        com.example.data.firebase.WorkspaceMember(
+        com.example.data.firebase.WorkspaceMember(workspaceId = "ws_123",
             uid = "uid_operator",
             role = "operator",
             displayName = "Operator C",
@@ -702,183 +695,6 @@ class ExampleUnitTest {
             workspaceMembers = testWorkspaceMembers
         )
         assertFalse("Operator must NOT be allowed to withdraw for anyone", resultOther)
-    }
-
-    // =========================================================================
-    // WITHDRAWAL DELETE AUTHORIZATION TESTS
-    // =========================================================================
-
-    @Test
-    fun testWithdrawalDelete_OwnerDeletesOwn_Allowed() {
-        val now = System.currentTimeMillis()
-        val result = com.example.data.auth.AuthorizationManager.canDeleteWithdrawal(
-            withdrawalTargetPartnerUid = "uid_owner",
-            withdrawalCreatedByUid = "uid_owner",
-            withdrawalCreatedAt = now - 3600000L, // 1h old
-            isOwner = true,
-            currentUid = "uid_owner",
-            currentTimeMillis = now,
-            role = "owner"
-        )
-        assertTrue("Owner deleting own withdrawal must be allowed", result)
-    }
-
-    @Test
-    fun testWithdrawalDelete_OwnerDeletesOtherMember_Allowed() {
-        val now = System.currentTimeMillis()
-        val result = com.example.data.auth.AuthorizationManager.canDeleteWithdrawal(
-            withdrawalTargetPartnerUid = "uid_partner_a",
-            withdrawalCreatedByUid = "uid_partner_a",
-            withdrawalCreatedAt = now - 172800000L, // 48h old
-            isOwner = true,
-            currentUid = "uid_owner",
-            currentTimeMillis = now,
-            role = "owner"
-        )
-        assertTrue("Owner deleting another member's withdrawal must be allowed", result)
-    }
-
-    @Test
-    fun testWithdrawalDelete_PartnerDeletesOwnWithin24h_Allowed() {
-        val now = System.currentTimeMillis()
-        val result = com.example.data.auth.AuthorizationManager.canDeleteWithdrawal(
-            withdrawalTargetPartnerUid = "uid_partner_a",
-            withdrawalCreatedByUid = "uid_partner_a",
-            withdrawalCreatedAt = now - 3600000L, // 1h old
-            isOwner = false,
-            currentUid = "uid_partner_a",
-            currentTimeMillis = now,
-            role = "partner"
-        )
-        assertTrue("Partner deleting own withdrawal within 24h must be allowed", result)
-    }
-
-    @Test
-    fun testWithdrawalDelete_PartnerDeletesOwnAfter24h_Denied() {
-        val now = System.currentTimeMillis()
-        val result = com.example.data.auth.AuthorizationManager.canDeleteWithdrawal(
-            withdrawalTargetPartnerUid = "uid_partner_a",
-            withdrawalCreatedByUid = "uid_partner_a",
-            withdrawalCreatedAt = now - 90000000L, // > 24h old
-            isOwner = false,
-            currentUid = "uid_partner_a",
-            currentTimeMillis = now,
-            role = "partner"
-        )
-        assertFalse("Partner deleting own withdrawal after 24h must be denied", result)
-    }
-
-    @Test
-    fun testWithdrawalDelete_PartnerDeletesOtherMember_Denied() {
-        val now = System.currentTimeMillis()
-        val result = com.example.data.auth.AuthorizationManager.canDeleteWithdrawal(
-            withdrawalTargetPartnerUid = "uid_partner_b",
-            withdrawalCreatedByUid = "uid_partner_b",
-            withdrawalCreatedAt = now - 3600000L, // 1h old
-            isOwner = false,
-            currentUid = "uid_partner_a",
-            currentTimeMillis = now,
-            role = "partner"
-        )
-        assertFalse("Partner deleting another member's withdrawal must be denied", result)
-    }
-
-    @Test
-    fun testWithdrawalDelete_OperatorDeletes_Denied() {
-        val now = System.currentTimeMillis()
-        val result = com.example.data.auth.AuthorizationManager.canDeleteWithdrawal(
-            withdrawalTargetPartnerUid = "uid_operator",
-            withdrawalCreatedByUid = "uid_operator",
-            withdrawalCreatedAt = now - 1000L,
-            isOwner = false,
-            currentUid = "uid_operator",
-            currentTimeMillis = now,
-            role = "operator"
-        )
-        assertFalse("Operator deleting withdrawal must be denied", result)
-    }
-
-    // =========================================================================
-    // PAYMENT / COLLECTION DELETE AUTHORIZATION TESTS
-    // =========================================================================
-
-    @Test
-    fun testPaymentDelete_OwnerDeletes_Allowed() {
-        val result = com.example.data.auth.AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid1",
-            collectionCreatedAt = System.currentTimeMillis(),
-            isOwner = true,
-            role = "owner"
-        )
-        assertTrue("Owner deleting payment/collection must be allowed", result)
-    }
-
-    @Test
-    fun testPaymentDelete_PartnerDeletes_Denied() {
-        val result = com.example.data.auth.AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid1",
-            collectionCreatedAt = System.currentTimeMillis(),
-            isOwner = false,
-            role = "partner"
-        )
-        assertFalse("Partner deleting payment/collection must be denied", result)
-    }
-
-    @Test
-    fun testPaymentDelete_OperatorDeletes_Denied() {
-        val result = com.example.data.auth.AuthorizationManager.canDeleteCollection(
-            collectionCreatedByUid = "uid1",
-            collectionCreatedAt = System.currentTimeMillis(),
-            isOwner = false,
-            role = "operator"
-        )
-        assertFalse("Operator deleting payment/collection must be denied", result)
-    }
-
-    // =========================================================================
-    // COLLECTION HISTORY RECONCILIATION TESTS
-    // =========================================================================
-
-    @Test
-    fun testCollectionHistoryCount_Reconciliation() {
-        val payments = listOf(
-            com.example.data.entity.PaymentEntity(id = 1L, amount = 500.0, customerName = "Cust A"),
-            com.example.data.entity.PaymentEntity(id = 2L, amount = 1000.0, customerName = "Cust B"),
-            com.example.data.entity.PaymentEntity(id = 3L, amount = 1500.0, customerName = "Cust C")
-        )
-        val jobs = listOf(
-            com.example.data.entity.JobEntryEntity(
-                id = 10L, 
-                customerName = "Cust A",
-                operatorName = "Op A",
-                tractorLabel = "Payment", 
-                workType = "Payment Received", 
-                startTimeMillis = 1000L,
-                endTimeMillis = 2000L,
-                durationMinutes = 0L,
-                totalAmount = 0.0,
-                amountReceived = 2000.0,
-                pendingAmount = 0.0,
-                addedByPartner = "Partner A"
-            ),
-            com.example.data.entity.JobEntryEntity(
-                id = 20L,
-                customerName = "Cust B",
-                operatorName = "Op B",
-                tractorLabel = "Tractor 1", 
-                workType = "Plowing", 
-                startTimeMillis = 1000L,
-                endTimeMillis = 2000L,
-                durationMinutes = 60L,
-                totalAmount = 3000.0, 
-                amountReceived = 1000.0,
-                pendingAmount = 2000.0,
-                addedByPartner = "Partner B"
-            )
-        )
-
-        val count = com.example.ui.util.FinancialCalculationEngine.countConsolidatedCollectionRecords(payments, jobs)
-        assertEquals("Consolidated collection count must include explicit payments, synthetic payment jobs, and initial advances", 5, count)
     }
 }
 
