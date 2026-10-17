@@ -14,7 +14,9 @@ allprojects {
     def partition = body.contains("createComposeRule") ? "compose" :
       (body.contains("Room.") || body.contains("SupportSQLite") ? "database" :
       (f.name ==~ /.*(Command|Offline|Acknowledgement|Deletion|Operation|Sync|Dependencies|Routing|Recovery|Protocol).*Test.kt/ ? "outbox" : "unit"))
-    if (suite == partition) names.add("com.example." + f.name.replace(".kt",""))
+    def packageMatch = body =~ /(?m)^\s*package\s+([A-Za-z_][\w.]*)/
+    if (!packageMatch.find()) throw new GradleException("Test source has no package: " + f)
+    if (suite == partition) names.add(packageMatch.group(1) + "." + f.name.replace(".kt",""))
    }
    if (names.empty) throw new GradleException("Empty ciSuite: " + suite)
    filter { names.each { includeTestsMatching it } }
