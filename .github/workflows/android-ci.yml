@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: regression-${{ github.workflow }}-${{ github.ref }}
+  group: regression-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 env:
   GCLOUD_PROJECT: demo-aidhunt-v16
@@ -93,7 +93,7 @@ jobs:
         with: {node-version: '22', cache: npm, cache-dependency-path: 'functions/package-lock.json'}
       - run: npm ci --prefix functions
       - run: npm ci --prefix security-tests
-      - run: npx --yes firebase-tools@15.33.0 emulators:exec --project demo-aidhunt-v16 --only firestore --config security-tests/firebase.json "node scripts/run_backend_suite.mjs ${{ matrix.suite }}"
+      - run: npx --yes firebase-tools@15.33.0 emulators:exec --project demo-aidhunt-v16 --only firestore --config firebase.ci.json "node scripts/run_backend_suite.mjs ${{ matrix.suite }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

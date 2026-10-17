@@ -16,10 +16,10 @@ summary={"sha":os.environ.get("GITHUB_SHA"),"runId":os.environ.get("GITHUB_RUN_I
  "workflow":os.environ.get("GITHUB_WORKFLOW"),"jobs":jobs,"junit":results,
  "totals":{k:sum(r.get(k,0) for r in results) for k in ("tests","failures","errors","skipped")},
  "physicalDevice":"NOT VERIFIED","liveServices":"NOT VERIFIED",
- "coverage":"NOT COLLECTED: JUnit counts and source inventory are not code coverage"}
+ "coverage":"Per-partition reports are separate artifacts; no combined coverage percentage is claimed"}
 (out/"regression-summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
 text="# Regression gate\n\nCommit: "+str(summary["sha"])+"\n\n"+json.dumps(summary["totals"])+"\n"
-text+="\nPhysical-device and live-service verification: NOT VERIFIED. Code coverage: NOT COLLECTED.\n"
+text+="\nPhysical-device and live-service verification: NOT VERIFIED. Code coverage: see separate per-partition artifacts; no combined percentage.\n"
 (out/"summary.md").write_text(text,encoding="utf-8")
 if os.environ.get("GITHUB_STEP_SUMMARY"):
     with open(os.environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as f: f.write(text)

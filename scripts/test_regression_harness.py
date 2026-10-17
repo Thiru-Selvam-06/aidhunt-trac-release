@@ -22,6 +22,12 @@ class EvidenceHarnessTest(unittest.TestCase):
             self.assertEqual(2,data["totals"]["tests"])
             self.assertEqual(1,data["totals"]["skipped"])
             self.assertEqual("NOT VERIFIED",data["physicalDevice"])
+    def test_ci_rules_configuration_never_escapes_project_root(self):
+        config=json.loads((ROOT/"firebase.ci.json").read_text())
+        path=(ROOT/config["firestore"]["rules"]).resolve()
+        self.assertTrue(path.is_relative_to(ROOT))
+        self.assertTrue(path.is_file())
+        self.assertEqual("127.0.0.1",config["emulators"]["firestore"]["host"])
     def test_new_operation_entities_require_explicit_role_matrix_expectations(self):
         import re
         source=(ROOT/"app/src/main/java/com/example/data/sync/OperationPolicy.kt").read_text(encoding="utf-8")

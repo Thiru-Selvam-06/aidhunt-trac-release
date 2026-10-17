@@ -7,9 +7,9 @@ The stabilization implementation was present as 167 status entries (211 modified
 
 - Baseline: existing Android JUnit reports contained 375 passing tests; the baseline Gradle invocation was UP-TO-DATE, not a fresh 375-test execution. Backend baseline was freshly executed: 119 passed, zero skipped.
 - New targeted run: 44 Android tests passed, zero failed/skipped (42 parameterized role/action cases, two expense isolation cases).
-- Python harness: seven tests pass, including rejection of live-project or credential-bearing backend test execution and refusal to pass the report gate without JUnit.
+- Python harness: twelve tests pass, including rejection of live-project or credential-bearing backend test execution and refusal to pass the report gate without JUnit.
 - Full Rules integration run: 234 passed, zero skipped, against local demo-aidhunt-v16. An initial run was 233/234 because an invitation test reused an old OTP proof for a new invitation.
-- Full Android/build/lint and remote Actions results must be read from the final report and actual workflow run. Source presence and compilation are not end-to-end evidence.
+- Fresh full Android run: 428 passed, zero failures/errors/skips, including nine real-SQLite table contracts for scoped pruning, rollback, duplicate identity and 64-bit IDs. Debug build/lint and isolated instrumentation APK compilation passed locally. Remote evidence is separate below.
 
 ## Confirmed defect and regression
 
@@ -72,3 +72,13 @@ Coverage generation and instrumentation must actually pass remotely before being
 ## Manual continuation
 
 Use an isolated package/backend only. For each inventory row, record role, workspace, starting records and outbox IDs; tap the actual control and cancellation; verify Room transaction/envelope and server decision independently; reopen after acknowledgement and after restart. Repeat offline/permission rejection and confirm retained payload and original workspace. Attach evidence paths and change status only for that exact scenario. Never use canonical PMS records or existing pending production operations as fixtures.
+
+## First remote run
+
+Push run 39022689288 executed commit 1ec867a96596cff1fa6b2f7fb630f03e3521d554. Inventory passed. Both Node jobs failed before tests because Firebase CLI 15.33 rejects ../firestore.rules outside the configuration directory. A root-level firebase.ci.json fixes this; the exact CLI invocation then passed 119 backend tests locally. PR creation returned GitHub HTTP 403 Resource not accessible by integration; no PR was created or retried through another connection.
+
+## Reporting-integrity regression
+
+The pre-existing CI scorecard reported missing critical-case mappings as PASS, used substring matches as evidence, and crashed when JUnit was absent. Four new tests reproduce these failures and verify the correction: exact JUnit identity only, NOT_VERIFIED for missing cases, separate skipped/failed counts, and actual tool versions. Twelve Python harness tests pass. This prevents an all-green test job from being represented as exhaustive application verification.
+
+The first remote instrumentation run executed 15 cases: 12 passed, three failed, zero skipped. Two Compose cases lacked their host Activity in the isolated deviceTest manifest; the demo-only host is now declared. One deletion scenario incorrectly expected an Owner to be blocked by an active Partner-linked Expense, despite the current approved compound-deletion policy. It now asserts persisted deletion of both Entry and Expense, duplicate delivery, and retains denials for malformed/shared collection fixtures. Production permissions were not changed. The corrected remote run must pass before these fixes count as executed instrumentation evidence.

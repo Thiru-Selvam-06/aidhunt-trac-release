@@ -63,12 +63,20 @@ class DeviceEmulatorIntegrationTest {
 
  @Test(timeout=90000) fun eOwnerFinancialDeletionPreconditions()=runBlocking {
   login("owner");val repo=FirestoreRepository(context)
-  for(id in listOf(40L,42L,43L,44L)){
+  for(id in listOf(40L,43L,44L)){
    val ref=cloud.document("workspaces/$ws/entries/$id");val before=ref.get(Source.SERVER).await().data!!
    val op=PendingOperationEntity("blocked-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",id,"DELETE",2000,System.currentTimeMillis(),JSONObject(before).put("operationProtocolVersion",2).toString())
    try{repo.applyPendingOperation(op);fail("Financial precondition bypass $id")}catch(e:IllegalArgumentException){assertTrue(e.message!!.isNotBlank())}
    assertEquals(before,ref.get(Source.SERVER).await().data)
   }
+  // An active Partner's linked Expense does not block an authorized Owner compound deletion.
+  val linked=cloud.document("workspaces/$ws/entries/42").get(Source.SERVER).await().data!!
+  val linkedExpense=cloud.document("workspaces/$ws/expenses/142")
+  assertTrue(linkedExpense.get(Source.SERVER).await().exists())
+  val compound=PendingOperationEntity("compound-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",42,"DELETE",2001,System.currentTimeMillis(),JSONObject(linked).put("operationProtocolVersion",2).toString())
+  repo.applyPendingOperation(compound);repo.applyPendingOperation(compound)
+  assertFalse(cloud.document("workspaces/$ws/entries/42").get(Source.SERVER).await().exists())
+  assertFalse(linkedExpense.get(Source.SERVER).await().exists())
   val reversed=cloud.document("workspaces/$ws/entries/41").get(Source.SERVER).await().data!!
   val op=PendingOperationEntity("reversed-delete-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",41,"DELETE",2001,System.currentTimeMillis(),JSONObject(reversed).put("operationProtocolVersion",2).toString());repo.applyPendingOperation(op);repo.applyPendingOperation(op)
   assertFalse(cloud.document("workspaces/$ws/entries/41").get(Source.SERVER).await().exists());assertEquals("REVERSED",cloud.document("workspaces/$ws/collections/141").get(Source.SERVER).await().getString("status"))

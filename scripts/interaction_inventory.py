@@ -54,7 +54,18 @@ def assets(root=ROOT):
       "rules_tests": "security-tests/*.test.cjs",
       "workflows": ".github/workflows/*",
     }
-    return {key:sorted(p.relative_to(root).as_posix() for p in root.glob(glob)) for key,glob in groups.items()}
+    result={key:sorted(p.relative_to(root).as_posix() for p in root.glob(glob)) for key,glob in groups.items()}
+    backend=root/"functions/index.js"
+    result["backend_endpoints"]=re.findall(r'exports\.(\w+)\s*=\s*onCall',backend.read_text(encoding="utf-8")) if backend.exists() else []
+    result["dao_queries"]=[]
+    for path in (root/"app/src/main/java/com/example/data/dao").glob("*.kt"):
+        body=path.read_text(encoding="utf-8")
+        for query in re.finditer(r'@Query\("([^"\n]+)"\)\s*(?:suspend\s+)?fun\s+(\w+)',body):
+            result["dao_queries"].append({"source":path.relative_to(root).as_posix(),"method":query.group(2),"sql":query.group(1),"status":"NOT VERIFIED: map each DAO query to executed assertions"})
+    result["repository_methods"]={}
+    for path in (root/"app/src/main/java/com/example/data/repository").glob("*.kt"):
+        result["repository_methods"][path.name]=re.findall(r'\bfun\s+(\w+)\s*\(',path.read_text(encoding="utf-8"))
+    return result
 
 def main():
     parser=argparse.ArgumentParser()
