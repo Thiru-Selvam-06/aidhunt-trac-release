@@ -39,4 +39,3 @@ class ScorecardIntegrityTest(unittest.TestCase):
         self.assertEqual(0,metadata["critical_tests_failed"])
         self.assertGreater(metadata["critical_tests_skipped"],0)
 if __name__=="__main__":unittest.main()
-

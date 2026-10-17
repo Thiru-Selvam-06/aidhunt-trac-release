@@ -76,4 +76,3 @@ class WorkspaceDatabaseContractTest(private val table: String) {
         } finally { db.close() }
     }
 }
-

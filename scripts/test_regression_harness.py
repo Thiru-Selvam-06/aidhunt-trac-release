@@ -22,6 +22,35 @@ class EvidenceHarnessTest(unittest.TestCase):
             self.assertEqual(2,data["totals"]["tests"])
             self.assertEqual(1,data["totals"]["skipped"])
             self.assertEqual("NOT VERIFIED",data["physicalDevice"])
+    def test_duplicate_artifact_copies_do_not_inflate_counts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp)/"collected-reports/android-unit";folder.mkdir(parents=True)
+            xml='<testsuite name="Synthetic" tests="2" failures="0" errors="0" skipped="0"/>'
+            (folder/"original.xml").write_text(xml)
+            (folder/"copied.xml").write_text(xml)
+            self.assertEqual(0,self.aggregate(temp,{"tests":{"result":"success"}}).returncode)
+            data=json.loads((Path(temp)/"ci-reports/regression-summary.json").read_text())
+            self.assertEqual(2,data["totals"]["tests"])
+    def test_node_flat_and_nested_junit_count_actual_cases_once(self):
+        for xml in (
+            '<testsuites><testcase name="a"/><testcase name="b"><skipped/></testcase></testsuites>',
+            '<testsuites><testsuite tests="2"><testcase name="a"/><testsuite tests="1"><testcase name="b"><skipped/></testcase></testsuite></testsuite></testsuites>'):
+            with self.subTest(xml=xml),tempfile.TemporaryDirectory() as temp:
+                folder=Path(temp)/"collected-reports/backend-rules";folder.mkdir(parents=True)
+                (folder/"node.xml").write_text(xml)
+                self.assertEqual(0,self.aggregate(temp,{"tests":{"result":"success"}}).returncode)
+                data=json.loads((Path(temp)/"ci-reports/regression-summary.json").read_text())
+                self.assertEqual({"tests":2,"failures":0,"errors":0,"skipped":1},data["totals"])
+    def test_each_required_partition_must_publish_junit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp)/"collected-reports/android-unit";folder.mkdir(parents=True)
+            (folder/"results.xml").write_text('<testsuite tests="1" failures="0"/>')
+            result=subprocess.run([sys.executable,str(ROOT/"scripts/aggregate_regression.py")],cwd=temp,
+                env={**os.environ,"JOB_RESULTS":'{"tests":{"result":"success"}}',
+                     "REQUIRED_JUNIT_ARTIFACTS":'["android-unit","backend-rules"]'},capture_output=True)
+            self.assertNotEqual(0,result.returncode)
+            data=json.loads((Path(temp)/"ci-reports/regression-summary.json").read_text())
+            self.assertEqual(["backend-rules"],data["missingJunitArtifacts"])
     def test_ci_rules_configuration_never_escapes_project_root(self):
         config=json.loads((ROOT/"firebase.ci.json").read_text())
         path=(ROOT/config["firestore"]["rules"]).resolve()

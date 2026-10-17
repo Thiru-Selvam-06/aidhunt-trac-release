@@ -142,6 +142,7 @@ jobs:
       - name: Write run identity and job conclusions
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
+          REQUIRED_JUNIT_ARTIFACTS: '["android-unit","android-database","android-compose","android-outbox","backend-backend","backend-rules","android-device-integration"]'
         run: |
           mkdir -p ci-reports
           python3 scripts/aggregate_regression.py

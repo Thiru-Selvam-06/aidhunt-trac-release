@@ -7,7 +7,7 @@ The stabilization implementation was present as 167 status entries (211 modified
 
 - Baseline: existing Android JUnit reports contained 375 passing tests; the baseline Gradle invocation was UP-TO-DATE, not a fresh 375-test execution. Backend baseline was freshly executed: 119 passed, zero skipped.
 - New targeted run: 44 Android tests passed, zero failed/skipped (42 parameterized role/action cases, two expense isolation cases).
-- Python harness: twelve tests pass, including rejection of live-project or credential-bearing backend test execution and refusal to pass the report gate without JUnit.
+- Python harness: fifteen tests pass, including rejection of live-project or credential-bearing backend test execution and refusal to pass the report gate without JUnit.
 - Full Rules integration run: 234 passed, zero skipped, against local demo-aidhunt-v16. An initial run was 233/234 because an invitation test reused an old OTP proof for a new invitation.
 - Fresh full Android run: 428 passed, zero failures/errors/skips, including nine real-SQLite table contracts for scoped pruning, rollback, duplicate identity and 64-bit IDs. Debug build/lint and isolated instrumentation APK compilation passed locally. Remote evidence is separate below.
 
@@ -79,6 +79,6 @@ Push run 39022689288 executed commit 1ec867a96596cff1fa6b2f7fb630f03e3521d554. I
 
 ## Reporting-integrity regression
 
-The pre-existing CI scorecard reported missing critical-case mappings as PASS, used substring matches as evidence, and crashed when JUnit was absent. Four new tests reproduce these failures and verify the correction: exact JUnit identity only, NOT_VERIFIED for missing cases, separate skipped/failed counts, and actual tool versions. Twelve Python harness tests pass. This prevents an all-green test job from being represented as exhaustive application verification.
+The pre-existing CI scorecard reported missing critical-case mappings as PASS, used substring matches as evidence, and crashed when JUnit was absent. Four new tests reproduce these failures and verify the correction: exact JUnit identity only, NOT_VERIFIED for missing cases, separate skipped/failed counts, and actual tool versions. Fifteen Python harness tests pass. The aggregate also deduplicates byte-identical JUnit report copies and requires evidence from every declared test partition. This prevents an all-green test job from being represented as exhaustive application verification.
 
 The first remote instrumentation run executed 15 cases: 12 passed, three failed, zero skipped. Two Compose cases lacked their host Activity in the isolated deviceTest manifest; the demo-only host is now declared. One deletion scenario incorrectly expected an Owner to be blocked by an active Partner-linked Expense, despite the current approved compound-deletion policy. It now asserts persisted deletion of both Entry and Expense, duplicate delivery, and retains denials for malformed/shared collection fixtures. Production permissions were not changed. The corrected remote run must pass before these fixes count as executed instrumentation evidence.
