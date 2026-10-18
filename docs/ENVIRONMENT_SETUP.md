@@ -1,3 +1,7 @@
+# Current entry point
+
+Use docs/handbook/README.md for the maintained setup and limitations. This supplemental Windows guide does not prove all tests or live backend availability.
+
 # AIDHUNT Trac - Environment Setup & Deployment Guide
 
 This document describes the environment architecture, dependency requirements, secret classifications, and setup procedures for cloning, building, testing, and installing AIDHUNT Trac on a Windows workstation or CI runner.
@@ -6,7 +10,7 @@ This document describes the environment architecture, dependency requirements, s
 
 ## 1. Quick Start: One-Command Bootstrap & USB Installation
 
-For a developer with Git, a compatible JDK (17 or 21), and the Android SDK:
+For a developer with Git, a compatible JDK 21, and the Android SDK:
 
 ```powershell
 # 1. Clone repository
