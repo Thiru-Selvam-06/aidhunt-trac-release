@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "runnable": [
+    "com.example.DeviceEmulatorIntegrationTest",
+    "com.example.DatabaseWorkspaceDeviceTest",
+    "com.example.CollectionFormDeviceTest",
+    "com.example.ExampleInstrumentedTest"
+  ],
+  "blocked": {
+    "com.example.PhoneRegistrationDeviceTest": "Requires a fresh phone-auth emulator session; representative journeys use email fixtures and do not prove phone OTP.",
+    "com.example.PurgeProtocolDeviceTest": "Requires dedicated purge-v2 fixture and independently reviewed destructive acceptance harness; never run on live data.",
+    "com.example.WorkspaceSelectionDeviceTest": "Requires full-audit-a/b and audit-partner fixtures not supplied by the representative device seeder."
+  }
+}

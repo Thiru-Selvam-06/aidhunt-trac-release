@@ -1196,7 +1196,8 @@ fun CustomerSummaryPopup(
 
                     // 4. TRACTOR / OPERATOR: Compact Surface
                     val (cRole, cName) = com.example.data.auth.RoleUtils.resolveCreatorRoleAndName(job, settings.ownerName, workspaceMembers, partners)
-                    val createdByText = com.example.data.auth.RoleUtils.formatRoleAndName(cRole, cName, isTamil)
+                    val createdByText = com.example.data.auth.RecordIdentityPolicy.savedCreatorLabel(
+                        com.example.data.auth.RoleUtils.formatRoleAndName(cRole, cName, isTamil), job.createdByUid, isTamil)
                     val entryForDisplay = com.example.data.auth.RoleUtils.getEntryForDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil)
                     val editedByDisplayModal = com.example.data.auth.RoleUtils.getEditedByDisplay(job, isTamil)
 
@@ -1300,7 +1301,7 @@ fun CustomerSummaryPopup(
                     }
 
                     // 4B. EXPENSES SECTION (Associated with this Job Entry)
-                    val linkedJobExpenses = remember(job.id, expenses) { expenses.filter { it.relatedJobId == job.id } }
+                    val linkedJobExpenses = remember(job.workspaceId, job.id, expenses) { expenses.filter { it.workspaceId == job.workspaceId && it.relatedJobId == job.id } }
                     if (linkedJobExpenses.isNotEmpty()) {
                         Surface(
                             shape = RoundedCornerShape(10.dp),

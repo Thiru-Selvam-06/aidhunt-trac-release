@@ -118,4 +118,26 @@ class WorkspaceCommandProtocolTest {
         assertEquals(listOf(false),refreshes)
     }
 
+    @Test fun absentBackendRouteIsNotPermissionFailureOrAcknowledgement() {
+        for (body in listOf("", "{}", "<html>Not Found private server details</html>")) {
+            try {
+                WorkspaceCommandProtocol.verifyResponse(404, body, data())
+                fail("Missing backend acknowledged")
+            } catch (e: WorkspaceBackendUnavailableException) {
+                assertTrue(e is IOException)
+                assertTrue(e.message!!.contains("remains pending"))
+                assertFalse(e.message!!.contains("private server details"))
+            }
+        }
+    }
+    @Test fun structuredRecordNotFoundIsNotMistakenForAbsentEndpoint() {
+        try {
+            WorkspaceCommandProtocol.verifyResponse(404,
+                JSONObject().put("error", JSONObject().put("status", "NOT_FOUND").put("message", "Record not found")).toString(), data())
+            fail("Not-found response acknowledged")
+        } catch (e: IOException) {
+            assertFalse(e is WorkspaceBackendUnavailableException)
+        }
+    }
+
 }

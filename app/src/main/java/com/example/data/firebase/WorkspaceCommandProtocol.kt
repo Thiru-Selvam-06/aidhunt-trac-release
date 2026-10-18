@@ -7,6 +7,7 @@ import org.json.JSONObject
 import java.io.IOException
 
 internal class WorkspaceAuthenticationRequiredException : IOException("Sign in again to synchronize pending deletions")
+internal class WorkspaceBackendUnavailableException : IOException("Cloud deletion service is not available. Your deletion remains pending on this device; contact support to restore the backend.")
 internal class WorkspaceSessionChangedException : IOException("Account changed; switch back to the original account to synchronize this deletion")
 
 /** The callable HTTP wire contract; shared by production transport and local tests. */
@@ -44,6 +45,8 @@ internal object WorkspaceCommandProtocol {
         val error = json?.optJSONObject("error")
         if (error?.optJSONObject("details")?.optString("code") == "UPGRADE_REQUIRED") throw WorkspaceUpgradeRequiredException()
         if (code == 401 || error?.optString("status") == "UNAUTHENTICATED") throw WorkspaceAuthenticationRequiredException()
+        // An absent HTTP route is infrastructure failure, not a record permission denial.
+        if (code == 404 && error == null) throw WorkspaceBackendUnavailableException()
         if (code !in 200..299 || error != null) {
             if (error?.optString("status") in setOf("PERMISSION_DENIED", "FAILED_PRECONDITION", "INVALID_ARGUMENT"))
                 throw IllegalArgumentException("HTTP $code ${error?.optString("status")}: ${error?.optString("message") ?: "Deletion rejected"}")

@@ -1,5 +1,7 @@
 package com.example.ui.viewmodel
 
+import com.example.data.repository.awaitWorkspaceRequest
+import com.example.data.repository.onWorkspaceFailure
 import android.app.Activity
 import android.app.Application
 import android.content.Context
@@ -323,7 +325,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun retryWorkspaceDiscovery() {
         val profile = currentUserProfile.value ?: return
         viewModelScope.launch {
-            workspaceRepository.initializeForUser(profile)
+            awaitWorkspaceRequest { workspaceRepository.initializeForUser(profile) }
             loadAvailableWorkspaces()
         }
     }
@@ -333,6 +335,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 workspaceRepository.getAvailableWorkspaces(profile)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 _syncMessage.value = e.message ?: "Could not load workspaces"
             }
@@ -352,8 +356,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _isSyncing.value = true
             val result = if (workspaceInitState.value is WorkspaceInitState.SelectionRequired)
-                workspaceRepository.initializeForUser(profile, selectedWorkspaceId = targetWorkspaceId)
-            else workspaceRepository.switchActiveWorkspace(targetWorkspaceId, profile)
+                awaitWorkspaceRequest { workspaceRepository.initializeForUser(profile, selectedWorkspaceId = targetWorkspaceId) }
+            else awaitWorkspaceRequest { workspaceRepository.switchActiveWorkspace(targetWorkspaceId, profile) }
             _isSyncing.value = false
             result.onSuccess {
                 _newEntryDraft.value = null
@@ -362,7 +366,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 setBottomTab(BottomTab.HOME)
                 loadAvailableWorkspaces()
                 onSuccess()
-            }.onFailure { e ->
+            }.onWorkspaceFailure { e ->
                 onError(e.message ?: "Failed to switch workspace")
             }
         }
@@ -418,8 +422,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     @OptIn(ExperimentalCoroutinesApi::class)
     val settings: StateFlow<AppSettingsEntity> = authorizedWorkspaceId.flatMapLatest { wsId ->
         val target = wsId
-        if (target.isNullOrBlank()) MutableStateFlow(AppSettingsEntity())
-        else database.appSettingsDao().getSettingsForWorkspace(target)
+        database.appSettingsDao().getSettingsForWorkspace(target.orEmpty())
     }.combine(MutableStateFlow(Unit)) { set, _ -> set ?: AppSettingsEntity(workspaceId = activeWorkspaceId.value ?: personalWorkspaceId.value ?: "") }
      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettingsEntity())
 
@@ -747,7 +750,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             draftActorUid = prof.uid
                         }
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            val initialized = workspaceRepository.initializeForUser(prof)
+                            val initialized = awaitWorkspaceRequest { workspaceRepository.initializeForUser(prof) }
                             loadAvailableWorkspaces()
                             if (initialized.isSuccess && isEffectiveOnline.value) workspaceRepository.pushUnsyncedToCloud(isOnline = true)
                         }
@@ -776,7 +779,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (online) {
                     val profile = currentUserProfile.value
                     if (profile != null) {
-                        val verified = workspaceRepository.initializeForUser(profile)
+                        val verified = awaitWorkspaceRequest { workspaceRepository.initializeForUser(profile) }
                         loadAvailableWorkspaces()
                         if (verified.isSuccess && workspaceInitState.value is WorkspaceInitState.Ready &&
                             currentUserProfile.value?.uid == profile.uid) pushUnsyncedToCloud()
@@ -1688,12 +1691,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             _isSyncing.value = false
                             onNoAccountFound(profile)
                         } else {
-                            val initResult = workspaceRepository.initializeForUser(profile)
+                            val initResult = awaitWorkspaceRequest { workspaceRepository.initializeForUser(profile) }
                             _isSyncing.value = false
                             initResult.onSuccess {
                                 loadAvailableWorkspaces()
                                 onSuccess(profile)
-                            }.onFailure { e ->
+                            }.onWorkspaceFailure { e ->
                                 onError(e.message ?: "Workspace initialization failed")
                             }
                         }
@@ -1706,6 +1709,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 _isSyncing.value = false
                 onError("Unable to connect. Check your internet connection and try again.")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                _isSyncing.value = false
+                throw cancelled
             } catch (e: Exception) {
                 _isSyncing.value = false
                 onError(mapFirebaseAuthError(e))
@@ -1723,14 +1729,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 // Initialize user with default role = Owner
                 val newProfile = profile.copy(displayName = profile.displayName?.ifBlank { null } ?: "Owner")
-                val initResult = workspaceRepository.initializeForUser(newProfile)
+                val initResult = awaitWorkspaceRequest { workspaceRepository.initializeForUser(newProfile) }
                 _isSyncing.value = false
                 initResult.onSuccess {
                     loadAvailableWorkspaces()
                     onSuccess(newProfile)
-                }.onFailure { e ->
+                }.onWorkspaceFailure { e ->
                     onError(e.message ?: "Account creation failed")
                 }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                _isSyncing.value = false
+                throw cancelled
             } catch (e: Exception) {
                 _isSyncing.value = false
                 onError(e.message ?: "Account creation failed")
@@ -1759,14 +1768,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 authRepository.setAuthenticatedProfile(newProfile)
 
                 // Initialize workspace locally
-                val initResult = workspaceRepository.initializeForUser(newProfile)
+                val initResult = awaitWorkspaceRequest { workspaceRepository.initializeForUser(newProfile) }
                 _isSyncing.value = false
                 initResult.onSuccess {
                     loadAvailableWorkspaces()
                     onSuccess(newProfile)
-                }.onFailure { e ->
+                }.onWorkspaceFailure { e ->
                     onError(e.message ?: "Workspace setup is incomplete. Retry to recover the same workspace.")
                 }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                _isSyncing.value = false
+                throw cancelled
             } catch (e: Exception) {
                 _isSyncing.value = false
                 Log.e("TRAC_AUTH", "Failed to create account for phone user: ${e.message}", e)
@@ -1795,12 +1807,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val result = authRepository.signInWithEmail(email, password)
                     if (result.isSuccess) {
                         val profile = result.getOrThrow()
-                        val initResult = workspaceRepository.initializeForUser(profile)
+                        val initResult = awaitWorkspaceRequest { workspaceRepository.initializeForUser(profile) }
                         _isSyncing.value = false
                         initResult.onSuccess {
                             loadAvailableWorkspaces()
                             onSuccess(profile)
-                        }.onFailure { e ->
+                        }.onWorkspaceFailure { e ->
                             onError(e.message ?: "Workspace initialization failed")
                         }
                     } else {
@@ -1817,6 +1829,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 _isSyncing.value = false
                 onError("Unable to connect. Check your internet connection and try again.")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                _isSyncing.value = false
+                throw cancelled
             } catch (e: Exception) {
                 _isSyncing.value = false
                 onError(mapFirebaseAuthError(e))
@@ -1843,12 +1858,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val result = authRepository.signUpWithEmail(email, password)
                     if (result.isSuccess) {
                         val profile = result.getOrThrow()
-                        val initResult = workspaceRepository.initializeForUser(profile)
+                        val initResult = awaitWorkspaceRequest { workspaceRepository.initializeForUser(profile) }
                         _isSyncing.value = false
                         initResult.onSuccess {
                             loadAvailableWorkspaces()
                             onSuccess(profile)
-                        }.onFailure { e ->
+                        }.onWorkspaceFailure { e ->
                             onError(e.message ?: "Workspace initialization failed")
                         }
                     } else {
@@ -1860,6 +1875,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 _isSyncing.value = false
                 onError("Unable to connect. Check your internet connection and try again.")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                _isSyncing.value = false
+                throw cancelled
             } catch (e: Exception) {
                 _isSyncing.value = false
                 onError(mapFirebaseAuthError(e))
@@ -1911,7 +1929,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
             AccountLookupResult.Error("Unable to connect. Check your internet connection and try again.", isNetworkError = true)
-        } catch (e: Exception) {
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                _isSyncing.value = false
+                throw cancelled
+            } catch (e: Exception) {
             val msg = e.message ?: ""
             if (e is com.google.firebase.FirebaseNetworkException || msg.contains("network", ignoreCase = true)) {
                 AccountLookupResult.Error("Unable to connect. Check your internet connection and try again.", isNetworkError = true)
@@ -1985,12 +2006,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isFinished = true
                     timeoutJob.cancel()
                     viewModelScope.launch {
-                        val initResult = workspaceRepository.initializeForUser(profile)
+                        val initResult = awaitWorkspaceRequest { workspaceRepository.initializeForUser(profile) }
                         _isSyncing.value = false
                         initResult.onSuccess {
                             loadAvailableWorkspaces()
                             onAutoVerified(profile)
-                        }.onFailure { e ->
+                        }.onWorkspaceFailure { e ->
                             onError(e.message ?: "Workspace initialization failed")
                         }
                     }
@@ -2017,12 +2038,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val result = authRepository.verifyPhoneOtp(verificationId, otpCode)
                     if (result.isSuccess) {
                         val profile = result.getOrThrow()
-                        val initResult = workspaceRepository.initializeForUser(profile)
+                        val initResult = awaitWorkspaceRequest { workspaceRepository.initializeForUser(profile) }
                         _isSyncing.value = false
                         initResult.onSuccess {
                             loadAvailableWorkspaces()
                             onSuccess(profile)
-                        }.onFailure { e ->
+                        }.onWorkspaceFailure { e ->
                             onError(e.message ?: "Workspace initialization failed")
                         }
                     } else {
@@ -2046,6 +2067,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 _isSyncing.value = false
                 onError("Unable to connect. Check your internet connection and try again.")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                _isSyncing.value = false
+                throw cancelled
             } catch (e: Exception) {
                 _isSyncing.value = false
                 onError(e.message ?: "OTP verification failed")

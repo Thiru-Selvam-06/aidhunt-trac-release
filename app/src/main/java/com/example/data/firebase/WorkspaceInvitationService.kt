@@ -17,6 +17,39 @@ import java.util.concurrent.TimeUnit
 
 /** Secondary Auth verifies the invitee without changing the Owner's authenticated session. */
 class WorkspaceInvitationService {
+    companion object {
+        const val OWNER_ONLY_ERROR = "Only the workspace Owner can send invitations. Ask the Owner to invite this number."
+
+        const val VALIDATION_ERROR = "Check the invitation name, phone number and role, then try again."
+        const val AUTHENTICATION_ERROR = "Your session could not be verified. Sign in again and retry the invitation."
+        const val SERVICE_ERROR = "Invitation service is unavailable. Try again later."
+        const val ENDPOINT_UNAVAILABLE_ERROR = "Invitation service is not available for this workspace. No member was added. Contact support to restore the backend."
+
+        fun mapBackendError(statusCode: Int, rawBody: String): Exception {
+            val errorObj = runCatching { JSONObject(rawBody).optJSONObject("error") }.getOrNull()
+            val status = (errorObj?.optString("status").orEmpty().ifBlank {
+                errorObj?.optString("code").orEmpty()
+            }).trim().replace('-', '_').uppercase(java.util.Locale.ROOT)
+            // Messages are untrusted backend details, never authorization signals or UI copy.
+            return when {
+                statusCode == 403 || status == "PERMISSION_DENIED" -> SecurityException(OWNER_ONLY_ERROR)
+                statusCode == 401 || status == "UNAUTHENTICATED" -> SecurityException(AUTHENTICATION_ERROR)
+                statusCode in 500..599 -> IllegalStateException(SERVICE_ERROR)
+                statusCode == 404 && errorObj == null -> IllegalStateException(ENDPOINT_UNAVAILABLE_ERROR)
+                statusCode == 429 || status == "RESOURCE_EXHAUSTED" ->
+                    IllegalStateException("Too many invitation attempts. Wait and try again.")
+                status == "ALREADY_EXISTS" ->
+                    IllegalStateException("This member or invitation already exists. Refresh the member list.")
+                status == "FAILED_PRECONDITION" || status == "NOT_FOUND" ->
+                    IllegalStateException("This invitation is no longer valid. Refresh and start a new invitation.")
+                statusCode == 400 || status == "INVALID_ARGUMENT" -> IllegalArgumentException(VALIDATION_ERROR)
+                statusCode in 400..499 -> IllegalStateException("Invitation request could not be completed. Refresh and try again.")
+                else -> IllegalStateException("Invitation service returned an invalid response. Try again.")
+            }
+        }
+
+    }
+
     private val primaryAuth = FirebaseAuth.getInstance()
     private val app = FirebaseApp.getApps(FirebaseApp.getInstance().applicationContext)
         .firstOrNull { it.name == "workspace-invitation" }
@@ -41,9 +74,12 @@ class WorkspaceInvitationService {
             .header("Authorization", "Bearer $token")
             .post(JSONObject().put("data", data).toString().toRequestBody("application/json".toMediaType())).build()
         okhttp3.OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
-            val result = JSONObject(response.body?.string().orEmpty())
-            if (!response.isSuccessful || result.has("error")) throw IllegalStateException(result.optJSONObject("error")?.optString("message") ?: "Invitation service is unavailable")
-            result.optJSONObject("result") ?: result.optJSONObject("data") ?: throw IllegalStateException("Invalid invitation response")
+            val rawBody = response.body?.string().orEmpty()
+            val result = runCatching { JSONObject(rawBody) }.getOrNull()
+            if (!response.isSuccessful || result?.has("error") == true) {
+                throw mapBackendError(response.code, rawBody)
+            }
+            result?.optJSONObject("result") ?: result?.optJSONObject("data") ?: throw IllegalStateException("Invalid invitation response")
         }
     }
 

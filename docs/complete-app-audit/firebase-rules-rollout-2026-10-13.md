@@ -1,0 +1,19 @@
+# Firebase Rules rollout, 13 October 2026
+
+Project `trac-aidhunt`; release worktree `codex/v1.6-implementation`. The original desktop checkout and original production app were not changed.
+
+The previously deployed Firestore source was saved byte-for-byte as `2026-10-13-deployed-rules-backup.rules` (SHA-256 `CBC6485A28773C4986DA76101F4EB52EEF8B6CED3C8F4E21A7EC659B48C60B4F`). It used a generic workspace subcollection allow-list without `collections` or `extensions`. The pre-existing local v1.6 candidate `firestore.rules` has SHA-256 `07AB9DD47260B2551F53A918D047CA2FC8B56DEC8AA37597E6E0F3AA59299C3F`.
+
+`firebase.json` points to `firestore.rules`. Firebase project directory and active project were verified through the Firebase connection before publication. Firebase Rules validation returned one unused-variable warning, with no compilation error. The disposable `demo-aidhunt-v16` Firestore Emulator suite passed 191/191 tests. The existing trusted-service local suite passed 108/108 tests when run with `FIRESTORE_EMULATOR_HOST=127.0.0.1:18180` and `GCLOUD_PROJECT=demo-aidhunt-v16`; an initial run without these required environment variables failed its safety guards and made no production writes.
+
+A Firebase MCP deployment job reported success but did not change the active source on read-back. The exact Rules-only CLI command `firebase-tools deploy --only firestore:rules --project trac-aidhunt --non-interactive` then compiled and released `firestore.rules`. A fresh Firebase Rules retrieval returned the new 21,063-character source. Its normalized full source exactly matched the local file; `collections` and `extensions` access paths are present. No Functions or indexes deployment was requested by that command. The active Ruleset identifier was not returned by the available Rules retrieval tool; source equality was verified independently.
+
+On the physical Partner live-test app, a cold restart removed the prior cloud-access error banner. Collection History opened and displayed two locally retained reversed payments; the shared fleet screen opened. Two rejected payment operations remain in the separate app's Room queue and were **not** manually retried after publication, because one was not part of the earlier controlled fixture. These checks establish listener recovery, not completion of all financial synchronization. The original production-configured package remained stopped.
+
+Trusted service status: the local `functions/index.js` defines `beginWorkspaceInvitation`, `redeemWorkspaceInvitation`, `deleteWorkspaceCustomer`, and `deleteWorkspaceEntry`. Initially Firebase's Functions listing returned HTTP 403 because the Cloud Functions API was disabled, and the environment reported billing disabled. Automatic approval review rejected a deployment attempt before the user gave separate Functions approval. No Functions were published at that point.
+
+After explicit approval for those four Functions and the Cloud Functions API, a scoped CLI deployment was attempted. The CLI attempted to enable Cloud Functions, Cloud Build, and Artifact Registry APIs, then stopped before publishing Functions because `trac-aidhunt` is not on the Blaze plan and Artifact Registry cannot be enabled. No billing change was made. A subsequent Firebase Functions listing returned `functions: []`, confirming zero deployed Functions. The Owner's pending Entry deletion is still blocked until the service is deployed and retested.
+
+No Git commit or push was made. The Rules backup and this report are new local files; all pre-existing worktree changes were preserved.
+
+Credential hygiene: a CLI authentication diagnostic unexpectedly emitted session tokens in tool output. The tokens are not included in this report. I logged out of the Firebase CLI immediately afterward and confirmed `firebase-tools login:list` reports no authorized accounts. A fresh CLI sign-in will be needed for a future approved Functions rollout.

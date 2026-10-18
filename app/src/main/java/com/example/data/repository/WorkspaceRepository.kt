@@ -192,6 +192,7 @@ class WorkspaceRepository(
     val profitShareMigrationDone: StateFlow<Boolean> = _profitShareMigrationDone.asStateFlow()
 
     fun loadCachedPercentages(wsId: String) {
+        _partnerPercentages.value = emptyMap()
         if (wsId.isBlank()) return
         try {
             val prefs = context.getSharedPreferences("workspace_percentages_prefs", android.content.Context.MODE_PRIVATE)
@@ -231,6 +232,8 @@ class WorkspaceRepository(
     }
 
     fun loadCachedProfitShareAllocations(wsId: String) {
+        _profitShareAllocations.value = emptyMap()
+        _profitShareAllocationDetails.value = emptyMap()
         if (wsId.isBlank()) return
         try {
             val prefs = context.getSharedPreferences("workspace_profit_share_prefs", android.content.Context.MODE_PRIVATE)
@@ -266,10 +269,14 @@ class WorkspaceRepository(
     }
 
     suspend fun loadProfitShareAllocationsFromCloud(wsId: String) {
-        if (wsId.isBlank()) return
+        val actorUid = getEffectiveActorUid() ?: return
+        if (wsId.isBlank() || _activeWorkspaceId.value != wsId) return
         if (!isCloudReady()) return
         try {
             val (percentageMap, detailMap) = firestoreRepository.getProfitShareAllocations(wsId)
+            if (getEffectiveActorUid() != actorUid || _activeWorkspaceId.value != wsId) return
+            _profitShareAllocations.value = percentageMap
+            _profitShareAllocationDetails.value = detailMap
             if (percentageMap.isNotEmpty()) {
                 _profitShareAllocations.value = percentageMap
                 _profitShareAllocationDetails.value = detailMap
@@ -338,6 +345,9 @@ class WorkspaceRepository(
         requireWorkspaceActor(wsId)
         throw IllegalStateException("Legacy allocation migration requires a reviewed UID mapping and verified backup; name/phone inference is disabled")
     }
+
+    private val _availableWorkspaces = MutableStateFlow<List<Workspace>>(emptyList())
+    val availableWorkspaces: StateFlow<List<Workspace>> = _availableWorkspaces.asStateFlow()
 
     private val _genuinePartnerWorkspaces = MutableStateFlow<List<Workspace>>(emptyList())
     val genuinePartnerWorkspaces: StateFlow<List<Workspace>> = _genuinePartnerWorkspaces.asStateFlow()
@@ -621,6 +631,8 @@ class WorkspaceRepository(
     private val groupPendingListeners = mutableMapOf<String, com.google.firebase.firestore.ListenerRegistration>()
     private val groupWorkspacesMap = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
 
+    private val workspaceRequests = WorkspaceRequestFence { getEffectiveActorUid() }
+
     fun isCloudReady(): Boolean = _workspaceInitState.value is WorkspaceInitState.Ready
 
     fun normalizePhoneNumber(phone: String): String = com.example.data.firebase.normalizePhoneNumber(phone)
@@ -668,7 +680,8 @@ class WorkspaceRepository(
             stopWorkspaceListeners()
         }
         activeUid = uid
-        currentUserRole = userProfile.role
+        currentUserRole = null
+        val request = workspaceRequests.begin(uid)
 
         restoreVerifiedMembership(uid)
         val activeProfile = userProfile
@@ -687,6 +700,7 @@ class WorkspaceRepository(
                 if (com.example.data.firebase.FirebaseEnvironment.isStagingWorkspace(cachedWorkspaceId)) cachedWorkspaceId else null
             } else cachedWorkspaceId
             val choices = getAvailableWorkspaces(userProfile)
+            workspaceRequests.check(request)
             val selected = com.example.data.firebase.WorkspaceDiscoveryPolicy.selectedWorkspace(
                 choices.map { it.workspaceId }, selectedWorkspaceId, preferredWs)
             if (selected == null && choices.size > 1) {
@@ -702,11 +716,13 @@ class WorkspaceRepository(
             authoritativeRole = membership.accessRole
             isPreResolvedPartner = !com.example.data.auth.RoleUtils.isOwner(membership.accessRole)
             val workspace = firestoreRepository.bootstrapWorkspaceForUser(activeProfile, membership.workspaceId, membership.accessRole)
+            workspaceRequests.check(request)
             val resolvedWsId = workspace.workspaceId
             _personalWorkspaceId.value = if (!isPreResolvedPartner) resolvedWsId else null
 
             // Discover genuine partner workspaces strictly
             val genuinePartners = getGenuinePartnerWorkspaces(activeProfile, resolvedWsId)
+            workspaceRequests.check(request)
             _genuinePartnerWorkspaces.value = genuinePartners
 
             // ROLE RESOLUTION IS AUTHORITATIVE AND MEMBERSHIP-DRIVEN.
@@ -720,10 +736,12 @@ class WorkspaceRepository(
             val finalRole = firestoreRepository.resolveAuthoritativeRole(uid, targetWsId)
                 ?: throw SecurityException("Verified workspace membership is inactive or missing")
 
+            workspaceRequests.check(request)
             val normalizedFinalRole = com.example.data.auth.RoleUtils.normalizeRole(finalRole)
             val isOwner = normalizedFinalRole == com.example.data.auth.RoleUtils.ROLE_OWNER
             if (normalizedFinalRole.isBlank()) throw SecurityException("Unsupported workspace role")
             val verifiedMembers = firestoreRepository.getWorkspaceMembers(targetWsId)
+            workspaceRequests.check(request)
             _activeWorkspaceMembers.value = verifiedMembers
             cacheVerifiedMembership(uid, targetWsId, verifiedMembers)
             currentUserRole = normalizedFinalRole
@@ -742,6 +760,7 @@ class WorkspaceRepository(
             _activeWorkspaceId.value = resolvedActiveWsId
             loadCachedPercentages(resolvedActiveWsId)
             loadCachedProfitShareAllocations(resolvedActiveWsId)
+            workspaceRequests.check(request)
 
             // Load or initialize cloud settings before enabling writes
             val currentLocal = appSettingsDao.getSettingsForWorkspaceOnce(resolvedActiveWsId)
@@ -759,6 +778,7 @@ class WorkspaceRepository(
             )
 
             // Ensure business name is populated from Owner workspace if missing in settings document
+            workspaceRequests.check(request)
             val effectiveBusinessName = resolvedSettings.businessName.ifBlank {
                 workspace.name.ifBlank {
                     genuinePartners.find { it.workspaceId == resolvedActiveWsId }?.name ?: ""
@@ -807,7 +827,9 @@ class WorkspaceRepository(
                     ?: resolvedSettings.profilePhotoUri,
                 lastSyncTime = System.currentTimeMillis()
             )
+            workspaceRequests.check(request)
             appSettingsDao.insertOrUpdateSettings(mergedSettings)
+            workspaceRequests.check(request)
             _settingsSyncState.value = SettingsSyncState.LoadedFromCloud(mergedSettings)
 
             // Safe migration on first login if personal workspace has no remote records yet
@@ -831,10 +853,12 @@ class WorkspaceRepository(
             Result.success(resolvedActiveWsId)
             }
         } catch (e: Throwable) {
+            workspaceRequests.check(request)
             if (e is kotlinx.coroutines.CancellationException && e !is kotlinx.coroutines.TimeoutCancellationException) throw e
             Log.w(TAG, "Workspace verification unavailable: ${e.message}")
             if (e is SecurityException || (e is com.google.firebase.firestore.FirebaseFirestoreException &&
-                e.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED)) {
+                e.code in setOf(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,
+                    com.google.firebase.firestore.FirebaseFirestoreException.Code.UNAUTHENTICATED))) {
                 context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE).edit().clear().commit()
                 _activeWorkspaceMembers.value = emptyList()
                 _workspaceMembers.value = emptyList()
@@ -1220,6 +1244,10 @@ class WorkspaceRepository(
      * Cleanly detaches all cloud snapshot listeners on logout.
      */
     fun stopWorkspaceListeners() {
+        workspaceRequests.invalidate()
+        _partnerPercentages.value = emptyMap()
+        _profitShareAllocations.value = emptyMap()
+        _profitShareAllocationDetails.value = emptyMap()
         _verifiedWorkspaceContext.value = null
         firestoreRepository.stopRealtimeListeners()
         collaborationIndexListener?.remove()
@@ -1450,11 +1478,8 @@ class WorkspaceRepository(
     }
 
     private fun requireRecordMembersActive(creatorUid: String, targetUid: String = creatorUid) {
-        val members = _activeWorkspaceMembers.value
-        if (creatorUid.isBlank() || targetUid.isBlank()) throw SecurityException("Record identity requires verified migration")
-        if (listOf(creatorUid, targetUid).any { uid -> members.none { it.uid == uid && it.status.equals("active", true) } }) {
-            throw SecurityException("This record belongs to a removed member and is retained read-only. The Owner can review permanent deletion under Account > Deleted Users.")
-        }
+        com.example.data.auth.RecordIdentityPolicy.requireActive(
+            _activeWorkspaceId.value.orEmpty(), creatorUid, targetUid, _activeWorkspaceMembers.value)
     }
 
     private fun requireWorkspaceActor(wsId: String): String {
@@ -1624,8 +1649,14 @@ class WorkspaceRepository(
                     operations.supersedeExpenseDeleteAfterEntryDelete(op.workspaceId, expenseId)
                 }
                 val deletedCollectionIds = deletedSource.optJSONArray("linkedCollectionIds")
-                if (deletedCollectionIds != null) for (index in 0 until deletedCollectionIds.length())
-                    paymentDao.deletePayment(op.workspaceId, deletedCollectionIds.getString(index).toLong())
+                if (deletedCollectionIds != null) for (index in 0 until deletedCollectionIds.length()) {
+                    val collId = deletedCollectionIds.getString(index).toLong()
+                    paymentDao.getPaymentById(op.workspaceId, collId)?.let { coll ->
+                        if (coll.status != "REVERSED") {
+                            paymentDao.insertPayment(coll.copy(status = "REVERSED", reversedByUid = op.actorUid, reversedAt = op.actionTime, isSynced = false))
+                        }
+                    }
+                }
                 val relatedPending = remainingOperations.any { remaining ->
                     com.example.data.sync.OperationDependencies.blocksCustomerAcknowledgement(remaining, customerId)
                 }
@@ -2024,7 +2055,15 @@ class WorkspaceRepository(
                 .map { mapOf("type" to it.entityType, "id" to it.entityId) }
             jobEntryDao.deleteJob(stored)
             expenses.forEach { expenseDao.deleteExpense(it) }
-            collectionDeletes.forEach { paymentDao.deletePayment(it) }
+            collectionDeletes.forEach { payment ->
+                val reversed = payment.copy(
+                    status = "REVERSED",
+                    reversedByUid = actorUid,
+                    reversedAt = operationTime,
+                    isSynced = false
+                )
+                paymentDao.insertPayment(reversed)
+            }
             operations.invalidateRejectedEntryDelete(wsId, actorUid, stored.id)
             enqueue("JOB", stored.id, payload, "DELETE", expectedActorUid = operationActorUid, actionTime = operationTime)
             recalculateCustomerStats(stored.customerId, wsId, clearDeletedSourceBalance = true)
@@ -2075,15 +2114,16 @@ class WorkspaceRepository(
         // Requirement 2: PARTNER EXPENSE OWNERSHIP
         // When logged in as a Partner, the Partner must not be able to create an Expense on behalf of another Partner.
         // Partner expense creation must be for the current Partner only.
+        val isBusinessPaid = expense.paidBy.equals("Business Paid", ignoreCase = true)
         val finalExpense = if (!isOwner) {
             expense.copy(
                 id = safeExpId,
                 workspaceId = wsId,
                 operatorName = currentActorName,
                 addedByPartner = currentActorName,
-                paidBy = expense.paidBy,
-                paidByPartner = if (expense.paidBy == "I Paid") currentActorName else "",
-                paidByUid = if (expense.paidBy == "I Paid") actorUid else "",
+                paidBy = if (isBusinessPaid) "Business Paid" else "I Paid",
+                paidByPartner = if (!isBusinessPaid) currentActorName else "",
+                paidByUid = if (!isBusinessPaid) actorUid else "",
                 createdByUid = actorUid,
                 createdByRole = actorRole,
                 isSynced = false
@@ -2094,6 +2134,9 @@ class WorkspaceRepository(
             expense.copy(
                 id = safeExpId,
                 workspaceId = wsId,
+                paidBy = if (isBusinessPaid) "Business Paid" else "I Paid",
+                paidByPartner = if (!isBusinessPaid) expense.paidByPartner else "",
+                paidByUid = if (!isBusinessPaid) expense.paidByUid else "",
                 createdByUid = finalCreatedByUid,
                 createdByRole = finalCreatedByRole,
                 isSynced = false
@@ -2139,8 +2182,12 @@ class WorkspaceRepository(
             throw SecurityException("Unauthorized to edit expense ${expense.id}")
         }
 
+        val isUpdateBusinessPaid = expense.paidBy.equals("Business Paid", ignoreCase = true)
         val updated = expense.copy(
             workspaceId = wsId,
+            paidBy = if (isUpdateBusinessPaid) "Business Paid" else "I Paid",
+            paidByPartner = if (!isUpdateBusinessPaid) expense.paidByPartner else "",
+            paidByUid = if (!isUpdateBusinessPaid) expense.paidByUid else "",
             expenseForUid = expenseToCheck.expenseForUid,
             financialAttributionUid = expenseToCheck.financialAttributionUid,
             createdAt = original?.createdAt ?: expense.createdAt,
@@ -2869,18 +2916,20 @@ class WorkspaceRepository(
     }
 
     suspend fun switchActiveWorkspace(targetWorkspaceId: String, userProfile: UserProfile): Result<String> {
-        if (com.example.BuildConfig.PHYSICAL_TEST && !com.example.data.firebase.FirebaseEnvironment.isStagingWorkspace(targetWorkspaceId))
-            return Result.failure(SecurityException("Physical test can use only the staging workspace"))
+        if (!com.example.data.firebase.FirebaseEnvironment.permitsWorkspaceDiscovery(targetWorkspaceId, com.example.BuildConfig.PHYSICAL_TEST))
+            return Result.failure(SecurityException(if (com.example.BuildConfig.PHYSICAL_TEST) "Physical test can use only authorized staging workspaces" else "Target workspace is not permitted in this build"))
         val uid = userProfile.uid
         if (targetWorkspaceId.isBlank()) {
             return Result.failure(IllegalArgumentException("Target workspace ID cannot be blank"))
         }
 
+        val request = workspaceRequests.begin(uid)
         return try {
             if (getEffectiveActorUid() != uid) throw SecurityException("Authenticated identity mismatch")
             val normalizedTargetRole = firestoreRepository.resolveAuthoritativeRole(uid, targetWorkspaceId)
                 ?: throw SecurityException("Target workspace membership is inactive or missing")
             val targetMembers = firestoreRepository.getWorkspaceMembers(targetWorkspaceId)
+            workspaceRequests.check(request)
             _workspaceInitState.value = WorkspaceInitState.Loading
             _settingsSyncState.value = SettingsSyncState.Loading
 
@@ -2888,6 +2937,7 @@ class WorkspaceRepository(
             val localSettings = appSettingsDao.getSettingsForWorkspaceOnce(targetWorkspaceId)
                 ?: AppSettingsEntity(workspaceId = targetWorkspaceId)
             val resolvedSettings = firestoreRepository.fetchOrCreateWorkspaceSettings(targetWorkspaceId, uid, localSettings)
+            workspaceRequests.check(request)
 
             val savedLang = getSavedUserLanguage(uid) ?: localSettings.language
             val personalWsId = _personalWorkspaceId.value
@@ -2911,9 +2961,12 @@ class WorkspaceRepository(
                     ?: resolvedSettings.profilePhotoUri,
                 lastSyncTime = System.currentTimeMillis()
             )
+            workspaceRequests.check(request)
             appSettingsDao.insertOrUpdateSettings(mergedSettings)
+            workspaceRequests.check(request)
             loadCachedPercentages(targetWorkspaceId)
             loadCachedProfitShareAllocations(targetWorkspaceId)
+            workspaceRequests.check(request)
             _settingsSyncState.value = SettingsSyncState.LoadedFromCloud(mergedSettings)
 
             // Switch active workspace ID
@@ -2946,7 +2999,9 @@ class WorkspaceRepository(
             }
 
             Result.success(targetWorkspaceId)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
         } catch (e: Exception) {
+            workspaceRequests.check(request)
             Log.e(TAG, "Failed to switch active workspace: ${e.message}", e)
             _workspaceInitState.value = WorkspaceInitState.Error(e)
             _settingsSyncState.value = SettingsSyncState.Error(e.message ?: "Failed to switch workspace")
@@ -3164,13 +3219,20 @@ class WorkspaceRepository(
         val memberships = firestoreRepository.discoverAuthoritativeMemberships(uid, _activeWorkspaceId.value)
         val available = mutableListOf<Workspace>()
         for (membership in memberships) {
-            if (com.example.BuildConfig.PHYSICAL_TEST && membership.workspaceId != com.example.data.firebase.FirebaseEnvironment.STAGING_WORKSPACE) continue
+            if (!com.example.data.firebase.FirebaseEnvironment.permitsWorkspaceDiscovery(membership.workspaceId, com.example.BuildConfig.PHYSICAL_TEST)) continue
             if (uid != getEffectiveActorUid()) throw SecurityException("Session changed during workspace discovery")
-            firestoreRepository.getWorkspaceDetails(membership.workspaceId)?.let { available.add(it.copy(workspaceId = membership.workspaceId, accessRole = membership.role)) }
+            val ws = firestoreRepository.getWorkspaceDetails(membership.workspaceId)
+                ?.copy(workspaceId = membership.workspaceId, accessRole = membership.role)
+                ?: Workspace(workspaceId = membership.workspaceId, name = membership.workspaceId, accessRole = membership.role)
+            available.add(ws)
         }
         if (uid != getEffectiveActorUid()) throw SecurityException("Session changed during workspace discovery")
-        _genuinePartnerWorkspaces.value = available
-        return available
+        val deduplicated = available
+            .distinctBy { it.workspaceId }
+            .sortedWith(compareBy({ it.name.ifBlank { it.workspaceId } }, { it.workspaceId }))
+        _availableWorkspaces.value = deduplicated
+        _genuinePartnerWorkspaces.value = deduplicated
+        return deduplicated
     }
 
     suspend fun getWorkspaceMembers(workspaceId: String? = null): List<WorkspaceMember> {
@@ -3287,6 +3349,7 @@ class WorkspaceRepository(
             var count = 0
             var failed = operations.rejectedCount(wsId, uid) > 0
             var authenticationMessage: String? = null
+            var backendMessage: String? = null
             var blockingMessage: String? = null
             // Recovery failures remain durable and retry separately from permanently rejected mutations.
             for (rejected in operations.outstandingOperations(wsId).filter { it.actorUid == uid && it.state == "REJECTED" &&
@@ -3348,8 +3411,19 @@ class WorkspaceRepository(
                     } catch (e: kotlinx.coroutines.CancellationException) { throw e
                     } catch (e: Exception) {
                         if (e is com.example.data.firebase.WorkspaceAuthenticationRequiredException || e is com.example.data.firebase.WorkspaceSessionChangedException) authenticationMessage = e.message
+                        if (e is com.example.data.firebase.WorkspaceBackendUnavailableException) backendMessage = e.message
                         val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code
-                        val permanent = e is SecurityException || e is IllegalArgumentException || e is org.json.JSONException || code in setOf(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED, com.google.firebase.firestore.FirebaseFirestoreException.Code.INVALID_ARGUMENT, com.google.firebase.firestore.FirebaseFirestoreException.Code.FAILED_PRECONDITION, com.google.firebase.firestore.FirebaseFirestoreException.Code.NOT_FOUND)
+                        val permanent = e is SecurityException ||
+                            e is IllegalArgumentException ||
+                            e is org.json.JSONException ||
+                            e is com.example.data.firebase.WorkspaceBackendUnavailableException ||
+                            op.attempts >= 3 ||
+                            code in setOf(
+                                com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,
+                                com.google.firebase.firestore.FirebaseFirestoreException.Code.INVALID_ARGUMENT,
+                                com.google.firebase.firestore.FirebaseFirestoreException.Code.FAILED_PRECONDITION,
+                                com.google.firebase.firestore.FirebaseFirestoreException.Code.NOT_FOUND
+                            )
                         operations.failed(op.operationId, if (permanent) "REJECTED" else "PENDING", e.message ?: "Sync failed")
                         if (permanent && op.entityType in setOf("JOB", "CUSTOMER", "EXPENSE", "WITHDRAWAL", "PAYMENT") && e !is com.example.data.firebase.WorkspaceUpgradeRequiredException) {
                             var recovered = false
@@ -3367,7 +3441,7 @@ class WorkspaceRepository(
                 }
                 kotlinx.coroutines.yield()
             }
-            SyncResult(!failed, count, if (failed) authenticationMessage ?: blockingMessage ?: "An action could not sync; check pending actions" else "Synced $count actions")
+            SyncResult(!failed, count, if (failed) authenticationMessage ?: backendMessage ?: blockingMessage ?: "An action could not sync; check pending actions" else "Synced $count actions")
         } }
     }
 

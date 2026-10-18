@@ -660,7 +660,7 @@ internal fun authorizedCollectionSource(
     val scopedPayments = payments.filter {
         inWorkspace(it.workspaceId)
     }
-    if (payments.isNotEmpty()) {
+    if (scopedPayments.isNotEmpty()) {
         return AuthorizedCollectionSource(scopedPayments, emptyList())
     }
 
@@ -733,7 +733,6 @@ private fun CollectionHistoryCard(
                     if (payment.recordedByUid.isNotBlank() && payment.recordedByUid != payment.collectorUid)
                         Text("${if (isTamil) "பதிவு செய்தவர்" else "Recorded by"}: ${payment.recordedByName}")
                     if (payment.originalAmount != payment.amount) Text("Allocated to this job: ${formatInr(payment.amount, settings.currency)}")
-                    if (payment.jobEntryId > 0) Text("${if (isTamil) "வேலை பதிவு" else "Entry"}: ${payment.jobEntryId}")
                     if (payment.status == "REVERSED") {
                         if (payment.reversedAt > 0) Text("${if (isTamil) "திரும்பப் பெற்ற தேதி" else "Reversed"}: ${dateFormat.format(Date(payment.reversedAt))}")
                         if (payment.reversedByUid.isNotBlank()) Text("${if (isTamil) "திரும்பப் பெற்றவர்" else "Reversed by"}: ${payment.reversedByUid}")
@@ -951,7 +950,7 @@ private fun CollectionJobCard(
         colors = CardDefaults.cardColors(containerColor = SageCardBg),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Compact Header Row: Customer Name & Job ID + Expand/Collapse Control
+            // Compact Header Row: Customer Name & Work Type + Expand/Collapse Control
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -969,8 +968,9 @@ private fun CollectionJobCard(
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                     Text(
-                        text = group.jobId?.let { "${if (isTamil) "வேலை" else "Job"} #$it" }
-                            ?: if (isTamil) "இணைக்கப்படாத வசூல்" else "Unlinked collection",
+                        text = if (group.jobId != null) job?.workType?.takeIf { it.isNotBlank() }
+                            ?: if (isTamil) "வேலை" else "Job"
+                            else if (isTamil) "இணைக்கப்படாத வசூல்" else "Unlinked collection",
                         fontSize = 12.sp,
                         color = TextSecondaryDark
                     )

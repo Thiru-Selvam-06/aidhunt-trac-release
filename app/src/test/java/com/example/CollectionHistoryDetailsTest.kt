@@ -69,7 +69,7 @@ class CollectionHistoryDetailsTest {
         compose.onNodeWithTag("collection_history_card_11").performScrollTo().performClick()
         compose.onNodeWithText("Collection Details").assertExists()
         compose.onNodeWithText("Status: REVERSED").assertExists()
-        compose.onNodeWithText("Entry: 42").assertExists()
+        compose.onNodeWithText("Entry: 42").assertDoesNotExist()
         compose.onNodeWithText("Reversed by: owner").assertExists()
     }
 }

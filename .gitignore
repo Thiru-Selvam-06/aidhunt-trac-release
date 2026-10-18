@@ -33,3 +33,34 @@ trac-release-key.jks
 /release.jks
 **/hs_err_pid*.log
 **/replay_pid*.log
+
+/app/src/physicalTest/
+**/.cloudflare/
+**/.wrangler/
+
+# Local credentials and private runtime evidence remain on this machine.
+/debug.keystore.base64
+/google-services.json
+/app/google-services.json
+/app/src/physicalTest/google-services.json
+/docs/test-artifacts/
+/scripts/__pycache__/
+/qodex/
+
+# Local test variants and production configurations
+
+# Cloudflare / Wrangler local build caches
+
+# External tooling repository
+
+# Local test artifacts, snapshots, and PMS workspace audit evidence
+/docs/security/
+docs/stabilization-access-evidence-*.json
+docs/entry-attribution-proposal-*.md
+docs/pms-*.md
+docs/regression/*.json
+docs/regression/*.log
+docs/regression/*.txt
+docs/stabilization-*.log
+docs/stabilization-*.txt
+*.pyc

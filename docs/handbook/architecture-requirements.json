@@ -1,0 +1,1405 @@
+{
+  "requirements": [
+    {
+      "id": "I-01",
+      "requirement": "One immutable Firebase UID per person, independent of viewer.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "I-02",
+      "requirement": "Role is (memberUid,workspaceId), not global.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "I-03",
+      "requirement": "Exactly OWNER/PARTNER/OPERATOR; no CO-OWNER.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "I-04",
+      "requirement": "Membership authorizes Partner/Operator; root ownerUid identifies Owner.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "I-05",
+      "requirement": "Every business record stays in one authorized workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "I-06",
+      "requirement": "Viewer never rewrites stored membership role assignments.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "I-07",
+      "requirement": "Viewing never grants edit/delete/reverse authority.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "I-08",
+      "requirement": "Creator/beneficiary/collector/financial attribution stay distinct.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "I-09",
+      "requirement": "Original createdAt controls 24h; updatedAt never extends it.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "I-10",
+      "requirement": "UI hiding is not security; Rules reject forged requests.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "I-11",
+      "requirement": "Queue retains original workspace/actor; never re-homes.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "I-12",
+      "requirement": "Financial engine uses only authorized workspace data.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-01",
+      "requirement": "Fresh phone/OTP sign-in requires connectivity; no bypass.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-02",
+      "requirement": "Fresh independent UID creates own workspace and becomes its one OWNER.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-03",
+      "requirement": "Existing invitee joins without changing other workspaces.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-04",
+      "requirement": "Brand-new invitee can later create their own Owner workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-05",
+      "requirement": "Closing/reopening app preserves real Firebase authenticated session.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-06",
+      "requirement": "Device reboot does not unnecessarily require OTP.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-07",
+      "requirement": "Network loss alone never logs authenticated user out.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-08",
+      "requirement": "Explicit logout signs Firebase out and returns to login.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-09",
+      "requirement": "Genuine invalid/revoked/signed-out session handled honestly; cache is not Auth.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-10",
+      "requirement": "Restore verified workspace/role only for matching authenticated UID.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-11",
+      "requirement": "Missing identity/role/workspace never invents OWNER or workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "A-12",
+      "requirement": "Fence delayed auth/profile callbacks after logout/account switch.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "B-01",
+      "requirement": "Owner one target-phone OTP; shared code is consent.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "B-02",
+      "requirement": "Trusted phone proof binds immutable target UID.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "B-03",
+      "requirement": "Requested invitation role restricted to Partner/Operator.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "B-04",
+      "requirement": "Normal OTP expires after 5 minutes.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "B-05",
+      "requirement": "Normal OTP single-use across repeated redemption.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "B-06",
+      "requirement": "Current test-number OTP flow has no expiry.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "B-07",
+      "requirement": "Secondary Auth verification preserves Owner session.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "B-08",
+      "requirement": "Exactly one Owner; no Partner\u2194Operator changes.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "B-09",
+      "requirement": "No suspend/reactivate/ownership-transfer ability.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "B-10",
+      "requirement": "Partner/Operator cannot manage members; Partner can view permitted membership data.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-OWNER-1",
+      "requirement": "ENTRY: OWNER \u2014 view all ordinary.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-OWNER-2",
+      "requirement": "ENTRY: OWNER \u2014 create self/eligible member.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-OWNER-3",
+      "requirement": "ENTRY: OWNER \u2014 edit any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-OWNER-4",
+      "requirement": "ENTRY: OWNER \u2014 delete any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-PARTNER-1",
+      "requirement": "ENTRY: PARTNER \u2014 view all ordinary.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-PARTNER-2",
+      "requirement": "ENTRY: PARTNER \u2014 create self only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-PARTNER-3",
+      "requirement": "ENTRY: PARTNER \u2014 edit own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-PARTNER-4",
+      "requirement": "ENTRY: PARTNER \u2014 delete own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-OPERATOR-1",
+      "requirement": "ENTRY: OPERATOR \u2014 view all ordinary.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-OPERATOR-2",
+      "requirement": "ENTRY: OPERATOR \u2014 create self only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-OPERATOR-3",
+      "requirement": "ENTRY: OPERATOR \u2014 edit own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-ENTRY-OPERATOR-4",
+      "requirement": "ENTRY: OPERATOR \u2014 delete own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-OWNER-1",
+      "requirement": "HISTORICAL: OWNER \u2014 view.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-OWNER-2",
+      "requirement": "HISTORICAL: OWNER \u2014 create dedicated workflow.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-OWNER-3",
+      "requirement": "HISTORICAL: OWNER \u2014 edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-OWNER-4",
+      "requirement": "HISTORICAL: OWNER \u2014 delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-PARTNER-1",
+      "requirement": "HISTORICAL: PARTNER \u2014 view through Business Overview only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-PARTNER-2",
+      "requirement": "HISTORICAL: PARTNER \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-PARTNER-3",
+      "requirement": "HISTORICAL: PARTNER \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-PARTNER-4",
+      "requirement": "HISTORICAL: PARTNER \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-OPERATOR-1",
+      "requirement": "HISTORICAL: OPERATOR \u2014 deny read.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-OPERATOR-2",
+      "requirement": "HISTORICAL: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-OPERATOR-3",
+      "requirement": "HISTORICAL: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-HISTORICAL-OPERATOR-4",
+      "requirement": "HISTORICAL: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-OWNER-1",
+      "requirement": "EXPENSE: OWNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-OWNER-2",
+      "requirement": "EXPENSE: OWNER \u2014 create self/eligible target.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-OWNER-3",
+      "requirement": "EXPENSE: OWNER \u2014 edit any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-OWNER-4",
+      "requirement": "EXPENSE: OWNER \u2014 delete any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-PARTNER-1",
+      "requirement": "EXPENSE: PARTNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-PARTNER-2",
+      "requirement": "EXPENSE: PARTNER \u2014 create self only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-PARTNER-3",
+      "requirement": "EXPENSE: PARTNER \u2014 edit own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-PARTNER-4",
+      "requirement": "EXPENSE: PARTNER \u2014 delete own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-OPERATOR-1",
+      "requirement": "EXPENSE: OPERATOR \u2014 deny read.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-OPERATOR-2",
+      "requirement": "EXPENSE: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-OPERATOR-3",
+      "requirement": "EXPENSE: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXPENSE-OPERATOR-4",
+      "requirement": "EXPENSE: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OWNER-1",
+      "requirement": "WITHDRAWAL: OWNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OWNER-2",
+      "requirement": "WITHDRAWAL: OWNER \u2014 create self/eligible Partner.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OWNER-3",
+      "requirement": "WITHDRAWAL: OWNER \u2014 deny ordinary edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OWNER-4",
+      "requirement": "WITHDRAWAL: OWNER \u2014 delete any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-PARTNER-1",
+      "requirement": "WITHDRAWAL: PARTNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-PARTNER-2",
+      "requirement": "WITHDRAWAL: PARTNER \u2014 create self only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-PARTNER-3",
+      "requirement": "WITHDRAWAL: PARTNER \u2014 deny ordinary edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-PARTNER-4",
+      "requirement": "WITHDRAWAL: PARTNER \u2014 delete own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OPERATOR-1",
+      "requirement": "WITHDRAWAL: OPERATOR \u2014 deny read.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OPERATOR-2",
+      "requirement": "WITHDRAWAL: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OPERATOR-3",
+      "requirement": "WITHDRAWAL: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OPERATOR-4",
+      "requirement": "WITHDRAWAL: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-OWNER-1",
+      "requirement": "COLLECTION: OWNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-OWNER-2",
+      "requirement": "COLLECTION: OWNER \u2014 collect for self against permitted due.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-OWNER-3",
+      "requirement": "COLLECTION: OWNER \u2014 reverse any retaining history.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-OWNER-4",
+      "requirement": "COLLECTION: OWNER \u2014 deny normal physical deletion.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-PARTNER-1",
+      "requirement": "COLLECTION: PARTNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-PARTNER-2",
+      "requirement": "COLLECTION: PARTNER \u2014 collect for self including Owner-created due.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-PARTNER-3",
+      "requirement": "COLLECTION: PARTNER \u2014 reverse own <24h retaining history.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-PARTNER-4",
+      "requirement": "COLLECTION: PARTNER \u2014 deny normal physical deletion.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-OPERATOR-1",
+      "requirement": "COLLECTION: OPERATOR \u2014 deny read.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-OPERATOR-2",
+      "requirement": "COLLECTION: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-OPERATOR-3",
+      "requirement": "COLLECTION: OPERATOR \u2014 deny reversal.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-COLLECTION-OPERATOR-4",
+      "requirement": "COLLECTION: OPERATOR \u2014 deny physical deletion.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-OWNER-1",
+      "requirement": "CUSTOMER: OWNER \u2014 view.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-OWNER-2",
+      "requirement": "CUSTOMER: OWNER \u2014 create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-OWNER-3",
+      "requirement": "CUSTOMER: OWNER \u2014 edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-OWNER-4",
+      "requirement": "CUSTOMER: OWNER \u2014 delete with dependency protection.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-PARTNER-1",
+      "requirement": "CUSTOMER: PARTNER \u2014 view.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-PARTNER-2",
+      "requirement": "CUSTOMER: PARTNER \u2014 create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-PARTNER-3",
+      "requirement": "CUSTOMER: PARTNER \u2014 edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-PARTNER-4",
+      "requirement": "CUSTOMER: PARTNER \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-OPERATOR-1",
+      "requirement": "CUSTOMER: OPERATOR \u2014 deny read.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-OPERATOR-2",
+      "requirement": "CUSTOMER: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-OPERATOR-3",
+      "requirement": "CUSTOMER: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-CUSTOMER-OPERATOR-4",
+      "requirement": "CUSTOMER: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-OWNER-1",
+      "requirement": "TRACTOR: OWNER \u2014 view/use.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-OWNER-2",
+      "requirement": "TRACTOR: OWNER \u2014 create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-OWNER-3",
+      "requirement": "TRACTOR: OWNER \u2014 edit any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-OWNER-4",
+      "requirement": "TRACTOR: OWNER \u2014 delete any with references protected.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-PARTNER-1",
+      "requirement": "TRACTOR: PARTNER \u2014 view/use shared.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-PARTNER-2",
+      "requirement": "TRACTOR: PARTNER \u2014 create own.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-PARTNER-3",
+      "requirement": "TRACTOR: PARTNER \u2014 edit own anytime.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-PARTNER-4",
+      "requirement": "TRACTOR: PARTNER \u2014 delete own anytime.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-OPERATOR-1",
+      "requirement": "TRACTOR: OPERATOR \u2014 view/use shared.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-OPERATOR-2",
+      "requirement": "TRACTOR: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-OPERATOR-3",
+      "requirement": "TRACTOR: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-TRACTOR-OPERATOR-4",
+      "requirement": "TRACTOR: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-OWNER-1",
+      "requirement": "EXTENSION: OWNER \u2014 view/use.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-OWNER-2",
+      "requirement": "EXTENSION: OWNER \u2014 create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-OWNER-3",
+      "requirement": "EXTENSION: OWNER \u2014 edit any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-OWNER-4",
+      "requirement": "EXTENSION: OWNER \u2014 delete any with references protected.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-PARTNER-1",
+      "requirement": "EXTENSION: PARTNER \u2014 view/use shared.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-PARTNER-2",
+      "requirement": "EXTENSION: PARTNER \u2014 create own.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-PARTNER-3",
+      "requirement": "EXTENSION: PARTNER \u2014 edit own anytime.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-PARTNER-4",
+      "requirement": "EXTENSION: PARTNER \u2014 delete own anytime.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-OPERATOR-1",
+      "requirement": "EXTENSION: OPERATOR \u2014 view/use shared.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-OPERATOR-2",
+      "requirement": "EXTENSION: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-OPERATOR-3",
+      "requirement": "EXTENSION: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "RB-EXTENSION-OPERATOR-4",
+      "requirement": "EXTENSION: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "F-01",
+      "requirement": "Dedicated Historical Entry marker/workflow; ordinary age never reclassifies it.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "F-02",
+      "requirement": "Owner Entry for Partner + I Paid attributes investment to Partner.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "F-03",
+      "requirement": "Expense attribution follows target participant separately from creator.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "F-04",
+      "requirement": "Split collections share original customer and Job/credit identity.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "F-05",
+      "requirement": "Owner 20k stays unchanged when Partner reverses 30k; due restored 30k.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "F-06",
+      "requirement": "Reversal keeps status=REVERSED history; no physical deletion.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "F-07",
+      "requirement": "Delete Due hard-deletes source Entry subject to collection/reference reconciliation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "F-08",
+      "requirement": "Authorized normal entity delete retains queued tombstone until acknowledged physical deletion.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "F-09",
+      "requirement": "Shared Customers/historical asset references protected on delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "F-10",
+      "requirement": "Unmapped legacy beneficiary never guessed; totals preserved for migration.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "F-11",
+      "requirement": "Pending/synced/deleted/reversed records produce consistent financial summaries.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-01",
+      "requirement": "Owner-only Stage1 removal immediately revokes workspace access.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-02",
+      "requirement": "Stage1 archives in Owner-only Deleted Users, keeps business data.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-03",
+      "requirement": "Retained records greyed/read-only with original attribution.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-04",
+      "requirement": "Retained dues remain collectible by Owner/Partner.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-05",
+      "requirement": "No new record attribution to removed UID.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-06",
+      "requirement": "Stage2 later explicit permanent-delete confirmation from Deleted Users.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-07",
+      "requirement": "Purge creator OR beneficiary/target UID in current workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-08",
+      "requirement": "Include member-created assets and linked collection/source dependencies.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-09",
+      "requirement": "Reconcile dues/collection effects before physical purge.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-10",
+      "requirement": "Protect shared Customers referenced by retained records.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-11",
+      "requirement": "Protect historical asset snapshots/references for survivors.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-12",
+      "requirement": "Never delete global Firebase Auth UID or affect other workspaces.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-13",
+      "requirement": "Invalidate actor/entity pending operations to prevent resurrection.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-14",
+      "requirement": "Keep PURGE_PENDING until both cloud and local cleanup complete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-15",
+      "requirement": "Idempotent recovery under retry/partial failure/concurrent collection.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "D-16",
+      "requirement": "Verify actual data restorable backup before destructive migration/purge testing.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-01",
+      "requirement": "Cached role authorization before every local mutation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-02",
+      "requirement": "Room business mutation and queue insert atomic.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-03",
+      "requirement": "Stable operationId survives retry/process recreation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-04",
+      "requirement": "Command retains originating workspace/actor.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-05",
+      "requirement": "Persist type/entity/order/actionTime/dependency references.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-06",
+      "requirement": "Before-deadline offline action syncs later; after deadline denies.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-07",
+      "requirement": "Accepted practical local clock; no attestation added.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-08",
+      "requirement": "Local hard delete retains durable command until cloud ack.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-09",
+      "requirement": "Bounded sync around 10\u201320 commands.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-10",
+      "requirement": "Prerequisites/dependencies ordered across retries.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-11",
+      "requirement": "Individual cloud acknowledgement precedes synced mark.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-12",
+      "requirement": "Transient failures pending with bounded backoff.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-13",
+      "requirement": "Permanent rejection visible, never shown synced.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-14",
+      "requirement": "Continue independent work after unrelated rejection.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-15",
+      "requirement": "Process genuinely PENDING, not REJECTED commands.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-16",
+      "requirement": "Stable retries never duplicate financial effects.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-17",
+      "requirement": "Account/workspace changes during batch cannot leak/reassign.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-18",
+      "requirement": "Responsive background sync survives process death.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-19",
+      "requirement": "Measure hundreds-of-commands memory/locks/convergence.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-20",
+      "requirement": "Role-permitted workflows after authenticated offline cold start.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-21",
+      "requirement": "Pending/recoverable errors visible in existing UI.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "O-22",
+      "requirement": "Pending local results immediate; other devices only after sync.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "W-01",
+      "requirement": "Composite (workspaceId,id) keys isolate same-numbered records.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "W-02",
+      "requirement": "Every local query/search/filter uses authorized active workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "W-03",
+      "requirement": "Firestore queries/listeners/references bind explicit workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "W-04",
+      "requirement": "Stale callbacks cannot expose old account/workspace data.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "W-05",
+      "requirement": "Reports/calculations/PDF never combine workspaces.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "W-06",
+      "requirement": "Bidirectional forged cross-workspace requests/references deny.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "UI-X-01",
+      "requirement": "Operator PDF export denied from every surface.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "UI-X-02",
+      "requirement": "Owner/Partner PDF contains only authorized workspace data.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "UI-X-03",
+      "requirement": "Partner Expense For selector hidden; target self.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "UI-X-04",
+      "requirement": "Partner Withdrawal member dropdown hidden; self target.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "UI-X-05",
+      "requirement": "Edit/delete/reverse controls mirror UID/time policy.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "UI-X-06",
+      "requirement": "Operator asset controls view/use only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "UI-X-07",
+      "requirement": "Business name/settings Owner-only mutation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "UI-X-08",
+      "requirement": "Existing theme/spacing/typography/navigation preserved.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "UI-X-09",
+      "requirement": "Deleted Users confirmation follows existing visual conventions.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "S-01",
+      "requirement": "No subscription/account-validity gate.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "S-02",
+      "requirement": "No plan-expiry/member-count restriction.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "S-03",
+      "requirement": "No workspace/invitation/record-creation quota.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "S-04",
+      "requirement": "No personal-plan fallback/FREE downgrade.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "S-05",
+      "requirement": "Future subscription schema has no current access effect.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-01",
+      "requirement": "Authenticated UID required.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-02",
+      "requirement": "Exact workspace membership required.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-03",
+      "requirement": "ACTIVE status required.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-04",
+      "requirement": "Only recognized workspace role grants access.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-05",
+      "requirement": "Collection-specific role permission required.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-06",
+      "requirement": "Record workspace matches path.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-07",
+      "requirement": "Creator ownership enforced.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-08",
+      "requirement": "Original creation/action window enforced.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-09",
+      "requirement": "Target/collector attribution enforced.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-10",
+      "requirement": "Identity/workspace/createdAt immutable.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-11",
+      "requirement": "Unmatched paths default deny.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "SEC-12",
+      "requirement": "Legacy collaborationGroups/alternate path denied.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-01",
+      "requirement": "Partner cannot edit Owner Entry",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-02",
+      "requirement": "Partner own Entry after24h denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-03",
+      "requirement": "Operator own Entry delete <24h allows",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-04",
+      "requirement": "Partner withdrawal for other denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-05",
+      "requirement": "Partner withdrawal target dropdown absent",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-06",
+      "requirement": "Partner edit other Expense denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-07",
+      "requirement": "Partner delete other Tractor denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-08",
+      "requirement": "Partner reverse Owner collection denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-09",
+      "requirement": "Owner Entry for Partner + I Paid attribution",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-10",
+      "requirement": "Same UID workspace A/B isolated",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-11",
+      "requirement": "Phone/name impersonation denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-12",
+      "requirement": "Plan/expiry/quota must not block",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-13",
+      "requirement": "A records from B context deny",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-14",
+      "requirement": "Stage1 archive/read-only/collectible dues",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-15",
+      "requirement": "Purge creator OR target current-workspace only",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "T-16",
+      "requirement": "Queued action cannot resurrect purged entity",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "J-01",
+      "requirement": "Preserve release database through correct data-preserving migrations.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "J-02",
+      "requirement": "Inspect actual Firebase data and verify restorable export before destructive migration/purge.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "J-03",
+      "requirement": "Incremental legacy mapping never guesses UID/history/time or loses financial totals.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "J-04",
+      "requirement": "Preserve existing release Android CI build/lint/unit/Robolectric/artifacts/scorecard.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "J-05",
+      "requirement": "Every role/operation positive+negative creator/workspace/24h/immutable tests before exit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    },
+    {
+      "id": "J-06",
+      "requirement": "Signing/config material reviewed without exposing values or accidental publication.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions",
+      "source": "Historical architecture extraction; consult preserved original DOCX and amendments"
+    }
+  ],
+  "count": 233,
+  "sourceSha256": "39fcc8ab02b1e0f37ab62db77cb28e32cd9e6fafe9d61fb570c77ff17360f9f4",
+  "completionPercentage": null
+}

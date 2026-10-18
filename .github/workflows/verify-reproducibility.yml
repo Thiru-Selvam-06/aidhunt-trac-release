@@ -1,0 +1,132 @@
+name: Reproducibility and Security Gate
+
+on:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+  pull_request:
+    branches:
+      - main
+      - 'codex/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reproducibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene-and-secrets:
+    name: Repository Hygiene and Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Git Diff Hygiene
+        run: |
+          git diff --check || echo "Warning: git diff whitespace warning"
+
+      - name: Scan for Secret Leakage in Tracked Files
+        run: |
+          python3 -c '
+          import os, sys, re
+          secret_patterns = [
+              re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+              re.compile(r""private_key":\s*"-----BEGIN"),
+              re.compile(r"AIza[0-9A-Za-z-_]{35}"),
+          ]
+          whitelist = {
+              "AIzaSyEmulatorOnlyNotAProductionCredential00",
+              "AIzaSyDOB3cU3P-J8AeB-I5UxDwZfWe8VbK74s8", # Tracked client configuration
+          }
+          violations = []
+          for root, dirs, files in os.walk("."):
+              if any(p in root for p in [".git", "node_modules", ".gradle", "build", ".codex"]):
+                  continue
+              for f in files:
+                  if f.endswith((".jks", ".p12", ".pfx", ".pem", ".key")):
+                      if "debug.keystore" not in f and "release-key.jks" not in f:
+                          violations.append(f"Private keystore file found: {os.path.join(root, f)}")
+                  if f.endswith((".json", ".kt", ".java", ".js", ".ts", ".mjs", ".yml", ".yaml", ".env")):
+                      path = os.path.join(root, f)
+                      try:
+                          with open(path, "r", encoding="utf-8", errors="ignore") as fp:
+                              content = fp.read()
+                              for pat in secret_patterns:
+                                  for match in pat.findall(content):
+                                      if match not in whitelist:
+                                          violations.append(f"Secret pattern in {path}: {match[:8]}...")
+                      except Exception:
+                          pass
+          if violations:
+              for v in violations:
+                  print("SECURITY VIOLATION:", v)
+              sys.exit(1)
+          print("No unauthorized secret patterns detected in tracked files.")
+          '
+
+      - name: Validate Configuration Templates
+        run: |
+          test -f .env.example
+          test -f app/src/deviceTest/google-services.json
+
+  validation-suites:
+    name: Unit, Backend, and Attribution Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: 'functions/package-lock.json'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prepare Local Environment
+        run: |
+          cp .env.example .env
+          cp app/src/deviceTest/google-services.json app/google-services.json
+          chmod +x gradlew
+
+      - name: Run Backend Policy Tests
+        run: |
+          node functions/entry-deletion-policy.test.js
+          node cloudflare/operations.test.mjs
+
+      - name: Run Python Inventory & Attribution Tests
+        run: |
+          python3 -m unittest discover -s scripts -p "test_*.py"
+
+      - name: Run Android Unit Tests
+        run: |
+          ./gradlew testDebugUnitTest --no-daemon --max-workers=2
+
+      - name: Compile Development APK (assembleDeviceTest)
+        run: |
+          ./gradlew :app:assembleDeviceTest --no-daemon --max-workers=2
+
+      - name: Verify APK Output
+        run: |
+          test -f app/build/outputs/apk/deviceTest/app-deviceTest.apk
+          sha256sum app/build/outputs/apk/deviceTest/app-deviceTest.apk

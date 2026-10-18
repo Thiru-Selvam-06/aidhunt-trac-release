@@ -321,10 +321,11 @@ fun CustomerCreditDueTab(
                     c.phone.contains(searchQuery) ||
                     c.location.contains(searchQuery, ignoreCase = true)
             
+            val hasActivity = c.totalBilled > 0.0 || c.totalPaid > 0.0
             val matchesStatus = when (selectedStatusFilter) {
                 CreditDueStatusFilter.ALL -> true
                 CreditDueStatusFilter.PENDING_DUE -> com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(c.balanceDue) > 0.0
-                CreditDueStatusFilter.PAID -> com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(c.balanceDue) <= 0.0
+                CreditDueStatusFilter.PAID -> com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(c.balanceDue) <= 0.0 && hasActivity
             }
             val matchesDate = if (selectedDateFilter == CreditDueDateFilter.ALL) {
                 true
@@ -1086,7 +1087,8 @@ fun CustomerCreditDueCard(
     onSharePdf: () -> Unit
 ) {
     val responsive = com.example.ui.theme.rememberResponsiveDimensions()
-    val isPaid = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customer.balanceDue) <= 0.0
+    val hasActivity = customer.totalBilled > 0.0 || customer.totalPaid > 0.0
+    val isPaid = hasActivity && com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customer.balanceDue) <= 0.0
     val avatarColor = getCustomerAvatarColor(customer.name)
     val initials = getCustomerInitials(customer.name)
 
@@ -1189,14 +1191,14 @@ fun CustomerCreditDueCard(
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Text(
-                                    text = if (isTamil) "செலுத்தப்பட்டது" else "PAID",
+                                    text = if (isTamil) "???????????????" else "PAID",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = SuccessPaidGreen
                                 )
                             }
                         }
-                    } else {
+                    } else if (customer.balanceDue > 0.0) {
                         Text(
                             text = formatInr(customer.balanceDue),
                             fontSize = 15.5.sp,
@@ -1204,10 +1206,23 @@ fun CustomerCreditDueCard(
                             color = AlertDueRed
                         )
                         Text(
-                            text = if (isTamil) "நிலுவை" else "Due",
+                            text = if (isTamil) "??????" else "Due",
                             fontSize = 10.5.sp,
                             fontWeight = FontWeight.Medium,
                             color = AlertDueRed
+                        )
+                    } else {
+                        Text(
+                            text = formatInr(0.0),
+                            fontSize = 15.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = TextSecondaryDark
+                        )
+                        Text(
+                            text = if (isTamil) "?????? ?????" else "No Due",
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = TextSecondaryDark
                         )
                     }
                 }
@@ -1412,7 +1427,8 @@ fun CustomerDetailSheet(
                         }
                     }
                     val roundedCustomerDue = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customer.balanceDue)
-                    StatusBadge(isPaid = roundedCustomerDue <= 0.0, pendingAmount = roundedCustomerDue)
+                    val hasCustomerActivity = customer.totalBilled > 0.0 || customer.totalPaid > 0.0
+                    StatusBadge(isPaid = roundedCustomerDue <= 0.0 && hasCustomerActivity, pendingAmount = roundedCustomerDue)
                 }
             }
             // Quick Actions: Add Payment, Call, WhatsApp, Share PDF Statement

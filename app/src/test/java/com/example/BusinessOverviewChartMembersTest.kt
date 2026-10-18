@@ -25,7 +25,7 @@ class BusinessOverviewChartMembersTest {
         val result = businessOverviewChartMembers(listOf(other), listOf(owner, partner), "partner", "test")
         assertEquals("partner", result.first().partnerUid)
         assertEquals("Partner Name", result.first().partnerName)
-        assertEquals("PARTNER", result.first().role)
+        assertEquals("Partner", result.first().role)
         assertEquals(0.0, result.first().due, 0.0)
         assertSame(other, result.last())
     }
@@ -45,4 +45,26 @@ class BusinessOverviewChartMembersTest {
             assertSame(empty, businessOverviewChartMembers(empty, members, "partner", "test"))
         }
     }
+    @Test fun ownerSeesEveryIdlePartnerWithZeroAmounts() {
+        val second = partner.copy(uid = "partner-two", displayName = "Partner Two")
+        val own = PartnerFinancialBreakdown(partnerUid = "owner", partnerName = "Owner Name", recorded = 100.0, received = 40.0, due = 60.0)
+        val result = businessOverviewChartMembers(listOf(own), listOf(owner, partner, second), "owner", "test")
+        assertEquals(listOf("owner", "partner", "partner-two"), result.map { it.partnerUid })
+        assertSame(own, result.first())
+        result.drop(1).forEach { assertEquals(0.0, it.recorded, 0.0); assertEquals(0.0, it.received, 0.0); assertEquals(0.0, it.due, 0.0) }
+    }
+    @Test fun removedForeignAndOperatorMembersCannotBeAddedAsIdleFinancialCircles() {
+        val excluded = listOf(partner.copy(uid = "removed", status = "REMOVED"), partner.copy(uid = "foreign", workspaceId = "b"), partner.copy(uid = "operator", role = "OPERATOR"))
+        val result = businessOverviewChartMembers(emptyList(), listOf(owner, partner) + excluded, "owner", "test")
+        assertEquals(listOf("owner", "partner"), result.map { it.partnerUid })
+    }
+    @Test fun zeroParticipantsDoNotAbsorbUnattributedFinancialRecords() {
+        val unknown = PartnerFinancialBreakdown(partnerUid = "", partnerName = "Attribution unavailable", recorded = 90.0, due = 90.0)
+        val result = businessOverviewChartMembers(listOf(unknown), listOf(owner, partner, partner), "owner", "test")
+        assertSame(unknown, result.first { it.partnerUid.isEmpty() })
+        assertEquals(3, result.size)
+        assertEquals(90.0, result.sumOf { it.recorded }, 0.0)
+        assertEquals(0.0, result.first { it.partnerUid == "partner" }.due, 0.0)
+    }
+
 }

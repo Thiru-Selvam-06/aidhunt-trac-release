@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.ensureActive
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -79,51 +80,36 @@ class FirebaseAuthService(
     override val currentUid: String?
         get() = auth?.currentUser?.let { if (it.isAnonymous) null else it.uid }
 
-    private val authEpoch = java.util.concurrent.atomic.AtomicLong(0)
-    private var profileRefresh: kotlinx.coroutines.Job? = null
     private var authStateListener: FirebaseAuth.AuthStateListener? = null
+    private val signInEpoch = java.util.concurrent.atomic.AtomicLong(0)
+    private val sessionRecovery by lazy {
+        AuthSessionRecovery(scope, { currentUid }, ::cachedVerifiedProfile,
+            load = { uid ->
+                val user = auth?.currentUser?.takeIf { it.uid == uid && !it.isAnonymous }
+                    ?: throw kotlinx.coroutines.CancellationException("Authenticated account changed")
+                fetchExistingUserProfile(user)
+            },
+            clearCache = { context.getSharedPreferences("verified_auth_profile", Context.MODE_PRIVATE).edit().clear().commit() },
+            revoke = { signOut() },
+            publish = { profile, state -> _currentUserProfile.value = profile; _authState.value = state })
+    }
 
     override fun startAuthStateListener() {
         val currentAuth = auth ?: return
         if (authStateListener != null) return
         authStateListener = FirebaseAuth.AuthStateListener { instance ->
-            val user = instance.currentUser
-            val epoch = authEpoch.incrementAndGet()
-            profileRefresh?.cancel()
-            if (user == null || user.isAnonymous) {
-                _currentUserProfile.value = null; _authState.value = AuthState.Unauthenticated()
-            } else {
-                val cached = cachedVerifiedProfile(user.uid)
-                _currentUserProfile.value = cached
-                // A new UID must never inherit the previous account while online verification is pending.
-                _authState.value = if (cached != null) AuthState.Authenticated(cached) else AuthState.Loading
-                profileRefresh = scope.launch {
-                    try {
-                        val profile = withTimeout(10_000L) { fetchExistingUserProfile(user) }
-                        if (authEpoch.get() != epoch || instance.currentUser?.uid != user.uid) return@launch
-                        if (profile != null) { _currentUserProfile.value = profile; _authState.value = AuthState.Authenticated(profile) }
-                        else { _currentUserProfile.value = null; _authState.value = AuthState.Unauthenticated("Account not registered") }
-                    } catch (e: kotlinx.coroutines.CancellationException) { throw e
-                    } catch (e: Exception) {
-                        if (authEpoch.get() != epoch || instance.currentUser?.uid != user.uid) return@launch
-                        if (e is com.google.firebase.auth.FirebaseAuthInvalidUserException) { signOut(); return@launch }
-                        if (e is SecurityException) {
-                            context.getSharedPreferences("verified_auth_profile", Context.MODE_PRIVATE).edit().clear().commit()
-                            _currentUserProfile.value = null
-                            _authState.value = AuthState.Error(e.message ?: "Workspace access denied")
-                        } else {
-                            val cached = cachedVerifiedProfile(user.uid)
-                            if (cached != null) { _currentUserProfile.value = cached; _authState.value = AuthState.Authenticated(cached) }
-                            else _authState.value = AuthState.Error("Connect once to verify workspace access")
-                        }
-                    }
-                }
-            }
+            sessionRecovery.refresh(instance.currentUser?.takeUnless { it.isAnonymous }?.uid)
         }
         currentAuth.addAuthStateListener(authStateListener!!)
     }
 
+    private fun requireSignInAttempt(ticket: Long, uid: String? = null) {
+        if (signInEpoch.get() != ticket || (uid != null && currentUid != uid))
+            throw kotlinx.coroutines.CancellationException("Sign-in superseded or account changed")
+    }
+
     override suspend fun signInWithGoogle(context: Context, webClientId: String?): Result<UserProfile> {
+        val ticket = signInEpoch.incrementAndGet()
         return try {
             val currentAuth = auth ?: return Result.failure(IllegalStateException("Firebase is not initialized."))
 
@@ -148,10 +134,13 @@ class FirebaseAuthService(
             if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                 val authCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
+                requireSignInAttempt(ticket)
                 val authResult = currentAuth.signInWithCredential(authCredential).awaitTask()
                 val user = authResult.user ?: throw IllegalStateException("Firebase user is null after sign in")
 
-                val profile = fetchExistingUserProfile(user)
+                requireSignInAttempt(ticket, user.uid)
+                val profile = fetchExistingUserProfile(user) { requireSignInAttempt(ticket, user.uid) }
+                requireSignInAttempt(ticket, user.uid)
                 if (profile != null) {
                     Log.i("TRAC_AUTH", "AUTH_SUCCESS ACCOUNT_FOUND uid=${user.uid}")
                     _currentUserProfile.value = profile
@@ -169,7 +158,9 @@ class FirebaseAuthService(
                 _authState.value = AuthState.Error(err)
                 Result.failure(IllegalStateException(err))
             }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
         } catch (e: Exception) {
+            requireSignInAttempt(ticket)
             Log.e(TAG, "Google Sign-In failed: ${e.message}", e)
             _authState.value = AuthState.Error(e.message ?: "Google Sign-In failed")
             Result.failure(e)
@@ -177,13 +168,16 @@ class FirebaseAuthService(
     }
 
     override suspend fun signInWithEmail(email: String, password: String): Result<UserProfile> {
+        val ticket = signInEpoch.incrementAndGet()
         return try {
             val currentAuth = auth ?: return Result.failure(IllegalStateException("Firebase is not initialized."))
             _authState.value = AuthState.Loading
             val authResult = currentAuth.signInWithEmailAndPassword(email.trim(), password).awaitTask()
             val user = authResult.user ?: throw IllegalStateException("Firebase user is null after email sign in")
 
-            val profile = fetchExistingUserProfile(user)
+            requireSignInAttempt(ticket, user.uid)
+            val profile = fetchExistingUserProfile(user) { requireSignInAttempt(ticket, user.uid) }
+            requireSignInAttempt(ticket, user.uid)
             if (profile != null) {
                 Log.i("TRAC_AUTH", "AUTH_SUCCESS ACCOUNT_FOUND uid=${user.uid}")
                 _currentUserProfile.value = profile
@@ -196,7 +190,9 @@ class FirebaseAuthService(
                 _authState.value = AuthState.Unauthenticated("No account found")
                 Result.failure(IllegalStateException("No account found"))
             }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
         } catch (e: Exception) {
+            requireSignInAttempt(ticket)
             Log.e(TAG, "Email Sign-In failed: ${e.message}", e)
             _authState.value = AuthState.Error(e.message ?: "Email Sign-In failed")
             Result.failure(e)
@@ -215,6 +211,7 @@ class FirebaseAuthService(
         onError: (message: String) -> Unit,
         onAutoVerified: (userProfile: UserProfile) -> Unit
     ) {
+        val ticket = signInEpoch.incrementAndGet()
         val currentAuth = auth
         if (currentAuth == null) {
             onError("Firebase Auth is not initialized.")
@@ -236,7 +233,7 @@ class FirebaseAuthService(
         var callbacksHandled = false
         val watchdogJob = scope.launch {
             kotlinx.coroutines.delay(15000L)
-            if (!callbacksHandled) {
+            if (!callbacksHandled && signInEpoch.get() == ticket) {
                 callbacksHandled = true
                 Log.w("TRAC_AUTH", "OTP_SEND_TIMEOUT")
                 _authState.value = AuthState.Unauthenticated("Unable to send OTP. Please check your connection and try again.")
@@ -246,15 +243,18 @@ class FirebaseAuthService(
 
         val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
             override fun onVerificationCompleted(credential: PhoneAuthCredential) {
-                if (callbacksHandled) return
+                if (callbacksHandled || signInEpoch.get() != ticket) return
                 callbacksHandled = true
                 watchdogJob.cancel()
                 Log.i("TRAC_AUTH", "OTP_VERIFICATION_COMPLETED")
                 scope.launch {
                     try {
+                        requireSignInAttempt(ticket)
                         val authResult = currentAuth.signInWithCredential(credential).awaitTask()
                         val user = authResult.user ?: throw IllegalStateException("User null after verification")
-                        val profile = fetchExistingUserProfile(user)
+                        requireSignInAttempt(ticket, user.uid)
+                        val profile = fetchExistingUserProfile(user) { requireSignInAttempt(ticket, user.uid) }
+                        requireSignInAttempt(ticket, user.uid)
                         if (profile != null) {
                             Log.i("TRAC_AUTH", "AUTH_SUCCESS ACCOUNT_FOUND uid=${user.uid}")
                             _currentUserProfile.value = profile
@@ -266,7 +266,9 @@ class FirebaseAuthService(
                             _authState.value = AuthState.Unauthenticated("Account not registered")
                             onError("Account not registered")
                         }
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e
                     } catch (e: Exception) {
+                        requireSignInAttempt(ticket)
                         Log.e(TAG, "Auto verification sign in failed: ${e.message}", e)
                         _authState.value = AuthState.Unauthenticated(e.message ?: "Verification failed")
                         onError(e.message ?: "Verification failed")
@@ -275,7 +277,7 @@ class FirebaseAuthService(
             }
 
             override fun onVerificationFailed(e: FirebaseException) {
-                if (callbacksHandled) return
+                if (callbacksHandled || signInEpoch.get() != ticket) return
                 callbacksHandled = true
                 watchdogJob.cancel()
                 Log.e("TRAC_AUTH", "OTP_VERIFICATION_FAILED error=${e.javaClass.simpleName} msg=${e.message}")
@@ -298,7 +300,7 @@ class FirebaseAuthService(
                 verificationId: String,
                 token: PhoneAuthProvider.ForceResendingToken
             ) {
-                if (callbacksHandled) return
+                if (callbacksHandled || signInEpoch.get() != ticket) return
                 callbacksHandled = true
                 watchdogJob.cancel()
                 Log.i("TRAC_AUTH", "OTP_CODE_SENT verificationIdLength=${verificationId.length}")
@@ -330,6 +332,7 @@ class FirebaseAuthService(
     }
 
     override suspend fun verifyPhoneOtp(verificationId: String, otpCode: String): Result<UserProfile> {
+        val ticket = signInEpoch.incrementAndGet()
         return try {
             val currentAuth = auth ?: return Result.failure(IllegalStateException("Firebase not initialized."))
 
@@ -339,7 +342,9 @@ class FirebaseAuthService(
             val authResult = currentAuth.signInWithCredential(credential).awaitTask()
             val user = authResult.user ?: throw IllegalStateException("User is null after OTP verification")
 
-            val profile = fetchExistingUserProfile(user)
+            requireSignInAttempt(ticket, user.uid)
+            val profile = fetchExistingUserProfile(user) { requireSignInAttempt(ticket, user.uid) }
+            requireSignInAttempt(ticket, user.uid)
             if (profile != null) {
                 Log.i("TRAC_AUTH", "AUTH_SUCCESS ACCOUNT_FOUND uid=${user.uid}")
                 _currentUserProfile.value = profile
@@ -352,7 +357,9 @@ class FirebaseAuthService(
                 _authState.value = AuthState.Unauthenticated("Account not registered")
                 Result.failure(IllegalStateException("Account not registered"))
             }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
         } catch (e: Exception) {
+            requireSignInAttempt(ticket)
             Log.e(TAG, "OTP verification failed: ${e.message}", e)
             val rawMsg = e.message ?: "Invalid OTP Code"
             val userMsg = when {
@@ -374,8 +381,8 @@ class FirebaseAuthService(
     }
 
     override suspend fun signOut() {
-        authEpoch.incrementAndGet()
-        profileRefresh?.cancel()
+        signInEpoch.incrementAndGet()
+        sessionRecovery.invalidate()
         try {
             context.getSharedPreferences("verified_auth_profile", Context.MODE_PRIVATE).edit().clear().commit()
             context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE).edit().clear().commit()
@@ -415,7 +422,7 @@ class FirebaseAuthService(
         return UserProfile.fromMap(data).copy(uid = uid, defaultWorkspaceId = session.getString("workspaceId", ""), role = null)
     }
 
-    private suspend fun fetchExistingUserProfile(user: FirebaseUser): UserProfile? {
+    private suspend fun fetchExistingUserProfile(user: FirebaseUser, ensureSession: () -> Unit = {}): UserProfile? {
         val uid = user.uid
         val db = firestore ?: return cachedVerifiedProfile(uid)
         return try {
@@ -426,6 +433,8 @@ class FirebaseAuthService(
                 // Authentication succeeds without creating or authorizing any workspace.
                 UserProfile(uid = uid, displayName = user.displayName, phoneNumber = user.phoneNumber)
             }
+            ensureSession()
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
             if (auth?.currentUser?.uid != uid) throw kotlinx.coroutines.CancellationException("Authenticated account changed")
             // Authentication is independent of workspace authorization and build routing.
             val scopedProfile = profile
@@ -437,6 +446,7 @@ class FirebaseAuthService(
             if (e is SecurityException) {
                 context.getSharedPreferences("verified_auth_profile", Context.MODE_PRIVATE).edit().clear().commit()
             }
+            ensureSession()
             recoverVerifiedProfile(e) { cachedVerifiedProfile(uid) }
         }
     }

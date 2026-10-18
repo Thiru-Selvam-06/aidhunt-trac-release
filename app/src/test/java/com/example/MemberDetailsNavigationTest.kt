@@ -36,4 +36,24 @@ class MemberDetailsNavigationTest {
         compose.onNodeWithText("Member Details").assertDoesNotExist()
         compose.onNodeWithTag("partner_card_71").assertExists()
     }
+
+    @Test fun currentWorkspacePartnerRoleOverridesStaleLocalOwnerMirror() {
+        compose.setContent {
+            MyApplicationTheme {
+                ManagePartnersPage(
+                    settings = AppSettingsEntity(workspaceId = "invited-workspace", ownerName = "Inviting Owner"),
+                    partners = listOf(PartnerEntity(id = 71, workspaceId = "invited-workspace",
+                        name = "Owner Elsewhere", phone = "9000000001", role = "Owner", firebaseUid = "target")),
+                    workspaceMembers = listOf(com.example.data.firebase.WorkspaceMember(uid = "target",
+                        workspaceId = "invited-workspace", role = "PARTNER", status = "ACTIVE",
+                        displayName = "Owner Elsewhere", phoneNumber = "+919000000001")),
+                    activePartnerName = "", onAddPartner = {}, onUpdatePartner = {}, onDeletePartner = {},
+                    onSwitchActivePartner = {}
+                )
+            }
+        }
+        compose.onNodeWithTag("partner_card_71").performScrollTo().performClick()
+        compose.onNodeWithText("Role: Partner").assertExists()
+        compose.onNodeWithText("Role: Owner").assertDoesNotExist()
+    }
 }

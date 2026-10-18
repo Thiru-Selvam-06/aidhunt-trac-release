@@ -25,6 +25,34 @@ class RoomScopeTest {
         durationMinutes = 1, totalAmount = 100.0, amountReceived = 0.0, pendingAmount = 100.0, addedByPartner = "Same Name",
         createdAt = 5000, createdByUid = "actor", entryForUid = "actor", isSynced = false)
 
+    @Test fun ownerPendingDeletionsAreSeparateFromPartnerQueueAndNotUploads() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).build()
+        try {
+            val dao = db.pendingOperationDao()
+            val originals = (1L..3L).map { n ->
+                PendingOperationEntity("delete-$n", "business", "owner", "JOB", n, "DELETE", n, 1234L,
+                    """{"workspaceId":"business","original":"unchanged"}""")
+            }
+            originals.forEach { dao.insert(it) }
+            dao.insert(PendingOperationEntity("partner-done", "business", "partner", "JOB", 99, "UPSERT", 4, 1200,
+                "retained", state = "ACKNOWLEDGED"))
+            dao.insert(PendingOperationEntity("foreign", "other", "owner", "JOB", 99, "UPSERT", 5, 1200, "foreign"))
+            val ownerRows = dao.observeActor("business", "owner").first()
+            val partnerRows = dao.observeActor("business", "partner").first()
+            assertEquals(3, ownerRows.count { it.state == "PENDING" })
+            assertTrue(ownerRows.all { it.mutationType == "DELETE" })
+            assertEquals(0, ownerRows.count { it.mutationType == "UPSERT" })
+            assertTrue(partnerRows.isEmpty())
+            assertEquals(3, dao.nextBatch("business", "owner").size)
+            assertTrue(dao.nextBatch("business", "partner").isEmpty())
+            assertEquals("3 Pending", com.example.data.firebase.cloudSyncLabel(
+                com.example.data.firebase.CloudConnectionState.CONNECTED, true, false, 3))
+            assertEquals("Synced", com.example.data.firebase.cloudSyncLabel(
+                com.example.data.firebase.CloudConnectionState.CONNECTED, true, false, 0))
+            originals.forEach { assertEquals(it, dao.getOperation(it.operationId)) }
+        } finally { db.close() }
+    }
+
     @Test fun collectionSnapshotPrunesOnlyConfirmedAbsentRowsInItsWorkspace() = runBlocking {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).build()
         try {

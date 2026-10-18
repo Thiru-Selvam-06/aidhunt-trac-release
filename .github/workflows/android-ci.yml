@@ -24,10 +24,14 @@ jobs:
         with: {node-version: '22'}
       - run: python3 -m unittest discover -s scripts -p "test_*.py"
       - run: python3 scripts/interaction_inventory.py --check
+      - run: python3 scripts/suite_inventory.py --check --output ci-reports/test-suite-inventory.json
+      - run: python3 scripts/publication_guard.py
       - uses: actions/upload-artifact@v4
         with:
           name: interaction-inventory
-          path: docs/regression/
+          path: |
+            docs/regression/
+            ci-reports/test-suite-inventory.json
   static-checks:
     name: Android compilation and lint (demo configuration)
     runs-on: ubuntu-latest

@@ -24,7 +24,9 @@
   "repositories": [
     "app/src/main/java/com/example/data/repository/AuthRepository.kt",
     "app/src/main/java/com/example/data/repository/SyncResult.kt",
-    "app/src/main/java/com/example/data/repository/WorkspaceRepository.kt"
+    "app/src/main/java/com/example/data/repository/WorkspaceRepository.kt",
+    "app/src/main/java/com/example/data/repository/WorkspaceRequestFence.kt",
+    "app/src/main/java/com/example/data/repository/WorkspaceRequestOutcome.kt"
   ],
   "daos": [
     "app/src/main/java/com/example/data/dao/Daos.kt",
@@ -39,7 +41,10 @@
   "unit_tests": [
     "app/src/test/java/com/example/ArchitectureIntegrationTest.kt",
     "app/src/test/java/com/example/ArchivedRecordAuthorizationTest.kt",
+    "app/src/test/java/com/example/AuthSessionRecoveryTest.kt",
+    "app/src/test/java/com/example/BusinessOverviewAttributionTest.kt",
     "app/src/test/java/com/example/BusinessOverviewChartMembersTest.kt",
+    "app/src/test/java/com/example/BusinessOverviewCircleUiTest.kt",
     "app/src/test/java/com/example/CashBalanceRegressionTest.kt",
     "app/src/test/java/com/example/ClientDeliveryRequirementsTest.kt",
     "app/src/test/java/com/example/CloudListenerHealthTest.kt",
@@ -59,14 +64,17 @@
     "app/src/test/java/com/example/EntryMutationAuthorizationTest.kt",
     "app/src/test/java/com/example/ExampleRobolectricTest.kt",
     "app/src/test/java/com/example/ExampleUnitTest.kt",
+    "app/src/test/java/com/example/ExpenseIdentityDetailsTest.kt",
     "app/src/test/java/com/example/ExpenseWorkspaceIsolationTest.kt",
     "app/src/test/java/com/example/ExtensionDetailsNavigationTest.kt",
     "app/src/test/java/com/example/FinalTargetedClientFixesTest.kt",
     "app/src/test/java/com/example/FinalTwoClientFixesTest.kt",
+    "app/src/test/java/com/example/FinancialConsistencyAndSyncRepairTest.kt",
     "app/src/test/java/com/example/GreetingScreenshotTest.kt",
     "app/src/test/java/com/example/HomeFinancialVisibilityTest.kt",
     "app/src/test/java/com/example/HomeRecordSummaryTest.kt",
     "app/src/test/java/com/example/InitialWorkspaceSettingsTest.kt",
+    "app/src/test/java/com/example/LocalLedgerReferenceTest.kt",
     "app/src/test/java/com/example/MemberDetailsNavigationTest.kt",
     "app/src/test/java/com/example/NewEntryExpenseAndTakingCategoriesTest.kt",
     "app/src/test/java/com/example/OfflineActionTimeTest.kt",
@@ -79,7 +87,9 @@
     "app/src/test/java/com/example/PendingInvitationCleanupContractTest.kt",
     "app/src/test/java/com/example/PhoneOnlySignupRoutingTest.kt",
     "app/src/test/java/com/example/PurgeReconciliationProtocolTest.kt",
+    "app/src/test/java/com/example/RecordIdentityPolicyTest.kt",
     "app/src/test/java/com/example/RetainedOperationWarningTest.kt",
+    "app/src/test/java/com/example/RoomMigrationChainTest.kt",
     "app/src/test/java/com/example/RoomScopeTest.kt",
     "app/src/test/java/com/example/StartupAuthPresentationTest.kt",
     "app/src/test/java/com/example/TractorCardAuthorizationTest.kt",
@@ -87,10 +97,17 @@
     "app/src/test/java/com/example/V16ArchitectureContractTest.kt",
     "app/src/test/java/com/example/VerifiedProfileRecoveryTest.kt",
     "app/src/test/java/com/example/WithdrawalLedgerNavigationTest.kt",
+    "app/src/test/java/com/example/WorkspaceBuildBoundaryTest.kt",
+    "app/src/test/java/com/example/WorkspaceCachedLedgerRecoveryTest.kt",
     "app/src/test/java/com/example/WorkspaceCommandProtocolTest.kt",
     "app/src/test/java/com/example/WorkspaceDatabaseContractTest.kt",
     "app/src/test/java/com/example/WorkspaceDiscoveryPolicyTest.kt",
+    "app/src/test/java/com/example/WorkspaceInvitationErrorClassificationTest.kt",
+    "app/src/test/java/com/example/WorkspaceInvitationPolicyTest.kt",
+    "app/src/test/java/com/example/WorkspaceMemberPresentationTest.kt",
     "app/src/test/java/com/example/WorkspacePickerUiTest.kt",
+    "app/src/test/java/com/example/WorkspaceRequestFenceTest.kt",
+    "app/src/test/java/com/example/WorkspaceRequestOutcomeTest.kt",
     "app/src/test/java/com/example/WorkspaceSelectionPolicyTest.kt",
     "app/src/test/java/com/example/ui/screens/report/DriverEarningsConsistencyTest.kt"
   ],
@@ -134,10 +151,12 @@
     "security-tests/listener-queries.test.cjs",
     "security-tests/phone-onboarding.test.cjs",
     "security-tests/purge-protocol.test.cjs",
+    "security-tests/security-recovery.test.cjs",
     "security-tests/workspace-discovery.test.cjs"
   ],
   "workflows": [
-    ".github/workflows/android-ci.yml"
+    ".github/workflows/android-ci.yml",
+    ".github/workflows/verify-reproducibility.yml"
   ],
   "backend_endpoints": [
     "beginWorkspaceInvitation",
@@ -1297,6 +1316,12 @@
       "updateSettings",
       "pushUnsyncedToCloud",
       "getInstance"
-    ]
+    ],
+    "WorkspaceRequestFence.kt": [
+      "begin",
+      "invalidate",
+      "check"
+    ],
+    "WorkspaceRequestOutcome.kt": []
   }
 }

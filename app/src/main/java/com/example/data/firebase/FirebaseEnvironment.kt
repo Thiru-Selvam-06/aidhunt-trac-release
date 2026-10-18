@@ -23,6 +23,10 @@ object FirebaseEnvironment {
             workspaceId.startsWith("ws_cf_staging_") &&
             workspaceId in AUTHORIZED_STAGING_WORKSPACES
 
+    /** Build boundary only; callers must first verify UID-scoped active membership. */
+    internal fun permitsWorkspaceDiscovery(workspaceId: String, physicalTest: Boolean): Boolean =
+        workspaceId.isNotBlank() && if (physicalTest) isStagingWorkspace(workspaceId) else !workspaceId.startsWith("ws_cf_staging_")
+
     fun initialize(app: FirebaseApp) {
         if (BuildConfig.PHYSICAL_TEST) {
             check(BuildConfig.APPLICATION_ID.endsWith(".physicaltest") && app.options.projectId == LIVE_PROJECT) {

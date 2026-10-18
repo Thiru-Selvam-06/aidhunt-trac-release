@@ -108,16 +108,17 @@ fun BusinessOverviewScreen(
 
     // Other Controls
     var isExpenseVisible by remember { mutableStateOf(true) }
-    var selectedMemberFilter by remember { mutableStateOf("All") }
-    var showPersonSelectorDialog by remember { mutableStateOf(false) }
-    var selectedJobForDetail by remember { mutableStateOf<JobEntryEntity?>(null) }
+    var selectedMemberFilter by remember(settings.workspaceId, currentUid) { mutableStateOf("All") }
+    var showPersonSelectorDialog by remember(settings.workspaceId, currentUid) { mutableStateOf(false) }
+    var selectedJobForDetail by remember(settings.workspaceId, currentUid) { mutableStateOf<JobEntryEntity?>(null) }
 
-    val scope = remember(selectedMode, selectedDateMillis, selectedYear, selectedMonth) {
+    val scope = remember(selectedMode, selectedDateMillis, selectedYear, selectedMonth, settings.workspaceId) {
         val s = FinancialScope(
             mode = selectedMode,
             dateMillis = selectedDateMillis,
             year = selectedYear,
-            month = selectedMonth
+            month = selectedMonth,
+            workspaceId = settings.workspaceId
         )
         onUpdateFinancialScope?.invoke(s)
         s
@@ -129,19 +130,20 @@ fun BusinessOverviewScreen(
     }
 
     val partnerBreakdowns = remember(jobs, expenses, withdrawals, partners, workspaceMembers, scope) {
-        FinancialCalculationEngine.calculatePartnerBreakdown(jobs, expenses, withdrawals, partners, workspaceMembers, scope)
+        FinancialCalculationEngine.calculatePartnerBreakdown(jobs, expenses, withdrawals, partners, workspaceMembers, scope,
+            preserveUnresolvedUids = true)
     }
 
     val scopedJobs = remember(jobs, scope) {
         jobs.filter { j ->
             val ts = if (j.startTimeMillis > 0) j.startTimeMillis else j.createdAt
-            FinancialCalculationEngine.isTimestampInScope(ts, scope)
+            j.workspaceId == settings.workspaceId && FinancialCalculationEngine.isTimestampInScope(ts, scope)
         }
     }
 
     val selectedMemberLabel = if (selectedMemberFilter == "All") "All" else
         partnerBreakdowns.firstOrNull { it.partnerUid == selectedMemberFilter }?.partnerName
-            ?: workspaceMembers.firstOrNull { it.uid == selectedMemberFilter }?.displayName ?: "Unattributed"
+            ?: workspaceMembers.firstOrNull { it.uid == selectedMemberFilter && it.workspaceId == settings.workspaceId }?.displayName ?: "Unattributed"
     val displayedJobs = remember(scopedJobs, selectedMemberFilter) {
         if (selectedMemberFilter == "All") scopedJobs else scopedJobs.filter {
             it.financialAttributionUid.ifBlank { it.entryForUid } == selectedMemberFilter
@@ -869,10 +871,10 @@ fun BusinessOverviewScreen(
         // 5. PERSON SELECTOR MODAL WITH SEARCH â€” REAL members from app data
         // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (showPersonSelectorDialog) {
-            val allMembersList = remember(partnerBreakdowns, workspaceMembers) {
-                listOf("All" to "All") + workspaceMembers.filter { it.uid.isNotBlank() }
-                    .distinctBy { it.uid }.map { it.uid to (it.displayName ?: "Member") } +
-                    partnerBreakdowns.filter { it.partnerUid.isBlank() }.map { it.partnerUid to it.partnerName }
+            val allMembersList = remember(partnerBreakdowns, workspaceMembers, settings.workspaceId) {
+                listOf("All" to "All") + (workspaceMembers.filter { it.uid.isNotBlank() && it.workspaceId == settings.workspaceId }
+                    .map { it.uid to it.displayName.orEmpty().ifBlank { "Member" } } +
+                    partnerBreakdowns.map { it.partnerUid to it.partnerName }).distinctBy { it.first }
             }
 
             PersonSelectorModal(
@@ -2055,7 +2057,7 @@ private fun YearPickerDialog(
 }
 
 @Composable
-private fun DriverEarningsCircularChart(breakdowns: List<PartnerFinancialBreakdown>, showExpenses: Boolean, currency: String, isTamil: Boolean) {
+internal fun DriverEarningsCircularChart(breakdowns: List<PartnerFinancialBreakdown>, showExpenses: Boolean, currency: String, isTamil: Boolean) {
     val data = remember(breakdowns, showExpenses) {
         breakdowns.map { MemberFinancialData(it.partnerUid, it.partnerName, it.role, it.recorded, it.received, it.due, if (showExpenses) it.expenses else 0.0) }
     }
@@ -2077,7 +2079,8 @@ private fun MemberCircularDiagram(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(100.dp)
+            .width(128.dp)
+            .testTag("business_member_circle_${data.uid}")
             .clip(RoundedCornerShape(12.dp))
             .clickable { onClick() }
             .padding(vertical = 8.dp)
@@ -2170,8 +2173,17 @@ private fun MemberCircularDiagram(
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             color = Color(0xFF334155),
-            maxLines = 1,
+            maxLines = 2,
+            textAlign = TextAlign.Center,
             overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = "${if (isTamil) "வசூல்" else "Collected"}: ${formatInr(data.collected, currency)}",
+            fontSize = 11.sp, color = Color(0xFF15803D), textAlign = TextAlign.Center
+        )
+        Text(
+            text = "${if (isTamil) "பாக்கி" else "Due"}: ${formatInr(data.due, currency)}",
+            fontSize = 11.sp, color = Color(0xFFB45309), textAlign = TextAlign.Center
         )
 
         // Role Badge/Label

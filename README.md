@@ -1,22 +1,47 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# AIDHUNT Trac
 
-# Run and deploy your AI Studio app
+Kotlin Android workspace and tractor-job ledger following Architecture v1.6 and documented amendments.
 
-This contains everything you need to run your app locally.
+**Release gate: NOT READY.** The standard app still routes trusted operations to Firebase Functions; the latest authorized inspection found none deployed. The Cloudflare service is staging-only. A green CI run does not restore production services.
 
-View your app in AI Studio: https://ai.studio/apps/0f190387-d864-416d-8fa1-715c57ac8819
+Read the [Developer Handbook](docs/handbook/README.md): fresh-computer setup, architecture, roles, calculations, offline recovery, tests, CI, security, operations and limitations.
 
-## Run Locally
+## Safe fresh-clone setup
 
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
+Install Git, Python 3.11+, Node 22, JDK 21 and Android Studio / Command-line Tools with SDK 34+, platform tools and an API 35 Google APIs emulator or physical Android phone with USB debugging. Keep wrapper/catalog versions pinned.
 
+### One-Command Windows Bootstrap and USB Deployment
 
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
-7. If you have already published your app in AI Studio, please [request upload key reset](https://support.google.com/googleplay/android-developer/answer/9842756#zippy=%2Crequest-an-upload-key-reset) in Google Play Console.
+```powershell
+# Clone the repository
+git clone https://github.com/Thiru-Selvam-06/aidhunt-trac-release.git
+cd aidhunt-trac-release
+
+# One-command build of isolated development APK
+.\scripts\setup-windows.ps1 -Mode Build
+
+# Connect your Android phone via USB and install safely
+.\scripts\setup-windows.ps1 -Mode InstallUsb
+
+# Run all test suites (Android, backend policy, Cloudflare, inventory)
+.\scripts\run-tests.ps1
+```
+
+For complete documentation on environment variables, secrets classification, and architecture isolation, see [ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md).
+
+### Manual Setup Steps
+
+```sh
+# Select the reviewed portable-verification branch or exact commit.
+python scripts/bootstrap_demo.py
+npm ci --prefix functions
+npm ci --prefix security-tests
+./gradlew :app:testDebugUnitTest --init-script scripts/ci-tests.gradle
+./gradlew -PdeviceTest=true :app:assembleDeviceTest :app:assembleDeviceTestAndroidTest
+```
+
+Windows uses gradlew.bat. Set JAVA_HOME and ANDROID_HOME; Android Studio creates ignored local.properties. First builds download dependencies. Demo tests require no production credentials.
+
+Use the separate .devicetest package and demo emulators; never install over business data just to try the repository. Follow the [setup chapter](docs/handbook/01-setup.md) for runtime commands.
+
+One [GitHub Actions workflow](.github/workflows/android-ci.yml) runs layered checks and representative Android-emulator journeys. Explicit exclusions and manual gaps remain. No workflow deploys. Private keys, signing files, device captures and business snapshots are not portable source dependencies.

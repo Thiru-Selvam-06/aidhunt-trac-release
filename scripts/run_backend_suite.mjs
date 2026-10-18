@@ -10,6 +10,7 @@ const groups={
  'functions/entry-deletion-http.test.js','functions/migration/legacy-timestamps.test.js'],
  rules:['security-tests/architecture.test.cjs','security-tests/listener-queries.test.cjs',
  'security-tests/phone-onboarding.test.cjs','security-tests/workspace-discovery.test.cjs',
+ 'security-tests/security-recovery.test.cjs',
  'security-tests/purge-protocol.test.cjs','functions/security.integration.test.js',
  'functions/entry-deletion-emulator.test.js']
 };

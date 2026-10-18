@@ -437,7 +437,8 @@ object FinancialCalculationEngine {
         withdrawals: List<WithdrawalEntity>,
         partners: List<PartnerEntity>,
         workspaceMembers: List<WorkspaceMember>,
-        scope: FinancialScope
+        scope: FinancialScope,
+        preserveUnresolvedUids: Boolean = false
     ): List<PartnerFinancialBreakdown> {
         val workspaceIds = (jobs.map { it.workspaceId } + expenses.map { it.workspaceId } + withdrawals.map { it.workspaceId }).filter { it.isNotBlank() }.distinct()
         if (scope.workspaceId.isBlank() && workspaceIds.size > 1) throw SecurityException("Financial calculations require one authorized workspace")
@@ -466,19 +467,31 @@ object FinancialCalculationEngine {
             .associateBy { it.uid }
 
         // Unmapped legacy amounts remain visible without guessing their beneficiary.
-        fun beneficiary(uid: String): String = uid.takeIf { it in eligibleMembers }.orEmpty()
+        // Chart presentation may retain explicit record identities while member metadata is unavailable.
+        // This never supplies membership, role, or mutation authority; missing UIDs remain unresolved.
+        fun beneficiary(uid: String): String = uid.takeIf { it in eligibleMembers || preserveUnresolvedUids }.orEmpty()
+        val cachedNames = partners.filter { it.workspaceId == authorizedWorkspace && it.firebaseUid.isNotBlank() }
+            .groupBy { it.firebaseUid }
+            .mapValues { (_, rows) -> rows.map { it.name.trim() }.filter { it.isNotBlank() }.distinct().singleOrNull() }
+
         val participantUids = linkedSetOf<String>()
         scopedJobs.forEach { participantUids.add(beneficiary(it.financialAttributionUid.ifBlank { it.entryForUid })) }
-        scopedExpenses.forEach { participantUids.add(beneficiary(it.financialAttributionUid.ifBlank { it.expenseForUid })) }
+        scopedExpenses.filter { it.paidBy.equals("I Paid", ignoreCase = true) }
+            .forEach { participantUids.add(beneficiary(it.financialAttributionUid.ifBlank { it.expenseForUid })) }
         scopedWithdrawals.forEach { participantUids.add(beneficiary(it.targetPartnerUid)) }
 
         return participantUids.map { uid ->
             val member = eligibleMembers[uid]
-            val pName = if (member == null) "Unattributed (migration required)"
-                else (member.displayName ?: member.email).orEmpty().trim().ifBlank { "Member" }
+            val pName = if (member == null) {
+                if (uid.isBlank()) "Attribution unavailable"
+                else cachedNames[uid] ?: "Member details unavailable"
+            } else member.displayName.orEmpty().trim().ifBlank { member.email.orEmpty().trim() }.ifBlank { "Member" }
             val pRole = if (member == null) "" else if (member.role.equals("owner", true)) "Owner" else member.role
             val pJobs = scopedJobs.filter { beneficiary(it.financialAttributionUid.ifBlank { it.entryForUid }) == uid }
-            val pExp = scopedExpenses.filter { beneficiary(it.financialAttributionUid.ifBlank { it.expenseForUid }) == uid }
+            val pExp = scopedExpenses.filter {
+                it.paidBy.equals("I Paid", ignoreCase = true) &&
+                beneficiary(it.financialAttributionUid.ifBlank { it.expenseForUid }) == uid
+            }
             val pWth = scopedWithdrawals.filter { beneficiary(it.targetPartnerUid) == uid }
 
             val recorded = roundToPositiveWholeRupee(pJobs.sumOf {

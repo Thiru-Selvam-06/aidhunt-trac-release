@@ -1,5 +1,4 @@
 import java.util.Properties
-import java.io.FileInputStream
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
 
 plugins {
@@ -28,16 +27,36 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
+  // Release credentials stay outside source; debug/test variants use Android's debug key.
   signingConfigs {
     create("release") {
-      val propertiesFile = rootProject.file("keystore.properties")
-      if (propertiesFile.exists()) {
-        val signing = Properties().apply { propertiesFile.inputStream().use { load(it) } }
-        storeFile = rootProject.file(signing.getProperty("storeFile"))
-        storePassword = signing.getProperty("storePassword")
-        keyAlias = signing.getProperty("keyAlias")
-        keyPassword = signing.getProperty("keyPassword")
+      val credentialsFile = rootProject.file(
+        providers.gradleProperty("releaseSigningProperties").orElse("keystore.properties").get()
+      )
+      if (credentialsFile.isFile) {
+        val credentials = Properties().apply { credentialsFile.inputStream().use { load(it) } }
+        storeFile = credentials.getProperty("storeFile")?.takeIf { it.isNotBlank() }?.let { rootProject.file(it) }
+        storePassword = credentials.getProperty("storePassword")
+        keyAlias = credentials.getProperty("keyAlias")
+        keyPassword = credentials.getProperty("keyPassword")
       }
+    }
+  }
+
+  val releaseSigning = signingConfigs.getByName("release")
+  val validateReleaseCredentials = tasks.register("validateReleaseCredentials") {
+    doLast {
+      check(releaseSigning.storeFile?.isFile == true &&
+        !releaseSigning.storePassword.isNullOrBlank() &&
+        !releaseSigning.keyAlias.isNullOrBlank() &&
+        !releaseSigning.keyPassword.isNullOrBlank()) {
+        "Release signing credentials are required. Configure protected keystore.properties or -PreleaseSigningProperties; no fallback is permitted."
+      }
+    }
+  }
+  tasks.configureEach {
+    if (name in setOf("validateSigningRelease", "packageRelease", "packageReleaseBundle", "signReleaseBundle")) {
+      dependsOn(validateReleaseCredentials)
     }
   }
 

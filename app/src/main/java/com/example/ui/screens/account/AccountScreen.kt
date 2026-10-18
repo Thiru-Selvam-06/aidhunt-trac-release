@@ -185,6 +185,20 @@ private fun parseLongId(idStr: String): Long {
     return idStr.toLongOrNull() ?: (idStr.hashCode().toLong().let { if (it <= 0) Math.abs(it) + 1L else it })
 }
 
+/** Presentation only: this does not authorize membership or grant capabilities. */
+internal fun workspacePartnerDisplayRole(
+    local: PartnerEntity,
+    member: com.example.data.firebase.WorkspaceMember?,
+    workspaceId: String
+): String {
+    if (member != null) {
+        if (member.workspaceId != workspaceId || member.uid.isBlank() ||
+            !member.status.equals("ACTIVE", true)) return ""
+        return com.example.data.auth.RoleUtils.normalizeRole(member.role)
+    }
+    return if (local.workspaceId == workspaceId) com.example.data.auth.RoleUtils.normalizeRole(local.role) else ""
+}
+
 internal fun pendingInvitationForUnresolvedPartner(
     partner: PartnerEntity,
     matchedMember: com.example.data.firebase.WorkspaceMember?
@@ -2867,18 +2881,15 @@ fun ManagePartnersPage(
     val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid?.trim()
     val ownerNameClean = settings.ownerName.trim()
     val ownerPhoneClean = settings.businessPhone.filter { it.isDigit() }.takeLast(10)
-    // Filter out local owner entities so owner never appears as a regular partner
-    val filteredLocalPartners = partners.filter { partner ->
-        val pPhoneClean = partner.phone.filter { it.isDigit() }.takeLast(10)
-        val isOwnerRole = partner.role.equals("owner", ignoreCase = true)
-        val isOwnerPhone = ownerPhoneClean.isNotBlank() && pPhoneClean == ownerPhoneClean
-        !isOwnerRole && !isOwnerPhone
-    }
+    // Local mirrors can contain a role from another workspace or an older snapshot.
+    // Resolve current membership before filtering or displaying a person's role.
+    val filteredLocalPartners = partners.filter { it.workspaceId == settings.workspaceId }
+    val scopedMembers = workspaceMembers.filter { it.workspaceId == settings.workspaceId }
     // Reconcile into unified UI models with strict Owner vs Partner display filtering
-    val reconciledPartners = remember(filteredLocalPartners, workspaceMembers, currentUid, ownerPhoneClean, isCollaborationOwner, isTamil, settings.workspaceId, settings.ownerName, settings.businessPhone) {
+    val reconciledPartners = remember(filteredLocalPartners, scopedMembers, currentUid, ownerPhoneClean, isCollaborationOwner, isTamil, settings.workspaceId, settings.ownerName, settings.businessPhone) {
         val list = mutableListOf<PartnerUiModel>()
         val matchedMemberKeys = mutableSetOf<String>()
-        val ownerMember = workspaceMembers.find { it.role.equals("owner", ignoreCase = true) }
+        val ownerMember = scopedMembers.find { it.role.equals("owner", ignoreCase = true) }
         val resolvedOwnerUid = ownerMember?.uid?.trim()?.ifBlank { null }
             ?: settings.workspaceId.removePrefix("ws_").trim()
         val resolvedOwnerName = ownerMember?.displayName?.trim()?.ifBlank { null }
@@ -2915,14 +2926,16 @@ fun ManagePartnersPage(
         // 2. Process local partners and match with remote members
         for (partner in filteredLocalPartners) {
             val pPhoneClean = partner.phone.filter { it.isDigit() }.takeLast(10)
-            val matchedMember = workspaceMembers.find { member ->
-                val isUidMatch = member.uid.isNotBlank() && (partner.id == parseLongId(member.uid) || partner.id == member.uid.hashCode().toLong())
+            val matchedMember = scopedMembers.find { member ->
+                val isUidMatch = member.uid.isNotBlank() && (partner.firebaseUid == member.uid ||
+                    (partner.firebaseUid.isBlank() && (partner.id == parseLongId(member.uid) || partner.id == member.uid.hashCode().toLong())))
                 val mPhoneClean = member.phoneNumber?.filter { it.isDigit() }?.takeLast(10) ?: ""
-                val isPhoneMatch = mPhoneClean.isNotBlank() && mPhoneClean == pPhoneClean
+                val isPhoneMatch = partner.firebaseUid.isBlank() && mPhoneClean.isNotBlank() && mPhoneClean == pPhoneClean
                 isUidMatch || isPhoneMatch
             }
             // Exclude Owner from partner entries
-            if (isOwner(matchedMember?.uid, matchedMember?.role ?: partner.role)) {
+            val displayRole = workspacePartnerDisplayRole(partner, matchedMember, settings.workspaceId)
+            if (isOwner(matchedMember?.uid, displayRole)) {
                 continue
             }
             // Exclude current logged in user (the partner themself or owner themself)
@@ -2949,7 +2962,7 @@ fun ManagePartnersPage(
                     id = partner.id,
                     name = partner.name.ifBlank { matchedMember?.displayName ?: partner.phone },
                     phone = partner.phone.ifBlank { matchedMember?.phoneNumber ?: "" },
-                    role = partner.role.ifBlank { if (isTamil) "பங்குதாரர்" else "Partner" },
+                    role = displayRole,
                     photoUri = partner.photoUri,
                     isConnected = isConnected,
                     originalPartnerEntity = partner,
@@ -2962,7 +2975,7 @@ fun ManagePartnersPage(
             )
         }
         // 3. Add remote members who aren't in the local list
-        for (member in workspaceMembers) {
+        for (member in scopedMembers) {
             // Exclude Owner
             if (isOwner(member.uid, member.role)) {
                 continue
@@ -3827,12 +3840,19 @@ fun PartnerFormDialog(
     var invitationError by remember { mutableStateOf("") }
     var name by remember { mutableStateOf(initialPartner?.name ?: "") }
     var phone by remember { mutableStateOf(initialPartner?.phone ?: "") }
+    val ownerOnlyNotice = if (isTamil) {
+        "பணியிட உரிமையாளர் மட்டுமே அழைப்புகளை அனுப்ப முடியும். இந்த எண்ணை அழைக்க உரிமையாளரிடம் கேளுங்கள்."
+    } else {
+        "Only the workspace Owner can send invitations. Ask the Owner to invite this number."
+    }
     var selectedRole by remember {
         mutableStateOf(
             if (isCollaborationOwner) {
                 com.example.data.auth.RoleUtils.normalizeRole(initialPartner?.role ?: "Partner")
+            } else if (initialPartner != null) {
+                com.example.data.auth.RoleUtils.normalizeRole(initialPartner.role)
             } else {
-                com.example.data.auth.RoleUtils.ROLE_OPERATOR
+                ""
             }
         )
     }
@@ -3843,16 +3863,18 @@ fun PartnerFormDialog(
     val isNameInvalid = name.isBlank()
     val isPhoneInvalid = if (initialPartner == null) !com.example.ui.util.isInvitationPhoneValid(phone) else !com.example.ui.util.isOptionalContactPhoneValid(phone)
 
-    val allowedRoles = remember(isCollaborationOwner) {
+    val allowedRoles = remember(isCollaborationOwner, initialPartner) {
         if (isCollaborationOwner) {
             listOf(
                 com.example.data.auth.RoleUtils.ROLE_PARTNER,
                 com.example.data.auth.RoleUtils.ROLE_OPERATOR
             )
-        } else {
+        } else if (initialPartner != null) {
             listOf(
-                com.example.data.auth.RoleUtils.ROLE_OPERATOR
+                com.example.data.auth.RoleUtils.normalizeRole(initialPartner.role)
             )
+        } else {
+            emptyList()
         }
     }
 
@@ -3890,6 +3912,34 @@ fun PartnerFormDialog(
                     },
                     modifier = Modifier.fillMaxWidth().trackFocusedField(nameRequester, coroutineScope)
                 )
+                if (!isCollaborationOwner && initialPartner == null) {
+                    Card(
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(containerColor = AlertDueRed.copy(alpha = 0.1f)),
+                        border = BorderStroke(1.dp, AlertDueRed.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth().testTag("card_owner_only_invitation_notice")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = AlertDueRed,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = ownerOnlyNotice,
+                                color = AlertDueRed,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
                 OutlinedTextField(
                     value = phone,
                     onValueChange = { phone = it },
@@ -3945,6 +3995,10 @@ fun PartnerFormDialog(
             Button(
                 onClick = {
                     hasAttemptedSubmit = true
+                    if (initialPartner == null && !isCollaborationOwner) {
+                        invitationError = ownerOnlyNotice
+                        return@Button
+                    }
                     if (!isNameInvalid && !isPhoneInvalid) {
                         val partner = PartnerEntity(
                             id = initialPartner?.id ?: 0,
@@ -3972,7 +4026,14 @@ fun PartnerFormDialog(
                                         invitationBusy = false
                                         onSave(partner.copy(workspaceId = workspaceId))
                                     }
-                                } catch (e: Exception) { invitationBusy = false; invitationError = e.message ?: "Invitation could not be verified" }
+                                } catch (e: Exception) {
+                                    invitationBusy = false
+                                    invitationError = if (e is SecurityException && e.message == com.example.data.firebase.WorkspaceInvitationService.OWNER_ONLY_ERROR) {
+                                        ownerOnlyNotice
+                                    } else {
+                                        e.message ?: "Invitation could not be verified"
+                                    }
+                                }
                             }
                         }
                     }

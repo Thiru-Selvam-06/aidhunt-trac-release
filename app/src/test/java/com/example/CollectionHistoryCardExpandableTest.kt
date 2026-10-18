@@ -55,6 +55,28 @@ class CollectionHistoryCardExpandableTest {
         )
 
     @Test
+    fun largeJobIdStaysInternalWhenHistoryIsExpanded() {
+        val id = 9007199254740995L
+        compose.setContent {
+            MyApplicationTheme {
+                CollectionHistoryTab(
+                    settings = AppSettingsEntity(workspaceId = ws),
+                    payments = listOf(samplePayment(33L, id, "Customer", 100.0)),
+                    jobs = listOf(sampleJob(id, "Customer", 300.0, 100.0, 200.0)),
+                    isOwner = true, currentUid = "owner_uid", onDeleteCollection = {}
+                )
+            }
+        }
+        compose.onNodeWithText("Job #$id").assertDoesNotExist()
+        compose.onNodeWithTag("expand_job_card_$id").performClick()
+        compose.onNodeWithTag("collection_history_card_33").assertExists()
+        compose.onAllNodes(hasText(id.toString(), substring = true), useUnmergedTree = true).assertCountEquals(0)
+        compose.onNodeWithTag("collection_history_card_33").performScrollTo().performClick()
+        compose.onNodeWithText("Collection Details").assertExists()
+        compose.onAllNodes(hasText(id.toString(), substring = true), useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test
     fun cardStartsCollapsedAndShowsSummaryTotalsWithoutTimeline() {
         val job = sampleJob(101L, "Raman", 5000.0, 2000.0, 3000.0)
         val payment = samplePayment(1L, 101L, "Raman", 2000.0)
@@ -74,7 +96,8 @@ class CollectionHistoryCardExpandableTest {
 
         // Summary totals are visible in collapsed state
         compose.onNodeWithText("Raman").assertExists()
-        compose.onNodeWithText("Job #101").assertExists()
+        compose.onNodeWithText("Job #101").assertDoesNotExist()
+        compose.onNodeWithText("Rotavator").assertExists()
         compose.onNodeWithText("₹5,000").assertExists() // Billed
         compose.onAllNodesWithText("₹2,000").assertCountEquals(2) // Total Collections + Card Collected
         compose.onNodeWithText("₹3,000").assertExists() // Outstanding

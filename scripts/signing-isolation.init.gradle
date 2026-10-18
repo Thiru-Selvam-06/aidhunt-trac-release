@@ -1,0 +1,20 @@
+// Configuration assertions only: no key generation, signing or credential output.
+gradle.projectsEvaluated {
+ def app = gradle.rootProject.project(":app")
+ app.tasks.register("verifySigningIsolation") {
+  notCompatibleWithConfigurationCache("Inspects the configured Android model for this test only")
+  doLast {
+   def android = app.extensions.getByName("android")
+   ["debug", "deviceTest", "liveTest", "physicalTest"].each { variant ->
+    assert android.buildTypes.getByName(variant).signingConfig.name == "debug" : variant + " must use debug signing"
+   }
+   assert android.buildTypes.release.signingConfig.name == "release"
+   assert android.defaultConfig.applicationId == "com.aistudio.aidhunttrac.cedlir"
+   [deviceTest:".devicetest", liveTest:".livetest", physicalTest:".physicaltest"].each { name, suffix ->
+    assert android.buildTypes.getByName(name).applicationIdSuffix == suffix
+   }
+   assert app.tasks.getByName("validateSigningRelease").taskDependencies.getDependencies(app.tasks.getByName("validateSigningRelease")).any { it.name == "validateReleaseCredentials" }
+   println "PASS: 4 debug/test variants isolated; release credential gate attached; package IDs preserved"
+  }
+ }
+}

@@ -1,5 +1,6 @@
 
 package com.example.ui.screens.report
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.ExperimentalFoundationApi
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
@@ -1134,7 +1135,7 @@ fun ExpenseListItemRow(
     val visualConfig = getExpenseVisualConfig(expense.expenseType)
     val itemDateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.getDefault()) }
 
-    val linkedJob = jobs.find { it.id == expense.relatedJobId }
+    val linkedJob = jobs.find { it.workspaceId == expense.workspaceId && it.id == expense.relatedJobId }
     val linkedCustomerName = linkedJob?.customerName?.ifBlank { null }
         ?: if (expense.description.startsWith("Expense for ") && expense.description.contains("'s job")) {
             expense.description.removePrefix("Expense for ").substringBefore("'s job")
@@ -1368,12 +1369,14 @@ fun AddOrEditExpenseScreen(
             }
             val cleanOperator = if (!isOwner) currentActor else selectedOperator.substringBefore(" (").trim()
             val finalAddedByPartner = if (!isOwner) currentActor else (initialExpense?.addedByPartner?.ifBlank { null } ?: currentActor)
-            val finalPaidByPartner = if (selectedWhoPaid == "I Paid") {
+            val isBusinessPaid = selectedWhoPaid.equals("Business Paid", ignoreCase = true)
+            val finalPaidByPartner = if (!isBusinessPaid) {
                 if (!isOwner) currentActor else (cleanOperator.ifBlank { currentActor })
             } else ""
-            val finalPaidByUid = if (selectedWhoPaid == "I Paid") {
-                if (!isOwner) currentUid else (initialExpense?.paidByUid?.takeIf { it.isNotBlank() } ?: currentUid)
+            val finalPaidByUid = if (!isBusinessPaid) {
+                if (!isOwner) currentUid else (initialExpense?.paidByUid?.takeIf { it.isNotBlank() } ?: selectedTargetUid)
             } else ""
+            val targetMemberUid = if (isOwner) selectedTargetUid else currentUid
 
             val expense = ExpenseEntity(
                 id = initialExpense?.id ?: 0,
@@ -1387,11 +1390,11 @@ fun AddOrEditExpenseScreen(
                 addedByPartner = finalAddedByPartner,
                 dateTimestamp = selectedTimestamp,
                 createdAt = initialExpense?.createdAt ?: System.currentTimeMillis(),
-                paidBy = selectedWhoPaid,
+                paidBy = if (isBusinessPaid) "Business Paid" else "I Paid",
                 paidByPartner = finalPaidByPartner,
-                paidByUid = if (selectedWhoPaid == "I Paid") selectedTargetUid else "",
-                expenseForUid = initialExpense?.expenseForUid ?: if (isOwner) selectedTargetUid else currentUid,
-                financialAttributionUid = initialExpense?.financialAttributionUid ?: if (isOwner) selectedTargetUid else currentUid,
+                paidByUid = finalPaidByUid,
+                expenseForUid = initialExpense?.expenseForUid?.takeIf { it.isNotBlank() } ?: targetMemberUid,
+                financialAttributionUid = initialExpense?.financialAttributionUid?.takeIf { it.isNotBlank() } ?: targetMemberUid,
                 createdByUid = initialExpense?.createdByUid ?: currentUid,
                 createdByRole = initialExpense?.createdByRole ?: (if (isOwner) "owner" else "partner")
             )
@@ -1765,7 +1768,7 @@ fun ExpenseDetailsScreen(
     val visualConfig = getExpenseVisualConfig(expense.expenseType)
     val detailsDateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.getDefault()) }
 
-    val linkedJob = jobs.find { it.id == expense.relatedJobId }
+    val linkedJob = jobs.find { it.workspaceId == expense.workspaceId && it.id == expense.relatedJobId }
     val linkedCustomerName = linkedJob?.customerName?.ifBlank { null }
         ?: if (expense.description.startsWith("Expense for ") && expense.description.contains("'s job")) {
             expense.description.removePrefix("Expense for ").substringBefore("'s job")
@@ -1839,6 +1842,12 @@ fun ExpenseDetailsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            Text(
+                text = "${if (isTamil) "செலவு எண்" else "Expense ID"}: ${expense.id}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("expense_record_identity")
+            )
             // Header Card with Category, Description, and Amount
             Card(
                 shape = RoundedCornerShape(12.dp),
@@ -1934,7 +1943,7 @@ fun ExpenseDetailsScreen(
                             modifier = Modifier.weight(1f),
                             icon = Icons.Default.Person,
                             label = if (isTamil) "இயக்குநர்" else "Operator",
-                            value = expense.operatorName.ifBlank { settings.activePartnerName }
+                            value = expense.operatorName.ifBlank { if (isTamil) "பதிவு செய்யப்படவில்லை" else "Not recorded" }
                         )
                     }
                     Divider(color = Color(0xFFF3F4F6), thickness = 1.dp)
@@ -1980,7 +1989,7 @@ fun ExpenseDetailsScreen(
                             modifier = Modifier.weight(1f),
                             icon = Icons.Default.Person,
                             label = if (isTamil) "சேர்த்தவர்" else "Added By",
-                            value = expense.addedByPartner.ifBlank { settings.activePartnerName }
+                            value = com.example.data.auth.RecordIdentityPolicy.savedCreatorLabel(expense.addedByPartner, expense.createdByUid, isTamil)
                         )
                         DetailInfoItem(
                             modifier = Modifier.weight(1f),

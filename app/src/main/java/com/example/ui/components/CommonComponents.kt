@@ -1609,21 +1609,24 @@ fun StatusBadge(
     isOldEntry: Boolean = false
 ) {
     val isOldAndDue = isOldEntry && !isPaid
+    val isZeroDue = !isPaid && pendingAmount <= 0.0
     val bg = when {
         isPaid -> SuccessPaidGreenBg
+        isZeroDue -> Color(0xFFF3F4F6)
         isOldAndDue -> Color(0xFF7F1D1D)
         else -> AlertDueRedBg
     }
     val textCol = when {
         isPaid -> SuccessPaidGreen
+        isZeroDue -> Color(0xFF4B5563)
         isOldAndDue -> Color(0xFFFEF08A)
         else -> AlertDueRed
     }
     val border = if (isOldAndDue) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF59E0B)) else null
-    val label = if (isPaid) {
-        if (isTamil) "செலுத்தப்பட்டது" else "PAID"
-    } else {
-        if (isTamil) "நிலுவை: ${formatInr(pendingAmount)}" else "DUE: ${formatInr(pendingAmount)}"
+    val label = when {
+        isPaid -> if (isTamil) "செலுத்தப்பட்டது" else "PAID"
+        isZeroDue -> if (isTamil) "நிலுவை இல்லை" else "NO DUE"
+        else -> if (isTamil) "நிலுவை: ${formatInr(pendingAmount)}" else "DUE: ${formatInr(pendingAmount)}"
     }
 
     Surface(

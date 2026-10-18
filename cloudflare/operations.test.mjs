@@ -127,7 +127,13 @@ test('joining another workspace preserves an existing phone identity and its leg
   const invitationId = 'second-workspace', phone = '+919999999999', now = Date.now();
   const directoryPath = `phoneDirectory/${phone}`;
   const originalDirectory = { uid: 'new-member', workspaceId: 'first-workspace', role: 'OWNER', phoneNumber: phone };
+  const personalWorkspace = { ownerUid: 'new-member', name: 'Personal workspace' };
+  const personalMembership = { workspaceId: 'personal', uid: 'new-member', role: 'OWNER', status: 'ACTIVE' };
+  const user = { uid: 'new-member', defaultWorkspaceId: 'personal', displayName: 'Existing Owner' };
   const db = new MemoryStore({ ...base(), [directoryPath]: originalDirectory,
+    'workspaces/personal': personalWorkspace,
+    'workspaces/personal/members/new-member': personalMembership,
+    'users/new-member': user,
     [`workspaces/${ws}/invitations/${invitationId}`]: { workspaceId: ws, ownerUid: owner,
       phone, name: 'Test Partner', role: 'PARTNER', status: 'PENDING',
       createdAt: now - 1000, expiresAt: now + 100000 } });
@@ -136,6 +142,14 @@ test('joining another workspace preserves an existing phone identity and its leg
   await redeemWorkspaceInvitation(db, owner, { workspaceId: ws, invitationId }, claims);
   assert.deepEqual(db.records.get(directoryPath), originalDirectory);
   assert.equal(db.records.get(`workspaces/${ws}/members/new-member`).role, 'PARTNER');
+  assert.deepEqual(db.records.get('workspaces/personal'), personalWorkspace);
+  assert.deepEqual(db.records.get('workspaces/personal/members/new-member'), personalMembership);
+  assert.deepEqual(db.records.get('users/new-member'), user);
+  assert.equal(db.records.get(`userWorkspaceMemberships/new-member/workspaces/${ws}`).role, 'PARTNER');
+  await assert.rejects(beginWorkspaceInvitation(db, 'new-member', {
+    workspaceId: ws, phone: '+919999999998', role: 'PARTNER', name: 'Not authorized here'
+  }), { status: 'PERMISSION_DENIED' });
+
 });
 test('invitation cannot rebind a phone directory belonging to a different UID', async () => {
   const invitationId = 'conflicting-phone', phone = '+919999999999', now = Date.now();
@@ -501,4 +515,23 @@ test('HTTP handler routes all authorized staging workspaces when actor is member
   const resUnapproved = await call(owner, 'ws_cf_staging_unapproved_fake');
   assert.equal(resUnapproved.status, 403);
   assert.equal((await resUnapproved.json()).error.status, 'PERMISSION_DENIED');
+});
+
+for (const [label, role, status, workspaceOwner, memberWorkspace] of [
+  ['Partner cannot invite', 'PARTNER', 'ACTIVE', owner, ws],
+  ['Operator cannot invite', 'OPERATOR', 'ACTIVE', owner, ws],
+  ['Removed Owner cannot invite', 'OWNER', 'REMOVED', owner, ws],
+  ['Role alone is not workspace ownership', 'OWNER', 'ACTIVE', 'different-owner', ws],
+  ['Foreign membership cannot invite', 'OWNER', 'ACTIVE', owner, 'foreign-workspace'],
+]) test(`invitation boundary: ${label}`, async () => {
+  const db = new MemoryStore({
+    [`workspaces/${ws}`]: {ownerUid: workspaceOwner},
+    [`workspaces/${ws}/members/${owner}`]: {workspaceId: memberWorkspace, role, status},
+  });
+  const before = structuredClone([...db.records]);
+  await assert.rejects(beginWorkspaceInvitation(db, owner, {
+    workspaceId: ws, phone: '+919999999999', role: 'PARTNER', name: 'Synthetic',
+    actorUid: owner, actorRole: 'OWNER',
+  }), {status: 'PERMISSION_DENIED'});
+  assert.deepEqual([...db.records], before);
 });
