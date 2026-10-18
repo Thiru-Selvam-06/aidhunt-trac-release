@@ -40,8 +40,6 @@ trac-release-key.jks
 
 # Local credentials and private runtime evidence remain on this machine.
 /debug.keystore.base64
-/google-services.json
-/app/google-services.json
 /app/src/physicalTest/google-services.json
 /docs/test-artifacts/
 /scripts/__pycache__/

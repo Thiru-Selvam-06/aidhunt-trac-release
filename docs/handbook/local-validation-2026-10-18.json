@@ -1,0 +1,38 @@
+{
+  "scope": "Local synthetic tests only; remote and physical evidence separate",
+  "android": {
+    "tests": 552,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": 71,
+    "build": "PASS",
+    "lint": "PASS",
+    "command": "gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --init-script scripts/ci-tests.gradle --offline --max-workers=1"
+  },
+  "backend": {
+    "tests": 124,
+    "failures": 0,
+    "skipped": 0
+  },
+  "rules": {
+    "tests": 248,
+    "failures": 0,
+    "skipped": 0,
+    "project": "demo-aidhunt-v16",
+    "host": "127.0.0.1:18180"
+  },
+  "python": {
+    "tests": 107,
+    "failures": 0,
+    "command": "python -m unittest discover -s scripts -p test_*.py"
+  },
+  "initialFailures": [
+    "New member presentation fixture omitted required name/phone; corrected before final 552-test run",
+    "Initial backend run missing installed jose; restored npm ci from lockfile, then full backend/Rules passed"
+  ],
+  "releaseGate": "NOT READY",
+  "liveInvitations": "BLOCKED: standard trusted backend absent",
+  "physicalDevice": "Earlier APK installed in place; newer member-display fix not physically verified",
+  "secretsPublished": false
+}
