@@ -62,3 +62,7 @@ docs/regression/*.txt
 docs/stabilization-*.log
 docs/stabilization-*.txt
 *.pyc
+
+# Main Firebase configuration is generated locally, never published.
+/google-services.json
+/app/google-services.json
