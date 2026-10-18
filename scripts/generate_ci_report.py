@@ -5,7 +5,11 @@ import xml.etree.ElementTree as ET
 import json
 import csv
 import shutil
-from datetime import datetime
+import subprocess
+import platform
+import re
+from pathlib import Path
+from datetime import datetime, timezone
 
 def parse_junit_results(test_results_dir):
     total = 0
@@ -17,7 +21,7 @@ def parse_junit_results(test_results_dir):
 
     if not os.path.exists(test_results_dir):
         print(f"Warning: Test results directory {test_results_dir} not found.")
-        return 0, 0, 0, 0, 0, {}
+        return 0, 0, 0, 0, {}
 
     for filename in os.listdir(test_results_dir):
         if filename.endswith(".xml") and filename.startswith("TEST-"):
@@ -60,7 +64,7 @@ def main():
     workflow = os.getenv("GITHUB_WORKFLOW", "Android CI")
     event = os.getenv("GITHUB_EVENT_NAME", "workflow_dispatch")
     actor = os.getenv("GITHUB_ACTOR", "local-user")
-    timestamp = datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     # Directory layout setup
     base_report_dir = f"ci-reports/{run_id}"
@@ -219,6 +223,8 @@ def main():
     critical_totals = 0
     critical_passed = 0
     critical_failed = 0
+    critical_unverified = 0
+    critical_skipped = 0
 
     domain_scorecard = {}
 
@@ -227,37 +233,32 @@ def main():
         test_key_part1 = f"com.example.{c['test']}"
         test_key_part2 = f"com.example.ui.screens.report.{c['test']}"
         
-        status = "PASS"
-        if test_key_part1 in tc_status:
-            status = tc_status[test_key_part1]
-        elif test_key_part2 in tc_status:
-            status = tc_status[test_key_part2]
-        else:
-            # Check prefix matching as fallback
-            found = False
-            for k, val in tc_status.items():
-                if c["test"] in k:
-                    status = val
-                    found = True
-                    break
-            if not found:
-                status = "PASS" # Default pass on regression coverage fallback
+        # Exact JUnit identity is required. An absent or similarly named test is not evidence.
+        status = tc_status.get(test_key_part1, tc_status.get(test_key_part2, "NOT_VERIFIED"))
 
         critical_totals += 1
         if status == "PASS":
             critical_passed += 1
-        else:
+        elif status == "FAIL":
             critical_failed += 1
+        elif status == "SKIP":
+            critical_skipped += 1
+        else:
+            critical_unverified += 1
 
         # Track domain level scorecard
         domain = c["domain"]
         if domain not in domain_scorecard:
-            domain_scorecard[domain] = {"total": 0, "passed": 0, "failed": 0}
+            domain_scorecard[domain] = {"total": 0, "passed": 0, "failed": 0, "unverified": 0, "skipped": 0}
         domain_scorecard[domain]["total"] += 1
         if status == "PASS":
             domain_scorecard[domain]["passed"] += 1
-        else:
+        elif status == "FAIL":
             domain_scorecard[domain]["failed"] += 1
+        elif status == "SKIP":
+            domain_scorecard[domain]["skipped"] += 1
+        else:
+            domain_scorecard[domain]["unverified"] += 1
 
         result_item = {
             "id": c["id"],
@@ -267,25 +268,27 @@ def main():
             "built_behavior_under_test": f"Automated verification of {c['title']}",
             "actor": "OWNER/PARTNER",
             "expected": "PASS",
-            "actual": "PASS" if status == "PASS" else "FAIL",
+            "actual": status,
             "result": status,
-            "evidence": c["test"]
+            "evidence": c["test"] if status != "NOT_VERIFIED" else None
         }
         critical_cases_results.append(result_item)
 
         # Write case-specific JSON
-        with open(f"{base_report_dir}/critical-cases/{c['id']}.json", "w") as f:
+        with open(f"{base_report_dir}/critical-cases/{c['id']}.json", "w", encoding="utf-8") as f:
             json.dump(result_item, f, indent=2)
 
     # Generate domain matrix reports
     for dom, metrics in domain_scorecard.items():
-        with open(f"{base_report_dir}/critical-cases/{dom}.json", "w") as f:
+        with open(f"{base_report_dir}/critical-cases/{dom}.json", "w", encoding="utf-8") as f:
             json.dump({
                 "domain": dom,
                 "total_cases": metrics["total"],
                 "passed": metrics["passed"],
                 "failed": metrics["failed"],
-                "status": "PASS" if metrics["failed"] == 0 else "FAIL"
+                "skipped": metrics["skipped"],
+                "unverified": metrics["unverified"],
+                "status": "FAIL" if metrics["failed"] else ("NOT_VERIFIED" if metrics["unverified"] or metrics["skipped"] else "PASS")
             }, f, indent=2)
 
     # Copy matrices
@@ -300,7 +303,15 @@ def main():
     shutil.copy("docs/testing/diagrams/authorization-flow.json", f"{base_report_dir}/diagrams/test-graph.json")
     shutil.copy("docs/testing/diagrams/offline-sync-cases.json", f"{base_report_dir}/diagrams/sync-flow.json")
 
-    # Generate metadata
+    def tool_version(command):
+        try:
+            process = subprocess.run(command, capture_output=True, text=True, timeout=5)
+            return ((process.stdout + process.stderr).strip().splitlines() or ["unavailable"])[0]
+        except (OSError, subprocess.TimeoutExpired):
+            return "unavailable"
+    wrapper = Path("gradle/wrapper/gradle-wrapper.properties")
+    gradle = re.search(r"gradle-([\d.]+)-", wrapper.read_text(encoding="utf-8")) if wrapper.exists() else None
+    # Generate metadata from actual tools and wrapper, not fixed version claims.
     metadata = {
         "github_run_id": run_id,
         "github_run_number": run_number,
@@ -310,8 +321,10 @@ def main():
         "workflow_event": event,
         "actor": actor,
         "timestamp": timestamp,
-        "java_version": "21",
-        "gradle_version": "9.3.1",
+        "java_version": tool_version(["java", "-version"]),
+        "node_version": tool_version(["node", "--version"]),
+        "python_version": platform.python_version(),
+        "gradle_version": gradle.group(1) if gradle else "unavailable",
         "total_tests": total_tests,
         "passed": passed_tests,
         "failed": failed_tests,
@@ -319,18 +332,20 @@ def main():
         "critical_tests_total": critical_totals,
         "critical_tests_passed": critical_passed,
         "critical_tests_failed": critical_failed,
-        "overall_result": "PASS" if (failed_tests == 0 and critical_failed == 0) else "FAIL"
+        "critical_tests_unverified": critical_unverified,
+        "critical_tests_skipped": critical_skipped,
+        "overall_result": "FAIL" if failed_tests or critical_failed else ("NOT_VERIFIED" if total_tests == 0 or critical_unverified or critical_skipped else "PASS")
     }
 
-    with open(f"{base_report_dir}/run-metadata.json", "w") as f:
+    with open(f"{base_report_dir}/run-metadata.json", "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
     # Generate summary.json
-    with open(f"{base_report_dir}/summary.json", "w") as f:
+    with open(f"{base_report_dir}/summary.json", "w", encoding="utf-8") as f:
         json.dump(critical_cases_results, f, indent=2)
 
     # Generate summary.csv
-    with open(f"{base_report_dir}/summary.csv", "w", newline="") as f:
+    with open(f"{base_report_dir}/summary.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["id", "domain", "title", "expected", "actual", "result", "evidence"])
         for r in critical_cases_results:
@@ -339,8 +354,8 @@ def main():
     # Generate human readable README.md
     scorecard_lines = []
     for dom, metrics in domain_scorecard.items():
-        status_label = "✅ PASS" if metrics["failed"] == 0 else "❌ FAIL"
-        scorecard_lines.append(f"| {dom.replace('-', ' ').title()} | {metrics['total']} | {metrics['passed']} | {metrics['failed']} | {metrics['total'] - metrics['passed'] - metrics['failed']} | {status_label} |")
+        status_label = "FAIL" if metrics["failed"] else ("NOT VERIFIED" if metrics["unverified"] or metrics["skipped"] else "PASS")
+        scorecard_lines.append(f"| {dom.replace('-', ' ').title()} | {metrics['total']} | {metrics['passed']} | {metrics['failed']} | {metrics['skipped']} | {metrics['unverified']} | {status_label} |")
 
     readme_content = f"""# Test Execution Report (Run {run_id})
 
@@ -348,7 +363,7 @@ Executed on: {timestamp}
 Branch: `{branch}` | Commit: `{commit_sha}`  
 Actor: `{actor}` | Event: `{event}`  
 
-## Overall Conclusion: {"✅ **PASS**" if metadata["overall_result"] == "PASS" else "❌ **FAIL**"}
+## Overall Conclusion: {metadata["overall_result"]}
 
 *   **Total JUnit Executed:** `{total_tests}`
 *   **JUnit Passed:** `{passed_tests}`
@@ -359,18 +374,18 @@ Actor: `{actor}` | Event: `{event}`
 
 ## Critical Test Scorecard
 
-| Domain | Critical Cases | Passed | Failed | Skipped | Status |
-| :--- | :---: | :---: | :---: | :---: | :---: |
+| Domain | Critical Cases | Passed | Failed | Skipped | Not verified | Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 {chr(10).join(scorecard_lines)}
 
 ---
 
 ## Intended vs. Built Verification Summary
 
-All critical verification cases have executed against the built system successfully. No gaps were detected in this run. All isolation, authorization, and invariant integrity boundaries remain solid.
+Only exact executed JUnit identities are evidence. Missing mappings are NOT VERIFIED; skipped cases are not passes. These results do not establish physical-device, live-service, or complete application verification. Unverified critical cases: {critical_unverified}; skipped critical cases: {critical_skipped}.
 """
 
-    with open(f"{base_report_dir}/README.md", "w") as f:
+    with open(f"{base_report_dir}/README.md", "w", encoding="utf-8") as f:
         f.write(readme_content)
 
     print("CI Report Successfully Generated!")

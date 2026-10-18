@@ -124,6 +124,7 @@ import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -177,14 +178,55 @@ data class PartnerUiModel(
     val photoUri: String,
     val isConnected: Boolean,
     val originalPartnerEntity: PartnerEntity?,
-    val uid: String = ""
+    val uid: String = "",
+    val pendingInvitation: com.example.data.firebase.WorkspaceMember? = null
 )
 private fun parseLongId(idStr: String): Long {
     return idStr.toLongOrNull() ?: (idStr.hashCode().toLong().let { if (it <= 0) Math.abs(it) + 1L else it })
 }
+
+/** Presentation only: this does not authorize membership or grant capabilities. */
+internal fun workspacePartnerDisplayRole(
+    local: PartnerEntity,
+    member: com.example.data.firebase.WorkspaceMember?,
+    workspaceId: String
+): String {
+    if (member != null) {
+        if (member.workspaceId != workspaceId || member.uid.isBlank() ||
+            !member.status.equals("ACTIVE", true)) return ""
+        return com.example.data.auth.RoleUtils.normalizeRole(member.role)
+    }
+    return if (local.workspaceId == workspaceId) com.example.data.auth.RoleUtils.normalizeRole(local.role) else ""
+}
+
+internal fun pendingInvitationForUnresolvedPartner(
+    partner: PartnerEntity,
+    matchedMember: com.example.data.firebase.WorkspaceMember?
+): com.example.data.firebase.WorkspaceMember? {
+    matchedMember?.takeIf {
+        it.status.equals("waiting_for_registration", ignoreCase = true)
+    }?.let { return it }
+    if (matchedMember != null) return null
+    return com.example.data.firebase.WorkspaceMember(
+        pendingWorkspaceId = partner.workspaceId,
+        uid = "",
+        role = partner.role.ifBlank { "partner" },
+        status = "waiting_for_registration",
+        phoneNumber = partner.phone,
+        displayName = partner.name,
+        addedByUid = null,
+        invitedByUid = null
+    )
+}
+
 @Composable
 fun AccountScreen(
+    cloudConnectionState: com.example.data.firebase.CloudConnectionState = com.example.data.firebase.CloudConnectionState.IDLE,
     currentSubPage: AccountSubPage,
+    deletedUsers: List<com.example.data.entity.DeletedMemberEntity> = emptyList(),
+    deletedUsersError: String = "",
+    pendingActions: List<com.example.data.entity.PendingOperationEntity> = emptyList(),
+    onPermanentlyDeleteUser: (String, String) -> Unit = { _, _ -> },
     onSubPageSelected: (AccountSubPage) -> Unit,
     settings: AppSettingsEntity,
     partners: List<PartnerEntity>,
@@ -196,24 +238,28 @@ fun AccountScreen(
     unsyncedWithdrawalsCount: Int = 0,
     unsyncedCustomersCount: Int = 0,
     totalUnsyncedCount: Int = 0,
+    rejectedOperationCount: Int = 0,
+    blockedOperationCount: Int = 0,
+    syncMessage: String = "",
     pendingInvitations: List<WorkspaceInvitation> = emptyList(),
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     isCollaborationOwner: Boolean = true,
     activeWorkspaceId: String? = null,
+    availableWorkspaces: List<Workspace> = emptyList(),
+    onSwitchWorkspace: ((String) -> Unit)? = null,
     onAcceptInvitation: (WorkspaceInvitation) -> Unit = {},
     onDeclineInvitation: (WorkspaceInvitation) -> Unit = {},
     isSimulatedOffline: Boolean = false,
     onToggleSimulatedOffline: ((Boolean) -> Unit)? = null,
     onTriggerSync: () -> Unit,
+    onRetryRejectedCollection: (String) -> Unit = {},
     onAddTractor: (TractorEntity) -> Unit,
     onUpdateTractor: (TractorEntity) -> Unit,
     onDeleteTractor: (TractorEntity) -> Unit,
-    canDeleteTractor: (TractorEntity) -> Boolean = { true },
-    canDeleteExtension: (WorkTypeExtensionEntity) -> Boolean = { true },
-    onDeleteExtension: ((WorkTypeExtensionEntity) -> Unit)? = null,
     onAddPartner: (PartnerEntity) -> Unit,
     onUpdatePartner: (PartnerEntity) -> Unit,
     onDeletePartner: (PartnerEntity) -> Unit,
+    onRemovePendingInvitation: (com.example.data.firebase.WorkspaceMember) -> Unit = {},
     onUpdateSettings: (AppSettingsEntity) -> Unit,
     lockedPages: Set<String> = emptySet(),
     onSetPageLocked: ((String, Boolean) -> Unit)? = null,
@@ -227,6 +273,8 @@ fun AccountScreen(
     canAddExtension: Boolean = true,
     workTypeExtensions: List<WorkTypeExtensionEntity> = emptyList(),
     onAddExtension: ((String) -> Unit)? = null,
+    onUpdateExtension: ((WorkTypeExtensionEntity) -> Unit)? = null,
+    onDeleteExtension: ((WorkTypeExtensionEntity) -> Unit)? = null,
     currentPersonalHourlyRate: Double? = null,
     onUpdatePersonalHourlyRate: ((Double) -> Unit)? = null,
     authenticatedUserName: String = "",
@@ -241,18 +289,26 @@ fun AccountScreen(
             .background(AppTheme.colors.background)
     ) {
         when (currentSubPage) {
+            AccountSubPage.DELETED_USERS -> if (isCollaborationOwner) {
+                DeletedUsersPage(deletedUsers, { onSubPageSelected(AccountSubPage.MAIN) }, onPermanentlyDeleteUser, deletedUsersError)
+            }
             AccountSubPage.MAIN -> {
                 AccountMainDashboard(
+                    cloudConnectionState = cloudConnectionState,
                     settings = settings,
                     partners = partners,
                     tractors = tractors,
                     isSyncing = isSyncing,
                     isOnline = isOnline,
                     totalUnsyncedCount = totalUnsyncedCount,
+                    rejectedOperationCount = rejectedOperationCount,
+                    blockedOperationCount = blockedOperationCount,
                     pendingInvitations = pendingInvitations,
                     workspaceMembers = workspaceMembers,
                     isCollaborationOwner = isCollaborationOwner,
                     activeWorkspaceId = activeWorkspaceId,
+                    availableWorkspaces = availableWorkspaces,
+                    onSwitchWorkspace = onSwitchWorkspace,
                     onAcceptInvitation = onAcceptInvitation,
                     onDeclineInvitation = onDeclineInvitation,
                     isSimulatedOffline = isSimulatedOffline,
@@ -276,8 +332,14 @@ fun AccountScreen(
                     canAddExtension = canAddExtension,
                     workTypeExtensions = workTypeExtensions,
                     onAddExtension = onAddExtension,
-                    canDeleteExtension = canDeleteExtension,
-                    onDeleteExtension = onDeleteExtension
+                    onUpdateExtension = onUpdateExtension,
+                    onDeleteExtension = onDeleteExtension,
+                    canMutateAsset = { creatorUid ->
+                        val actorUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+                        val actor = workspaceMembers.firstOrNull { it.uid == actorUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true) }
+                        actor != null && workspaceMembers.any { it.uid == creatorUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true) } &&
+                            com.example.data.auth.AuthorizationManager.canMutateAsset(isCollaborationOwner, actor.role, actorUid, creatorUid)
+                    }
                 )
             }
             AccountSubPage.MANAGE_PARTNERS -> {
@@ -297,6 +359,7 @@ fun AccountScreen(
                     onAddPartner = onAddPartner,
                     onUpdatePartner = onUpdatePartner,
                     onDeletePartner = onDeletePartner,
+                    onRemovePendingInvitation = onRemovePendingInvitation,
                     checklistItems = checklistItems,
                     onAddChecklistItem = onAddChecklistItem,
                     onToggleChecklistItem = onToggleChecklistItem,
@@ -333,10 +396,14 @@ fun AccountScreen(
                     isSyncing = isSyncing,
                     isOnline = isOnline,
                     totalUnsyncedCount = totalUnsyncedCount,
+                    rejectedOperationCount = rejectedOperationCount,
+                    blockedOperationCount = blockedOperationCount,
                     pendingInvitations = pendingInvitations,
                     workspaceMembers = workspaceMembers,
                     isCollaborationOwner = isCollaborationOwner,
                     activeWorkspaceId = activeWorkspaceId,
+                    availableWorkspaces = availableWorkspaces,
+                    onSwitchWorkspace = onSwitchWorkspace,
                     onAcceptInvitation = onAcceptInvitation,
                     onDeclineInvitation = onDeclineInvitation,
                     isSimulatedOffline = isSimulatedOffline,
@@ -350,17 +417,22 @@ fun AccountScreen(
             }
             AccountSubPage.SQLITE_SYNC_STATUS -> {
                 SqliteSyncStatusPage(
+                    cloudConnectionState = cloudConnectionState,
+                    pendingActions = pendingActions,
                     settings = settings,
                     isOnline = isOnline,
                     isSyncing = isSyncing,
                     totalUnsyncedCount = totalUnsyncedCount,
+                    rejectedOperationCount = rejectedOperationCount,
+                    syncMessage = syncMessage,
                     unsyncedJobsCount = unsyncedJobsCount,
                     unsyncedExpensesCount = unsyncedExpensesCount,
                     unsyncedWithdrawalsCount = unsyncedWithdrawalsCount,
                     unsyncedCustomersCount = unsyncedCustomersCount,
                     isSimulatedOffline = isSimulatedOffline,
                     onToggleSimulatedOffline = onToggleSimulatedOffline,
-                    onTriggerSync = onTriggerSync
+                    onTriggerSync = onTriggerSync,
+                    onRetryRejectedCollection = onRetryRejectedCollection
                 )
             }
         }
@@ -368,16 +440,21 @@ fun AccountScreen(
 }
 @Composable
 fun AccountMainDashboard(
+    cloudConnectionState: com.example.data.firebase.CloudConnectionState = com.example.data.firebase.CloudConnectionState.IDLE,
     settings: AppSettingsEntity,
     partners: List<PartnerEntity>,
     tractors: List<TractorEntity>,
     isSyncing: Boolean,
     isOnline: Boolean = true,
     totalUnsyncedCount: Int = 0,
+    rejectedOperationCount: Int = 0,
+    blockedOperationCount: Int = 0,
     pendingInvitations: List<WorkspaceInvitation> = emptyList(),
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     isCollaborationOwner: Boolean = true,
     activeWorkspaceId: String? = null,
+    availableWorkspaces: List<Workspace> = emptyList(),
+    onSwitchWorkspace: ((String) -> Unit)? = null,
     onAcceptInvitation: (WorkspaceInvitation) -> Unit = {},
     onDeclineInvitation: (WorkspaceInvitation) -> Unit = {},
     isSimulatedOffline: Boolean = false,
@@ -402,6 +479,7 @@ fun AccountMainDashboard(
     var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
     var showTermsDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var showWorkspaceDialog by remember { mutableStateOf(false) }
     // Section expansion states (all expanded by default like in screenshot)
     var isAccountExpanded by remember { mutableStateOf(true) }
     var isPreferencesExpanded by remember { mutableStateOf(true) }
@@ -779,6 +857,15 @@ fun AccountMainDashboard(
                         onClick = { showProfileDialog = true }
                     )
                     HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
+                    if (availableWorkspaces.size > 1 && onSwitchWorkspace != null) {
+                        AccountSectionItem(
+                            icon = Icons.Default.People,
+                            title = if (isTamil) "பணிமனையை மாற்று" else "Switch Workspace",
+                            testTag = "btn_switch_workspace",
+                            onClick = { showWorkspaceDialog = true }
+                        )
+                        HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
+                    }
                     AccountSectionItem(
                         icon = Icons.Default.Agriculture,
                         title = if (isTamil) "டிராக்டர்களை நிர்வகி" else "Manage Fleet Tractors",
@@ -787,6 +874,11 @@ fun AccountMainDashboard(
                         onClick = { onNavigate(AccountSubPage.MANAGE_TRACTORS) }
                     )
                     HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
+                    if (isCollaborationOwner) {
+                        AccountSectionItem(icon = Icons.Default.Delete, title = "Deleted Users",
+                            testTag = "btn_nav_deleted_users", onClick = { onNavigate(AccountSubPage.DELETED_USERS) })
+                        HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
+                    }
                     AccountSectionItem(
                         icon = Icons.Default.People,
                         title = if (isCollaborationOwner) {
@@ -794,7 +886,7 @@ fun AccountMainDashboard(
                         } else {
                             if (isTamil) "வணிக பங்குதாரர்கள்" else "Business Partners"
                         },
-                        badgeText = "${partners.size} Partners",
+                        badgeText = if (workspaceMembers.isEmpty()) "Members unavailable" else workspaceMembers.count { it.uid != com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid && it.status.equals("ACTIVE", true) && !it.role.equals("OWNER", true) }.toString() + " Members",
                         testTag = "btn_nav_manage_partners",
                         onClick = { onNavigate(AccountSubPage.MANAGE_PARTNERS) }
                     )
@@ -802,7 +894,7 @@ fun AccountMainDashboard(
                     AccountSectionItem(
                         icon = Icons.Default.CloudDone,
                         title = if (isTamil) "பகிர்வு மேகக்கணி ஒத்திசைவு" else "Shared Cloud Sync",
-                        badgeText = if (isSyncing) "Syncing..." else if (!isOnline) "Offline" else "Connected",
+                        badgeText = com.example.data.firebase.cloudSyncLabel(cloudConnectionState, isOnline, isSyncing, totalUnsyncedCount, isTamil, rejectedOperationCount, blockedOperationCount),
                         testTag = "btn_nav_cloud_sync",
                         onClick = { showCloudSyncDialog = true }
                     )
@@ -1068,7 +1160,7 @@ fun AccountMainDashboard(
                     AccountSectionItem(
                         icon = Icons.Default.Storage,
                         title = if (isTamil) "SQLite & கிளவுட் புஷ்" else "Room SQLite & Cloud Push",
-                        badgeText = if (!isOnline) "Offline ($totalUnsyncedCount)" else if (totalUnsyncedCount > 0) "$totalUnsyncedCount Pending" else "Synced",
+                        badgeText = com.example.data.firebase.cloudSyncLabel(cloudConnectionState, isOnline, isSyncing, totalUnsyncedCount, isTamil, rejectedOperationCount, blockedOperationCount),
                         testTag = "btn_nav_sqlite_sync",
                         onClick = { onNavigate(AccountSubPage.SQLITE_SYNC_STATUS) }
                     )
@@ -1180,10 +1272,11 @@ fun AccountMainDashboard(
     // 3. Shared Cloud Sync Dialog
     if (showCloudSyncDialog) {
         CloudSyncStatusDialog(
-            settings = settings,
+            cloudConnectionState = cloudConnectionState,            settings = settings,
             isSyncing = isSyncing,
             isOnline = isOnline,
             totalUnsyncedCount = totalUnsyncedCount,
+                    rejectedOperationCount = rejectedOperationCount,
             isTamil = isTamil,
             onTriggerSync = onTriggerSync,
             onDismiss = { showCloudSyncDialog = false }
@@ -1225,6 +1318,32 @@ fun AccountMainDashboard(
             onDismiss = { showTermsDialog = false }
         )
     }
+    if (showWorkspaceDialog) {
+        AlertDialog(
+            onDismissRequest = { showWorkspaceDialog = false },
+            title = { Text(if (isTamil) "பணிமனையை தேர்வு செய்" else "Choose Workspace") },
+            text = {
+                Column {
+                    availableWorkspaces.forEach { workspace ->
+                        TextButton(onClick = {
+                            showWorkspaceDialog = false
+                            onSwitchWorkspace?.invoke(workspace.workspaceId)
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text(workspace.name.ifBlank { workspace.workspaceId } + " · ${workspace.accessRole}" +
+                                if (workspace.workspaceId == activeWorkspaceId) " ✓" else "",
+                                color = DeepSageGreen)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showWorkspaceDialog = false }) {
+                Text(if (isTamil) "ரத்து" else "Cancel", color = DeepSageGreen)
+            } },
+            containerColor = Color.White
+        )
+    }
+
     // 8. Logout Confirmation Dialog
     if (showLogoutDialog) {
         AlertDialog(
@@ -1565,6 +1684,8 @@ fun EditProfileInfoDialog(
                         },
                         leadingIcon = { Icon(Icons.Default.Call, contentDescription = null, tint = Color(0xFF166534)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        isError = !com.example.ui.util.isOptionalContactPhoneValid(userPhone),
+                        supportingText = { if (!com.example.ui.util.isOptionalContactPhoneValid(userPhone)) Text("Please enter a complete phone number") },
                         modifier = Modifier.fillMaxWidth().trackFocusedField(phoneReq, coroutineScope),
                         singleLine = true,
                         shape = RoundedCornerShape(10.dp)
@@ -1605,7 +1726,7 @@ fun EditProfileInfoDialog(
                                 businessName = businessName.trim(),
                                 ownerName = activePartnerName.trim(),
                                 activePartnerName = activePartnerName.trim(),
-                                businessPhone = userPhone.trim(),
+                                businessPhone = com.example.ui.util.requireOptionalContactPhone(userPhone),
                                 businessAddress = businessAddress.trim(),
                                 gstNumber = gstNumber.trim()
                             )
@@ -1614,11 +1735,12 @@ fun EditProfileInfoDialog(
                         onSave(
                             settings.copy(
                                 activePartnerName = activePartnerName.trim(),
-                                activePartnerPhone = userPhone.trim()
+                                activePartnerPhone = com.example.ui.util.requireOptionalContactPhone(userPhone)
                             )
                         )
                     }
                 },
+                enabled = com.example.ui.util.isOptionalContactPhoneValid(userPhone),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF166534))
             ) {
                 Text(if (isTamil) "சேமி" else "Save Changes")
@@ -1663,13 +1785,13 @@ fun AppSecurityDialog(
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            text = if (isTamil) "🔐 உள்ளூர் குறியாக்கம் (Room SQLite)" else "🔐 Local Encryption (Room SQLite)",
+                            text = if (isTamil) "🔐 உள்ளூர் சேமிப்பு (Room SQLite)" else "🔐 Local Storage (Room SQLite)",
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
                             color = Color(0xFF166534)
                         )
                         Text(
-                            text = if (isTamil) "உங்கள் தரவு உங்கள் சாதனத்தில் பாதுகாப்பாக குறியாக்கம் செய்யப்பட்டுள்ளது." else "Customer billing logs, diesel slips, and partner balances are stored in encrypted local sandbox storage.",
+                            text = if (isTamil) "உங்கள் தரவு இந்த செயலிக்கான தனிப்பட்ட சாதன சேமிப்பில் உள்ளது." else "Business records are stored in private device storage for this app. Room data is not separately encrypted.",
                             fontSize = 11.5.sp,
                             color = Color(0xFF374151)
                         )
@@ -1710,7 +1832,7 @@ fun AppSecurityDialog(
                             color = Color(0xFF1F2937)
                         )
                         Text(
-                            text = if (isTamil) "அனைத்து 3 பங்குதாரர் சாதனங்களும் பாதுகாப்பான OTP மூலம் உள்நுழைந்துள்ளன." else "Only registered partner phone numbers can sign in and sync live fleet updates.",
+                            text = if (isTamil) "ஒவ்வொரு பணியிடத்திற்கும் அங்கீகரிக்கப்பட்ட உறுப்பினர்களின் அணுகல் சரிபார்க்கப்படும்." else "Workspace access is checked against your authenticated identity and active membership.",
                             fontSize = 11.5.sp,
                             color = Color(0xFF4B5563)
                         )
@@ -1733,10 +1855,12 @@ fun AppSecurityDialog(
 // -----------------------------------------------------------------------------
 @Composable
 fun CloudSyncStatusDialog(
+    cloudConnectionState: com.example.data.firebase.CloudConnectionState = com.example.data.firebase.CloudConnectionState.IDLE,
     settings: AppSettingsEntity,
     isSyncing: Boolean,
     isOnline: Boolean,
     totalUnsyncedCount: Int,
+    rejectedOperationCount: Int = 0,
     isTamil: Boolean,
     onTriggerSync: () -> Unit,
     onDismiss: () -> Unit
@@ -1801,7 +1925,7 @@ fun CloudSyncStatusDialog(
                 ) {
                     Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (isSyncing) "Syncing..." else (if (isTamil) "இப்போது ஒத்திசைக்கவும்" else "Sync Cloud Data Now"))
+                    Text(if (cloudConnectionState == com.example.data.firebase.CloudConnectionState.ERROR) "Cloud access failed — check workspace permissions" else if (isSyncing) "Syncing..." else (if (isTamil) "இப்போது ஒத்திசைக்கவும்" else "Sync Cloud Data Now"))
                 }
             }
         },
@@ -2182,13 +2306,17 @@ fun ManageTractorsPage(
     canAddExtension: Boolean = true,
     workTypeExtensions: List<WorkTypeExtensionEntity> = emptyList(),
     onAddExtension: ((String) -> Unit)? = null,
-    canDeleteExtension: (WorkTypeExtensionEntity) -> Boolean = { true },
-    onDeleteExtension: ((WorkTypeExtensionEntity) -> Unit)? = null
+    onUpdateExtension: ((WorkTypeExtensionEntity) -> Unit)? = null,
+    onDeleteExtension: ((WorkTypeExtensionEntity) -> Unit)? = null,
+    canMutateAsset: (String) -> Boolean = { false }
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     var isAddingTractor by remember { mutableStateOf(false) }
     var isAddingExtension by remember { mutableStateOf(false) }
     var extensionNameInput by remember { mutableStateOf("") }
+    var extensionToEdit by remember { mutableStateOf<WorkTypeExtensionEntity?>(null) }
+    var extensionToDelete by remember { mutableStateOf<WorkTypeExtensionEntity?>(null) }
+    var selectedExtensionId by remember(settings.workspaceId) { mutableStateOf<Long?>(null) }
     var tractorToEdit by remember { mutableStateOf<TractorEntity?>(null) }
     var tractorToDelete by remember { mutableStateOf<TractorEntity?>(null) }
     if (isAddingTractor || tractorToEdit != null) {
@@ -2225,6 +2353,7 @@ fun ManageTractorsPage(
                 ) {
                     Button(
                         onClick = { isAddingTractor = true },
+                        enabled = canAddExtension,
                         modifier = Modifier
                             .weight(1f)
                             .height(48.dp)
@@ -2289,7 +2418,7 @@ fun ManageTractorsPage(
                         border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(SageOutline.copy(alpha = 0.6f))),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { tractorToEdit = tractor }
+                            .clickable(enabled = canMutateAsset(tractor.createdByUid)) { tractorToEdit = tractor }
                     ) {
                         Row(
                             modifier = Modifier
@@ -2326,10 +2455,10 @@ fun ManageTractorsPage(
                                 )
                             }
                             Row {
-                                IconButton(onClick = { tractorToEdit = tractor }) {
+                                IconButton(enabled = canMutateAsset(tractor.createdByUid), onClick = { tractorToEdit = tractor }) {
                                     Icon(Icons.Default.Edit, contentDescription = "Edit", tint = DeepSageGreen, modifier = Modifier.size(20.dp))
                                 }
-                                IconButton(onClick = { tractorToDelete = tractor }) {
+                                IconButton(enabled = canMutateAsset(tractor.createdByUid), onClick = { tractorToDelete = tractor }) {
                                     Icon(Icons.Default.Delete, contentDescription = "Delete", tint = TextMutedDark, modifier = Modifier.size(20.dp))
                                 }
                             }
@@ -2353,6 +2482,8 @@ fun ManageTractorsPage(
                         colors = CardDefaults.cardColors(containerColor = Color.White),
                         border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(SageOutline.copy(alpha = 0.6f))),
                         modifier = Modifier.fillMaxWidth()
+                            .clickable { selectedExtensionId = ext.id }
+                            .testTag("extension_card_${ext.id}")
                     ) {
                         Row(
                             modifier = Modifier
@@ -2375,6 +2506,10 @@ fun ManageTractorsPage(
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
+                            if (canMutateAsset(ext.createdByUid)) {
+                                IconButton(onClick = { extensionToEdit = ext; extensionNameInput = ext.name; isAddingExtension = true }) { Icon(Icons.Default.Edit, "Edit extension") }
+                                IconButton(onClick = { extensionToDelete = ext }) { Icon(Icons.Default.Delete, "Delete extension") }
+                            }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = ext.name,
@@ -2388,24 +2523,35 @@ fun ManageTractorsPage(
                                     color = TextSecondaryDark
                                 )
                             }
-                            if (canDeleteExtension(ext) && onDeleteExtension != null) {
-                                IconButton(
-                                    onClick = { onDeleteExtension.invoke(ext) },
-                                    modifier = Modifier.size(36.dp).testTag("btn_delete_extension_${ext.id}")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Delete Extension",
-                                        tint = Color(0xFFDC2626),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
                         }
                     }
                 }
             }
         }
+    }
+    selectedExtensionId?.let { id ->
+        workTypeExtensions.firstOrNull { it.id == id && it.workspaceId == settings.workspaceId }?.let { ext ->
+            AlertDialog(
+                onDismissRequest = { selectedExtensionId = null },
+                title = { Text(if (isTamil) "வேலை வகை விவரங்கள்" else "Extension Details", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(ext.name)
+                        Text(if (isTamil) "பகிரப்பட்ட பணிமனை வேலை வகை" else "Shared workspace work type")
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { selectedExtensionId = null }) { Text(if (isTamil) "மூடு" else "Close") }
+                }
+            )
+        }
+    }
+    if (extensionToDelete != null) {
+        AlertDialog(onDismissRequest = { extensionToDelete = null },
+            title = { Text(if (isTamil) "வேலை வகையை நீக்கவா?" else "Delete extension?") },
+            text = { Text(extensionToDelete?.name.orEmpty()) },
+            confirmButton = { TextButton(onClick = { extensionToDelete?.let { onDeleteExtension?.invoke(it) }; extensionToDelete = null }) { Text(if (isTamil) "நீக்கு" else "Delete") } },
+            dismissButton = { TextButton(onClick = { extensionToDelete = null }) { Text(if (isTamil) "ரத்து" else "Cancel") } })
     }
     if (isAddingExtension) {
         AlertDialog(
@@ -2436,7 +2582,9 @@ fun ManageTractorsPage(
                     onClick = {
                         val trimmed = extensionNameInput.trim()
                         if (trimmed.isNotBlank()) {
-                            onAddExtension?.invoke(trimmed)
+                            val original = extensionToEdit
+                            if (original == null) onAddExtension?.invoke(trimmed) else onUpdateExtension?.invoke(original.copy(name = trimmed))
+                            extensionToEdit = null
                             isAddingExtension = false
                             extensionNameInput = ""
                         }
@@ -2707,6 +2855,7 @@ fun ManagePartnersPage(
     onAddPartner: (PartnerEntity) -> Unit,
     onUpdatePartner: (PartnerEntity) -> Unit,
     onDeletePartner: (PartnerEntity) -> Unit,
+    onRemovePendingInvitation: (com.example.data.firebase.WorkspaceMember) -> Unit = {},
     onSwitchActivePartner: (PartnerEntity) -> Unit,
     checklistItems: List<com.example.data.entity.ChecklistItemEntity> = emptyList(),
     onAddChecklistItem: ((String) -> Unit)? = null,
@@ -2726,22 +2875,21 @@ fun ManagePartnersPage(
     var showAddDialog by remember { mutableStateOf(false) }
     var partnerToEdit by remember { mutableStateOf<PartnerEntity?>(null) }
     var partnerToDelete by remember { mutableStateOf<PartnerEntity?>(null) }
+    var selectedPartnerDetailsKey by remember(settings.workspaceId) { mutableStateOf<String?>(null) }
+    var pendingInvitationToDelete by remember { mutableStateOf<PartnerUiModel?>(null) }
     var partnerForAccessControl by remember { mutableStateOf<PartnerUiModel?>(null) }
     val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid?.trim()
     val ownerNameClean = settings.ownerName.trim()
     val ownerPhoneClean = settings.businessPhone.filter { it.isDigit() }.takeLast(10)
-    // Filter out local owner entities so owner never appears as a regular partner
-    val filteredLocalPartners = partners.filter { partner ->
-        val pPhoneClean = partner.phone.filter { it.isDigit() }.takeLast(10)
-        val isOwnerRole = partner.role.equals("owner", ignoreCase = true)
-        val isOwnerPhone = ownerPhoneClean.isNotBlank() && pPhoneClean == ownerPhoneClean
-        !isOwnerRole && !isOwnerPhone
-    }
+    // Local mirrors can contain a role from another workspace or an older snapshot.
+    // Resolve current membership before filtering or displaying a person's role.
+    val filteredLocalPartners = partners.filter { it.workspaceId == settings.workspaceId }
+    val scopedMembers = workspaceMembers.filter { it.workspaceId == settings.workspaceId }
     // Reconcile into unified UI models with strict Owner vs Partner display filtering
-    val reconciledPartners = remember(filteredLocalPartners, workspaceMembers, currentUid, ownerPhoneClean, isCollaborationOwner, isTamil, settings.workspaceId, settings.ownerName, settings.businessPhone) {
+    val reconciledPartners = remember(filteredLocalPartners, scopedMembers, currentUid, ownerPhoneClean, isCollaborationOwner, isTamil, settings.workspaceId, settings.ownerName, settings.businessPhone) {
         val list = mutableListOf<PartnerUiModel>()
         val matchedMemberKeys = mutableSetOf<String>()
-        val ownerMember = workspaceMembers.find { it.role.equals("owner", ignoreCase = true) }
+        val ownerMember = scopedMembers.find { it.role.equals("owner", ignoreCase = true) }
         val resolvedOwnerUid = ownerMember?.uid?.trim()?.ifBlank { null }
             ?: settings.workspaceId.removePrefix("ws_").trim()
         val resolvedOwnerName = ownerMember?.displayName?.trim()?.ifBlank { null }
@@ -2767,7 +2915,8 @@ fun ManagePartnersPage(
                 photoUri = "",
                 isConnected = true,
                 originalPartnerEntity = null,
-                uid = resolvedOwnerUid
+                uid = resolvedOwnerUid,
+                pendingInvitation = null
             )
             list.add(ownerModel)
             if (resolvedOwnerUid.isNotBlank()) {
@@ -2777,14 +2926,16 @@ fun ManagePartnersPage(
         // 2. Process local partners and match with remote members
         for (partner in filteredLocalPartners) {
             val pPhoneClean = partner.phone.filter { it.isDigit() }.takeLast(10)
-            val matchedMember = workspaceMembers.find { member ->
-                val isUidMatch = member.uid.isNotBlank() && (partner.id == parseLongId(member.uid) || partner.id == member.uid.hashCode().toLong())
+            val matchedMember = scopedMembers.find { member ->
+                val isUidMatch = member.uid.isNotBlank() && (partner.firebaseUid == member.uid ||
+                    (partner.firebaseUid.isBlank() && (partner.id == parseLongId(member.uid) || partner.id == member.uid.hashCode().toLong())))
                 val mPhoneClean = member.phoneNumber?.filter { it.isDigit() }?.takeLast(10) ?: ""
-                val isPhoneMatch = mPhoneClean.isNotBlank() && mPhoneClean == pPhoneClean
+                val isPhoneMatch = partner.firebaseUid.isBlank() && mPhoneClean.isNotBlank() && mPhoneClean == pPhoneClean
                 isUidMatch || isPhoneMatch
             }
             // Exclude Owner from partner entries
-            if (isOwner(matchedMember?.uid, matchedMember?.role ?: partner.role)) {
+            val displayRole = workspacePartnerDisplayRole(partner, matchedMember, settings.workspaceId)
+            if (isOwner(matchedMember?.uid, displayRole)) {
                 continue
             }
             // Exclude current logged in user (the partner themself or owner themself)
@@ -2811,16 +2962,20 @@ fun ManagePartnersPage(
                     id = partner.id,
                     name = partner.name.ifBlank { matchedMember?.displayName ?: partner.phone },
                     phone = partner.phone.ifBlank { matchedMember?.phoneNumber ?: "" },
-                    role = partner.role.ifBlank { if (isTamil) "பங்குதாரர்" else "Partner" },
+                    role = displayRole,
                     photoUri = partner.photoUri,
                     isConnected = isConnected,
                     originalPartnerEntity = partner,
-                    uid = matchedMember?.uid ?: ""
+                    uid = matchedMember?.uid ?: "",
+                    // Keep the action on the dedicated pending-invitation path even when
+                    // the local partner row arrived before the pending-phone snapshot.
+                    // The repository re-checks registration and pending state before deletion.
+                    pendingInvitation = pendingInvitationForUnresolvedPartner(partner, matchedMember)
                 )
             )
         }
         // 3. Add remote members who aren't in the local list
-        for (member in workspaceMembers) {
+        for (member in scopedMembers) {
             // Exclude Owner
             if (isOwner(member.uid, member.role)) {
                 continue
@@ -2843,7 +2998,8 @@ fun ManagePartnersPage(
             if (duplicateByPhone) {
                 continue
             }
-            val isConnectedMember = !member.status.equals("waiting_for_registration", ignoreCase = true) || member.uid.isNotBlank()
+            if (member.status.equals("REMOVED", true)) continue
+            val isConnectedMember = member.status.equals("ACTIVE", true) && member.uid.isNotBlank()
             list.add(
                 PartnerUiModel(
                     id = if (member.uid.isNotBlank()) parseLongId(member.uid) else parseLongId(member.phoneNumber ?: "0"),
@@ -2853,7 +3009,10 @@ fun ManagePartnersPage(
                     photoUri = "",
                     isConnected = isConnectedMember,
                     originalPartnerEntity = null,
-                    uid = member.uid
+                    uid = member.uid,
+                    pendingInvitation = member.takeIf {
+                        it.status.equals("waiting_for_registration", ignoreCase = true)
+                    }
                 )
             )
         }
@@ -3046,7 +3205,9 @@ fun ManagePartnersPage(
                 shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(SageOutline.copy(alpha = 0.6f))),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().clickable {
+                    selectedPartnerDetailsKey = partner.uid.ifBlank { partner.phone.ifBlank { partner.id.toString() } }
+                }.testTag("partner_card_${partner.id}")
             ) {
                 Row(
                     modifier = Modifier
@@ -3105,23 +3266,31 @@ fun ManagePartnersPage(
                             }
                         }
                     }
-                    val canDeleteThisPartner = isCollaborationOwner || !partner.isConnected
-                    if (isCollaborationOwner || canDeleteThisPartner) {
+                    val canCleanupPending = partner.pendingInvitation?.let {
+                        com.example.data.auth.canCleanupPendingInvitation(it, settings.workspaceId, currentUid.orEmpty(),
+                            if (isCollaborationOwner) "Owner" else workspaceMembers.firstOrNull { m -> m.uid == currentUid && m.status.equals("active", true) && m.role.equals("Partner", true) }?.role.orEmpty())
+                    } == true
+                    if (isCollaborationOwner || canCleanupPending) {
                         val entityToUse = partner.originalPartnerEntity ?: PartnerEntity(
                             id = partner.id,
                             workspaceId = settings.workspaceId,
                             name = partner.name,
                             phone = partner.phone,
                             role = partner.role,
-                            photoUri = partner.photoUri
+                            photoUri = partner.photoUri,
+                            firebaseUid = partner.uid
                         )
                         Row {
-                            if (isCollaborationOwner) {
-                                IconButton(onClick = { partnerToEdit = entityToUse }) {
-                                    Icon(Icons.Default.Edit, contentDescription = "Edit", tint = DeepSageGreen, modifier = Modifier.size(20.dp))
-                                }
+                            if (isCollaborationOwner) IconButton(onClick = { partnerToEdit = entityToUse }) {
+                                Icon(Icons.Default.Edit, contentDescription = "Edit", tint = DeepSageGreen, modifier = Modifier.size(20.dp))
                             }
-                            IconButton(onClick = { partnerToDelete = entityToUse }) {
+                            if (partner.pendingInvitation == null || canCleanupPending || isCollaborationOwner) IconButton(onClick = {
+                                if (partner.pendingInvitation != null) {
+                                    pendingInvitationToDelete = partner
+                                } else {
+                                    partnerToDelete = entityToUse.copy(firebaseUid = partner.uid)
+                                }
+                            }) {
                                 Icon(Icons.Default.Delete, contentDescription = "Delete", tint = AlertDueRed, modifier = Modifier.size(20.dp))
                             }
                         }
@@ -3130,6 +3299,28 @@ fun ManagePartnersPage(
             }
         }
 
+    }
+    selectedPartnerDetailsKey?.let { selectedKey ->
+        reconciledPartners.firstOrNull { partner ->
+            partner.uid.ifBlank { partner.phone.ifBlank { partner.id.toString() } } == selectedKey
+        }?.let { selected ->
+            AlertDialog(
+                onDismissRequest = { selectedPartnerDetailsKey = null },
+                title = { Text(if (isTamil) "உறுப்பினர் விவரங்கள்" else "Member Details", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(selected.name)
+                        Text("${if (isTamil) "பங்கு" else "Role"}: ${com.example.data.auth.RoleUtils.getRoleDisplayName(selected.role, isTamil)}")
+                        if (selected.phone.isNotBlank()) Text("${if (isTamil) "தொலைபேசி" else "Phone"}: ${selected.phone}")
+                        Text(if (selected.isConnected) (if (isTamil) "இணைக்கப்பட்டது" else "Connected")
+                            else (if (isTamil) "கணக்கு பதிவு செய்யப்படவில்லை" else "Account not created"))
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { selectedPartnerDetailsKey = null }) { Text(if (isTamil) "மூடு" else "Close") }
+                }
+            )
+        }
     }
     if (showAddDialog || partnerToEdit != null) {
         PartnerFormDialog(
@@ -3160,7 +3351,7 @@ fun ManagePartnersPage(
                     if (isTamil)
                         "'${partner.name}' பங்குதாரரை நிச்சயமாக நீக்க விரும்புகிறீர்களா? இவர்கள் இனி பகிரப்பட்ட பதிவுகளை பார்க்க முடியாது."
                     else
-                        "Are you sure you want to remove '${partner.name}' from this shared business? They will no longer share entries and records."
+                        "Are you sure you want to remove '${partner.name}' from this shared business? Their access will be revoked. Entries and financial history will be retained. Permanent deletion is a separate action in Deleted Users."
                 )
             },
             confirmButton = {
@@ -3176,6 +3367,43 @@ fun ManagePartnersPage(
             },
             dismissButton = {
                 TextButton(onClick = { partnerToDelete = null }) {
+                    Text(if (isTamil) "ரத்து" else "Cancel")
+                }
+            }
+        )
+    }
+    pendingInvitationToDelete?.let { pendingPartner ->
+        AlertDialog(
+            onDismissRequest = { pendingInvitationToDelete = null },
+            title = {
+                Text(
+                    if (isTamil) "நிலுவையில் உள்ள அழைப்பை நீக்கவா?" else "Remove pending invitation?",
+                    fontWeight = FontWeight.Bold,
+                    color = ForestGreenHeader
+                )
+            },
+            text = {
+                Text(
+                    if (isTamil) {
+                        "'${pendingPartner.name}' பதிவு செய்யாத அழைப்பை நீக்க வேண்டுமா?"
+                    } else {
+                        "Remove the unregistered invitation for '${pendingPartner.name}'?"
+                    }
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingPartner.pendingInvitation?.let(onRemovePendingInvitation)
+                        pendingInvitationToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AlertDueRed)
+                ) {
+                    Text(if (isTamil) "நீக்கு" else "Remove")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingInvitationToDelete = null }) {
                     Text(if (isTamil) "ரத்து" else "Cancel")
                 }
             }
@@ -3602,14 +3830,29 @@ fun PartnerFormDialog(
     onDismiss: () -> Unit,
     onSave: (PartnerEntity) -> Unit
 ) {
+    val invitationService = remember { com.example.data.firebase.WorkspaceInvitationService() }
+    val invitationContext = LocalContext.current
+    val workspaceId = initialPartner?.workspaceId ?: com.example.data.repository.WorkspaceRepository.getInstance(invitationContext, com.example.data.database.AppDatabase.getInstance(invitationContext)).activeWorkspaceId.value.orEmpty()
+    var otpSent by remember { mutableStateOf(false) }
+    var instantVerified by remember { mutableStateOf(false) }
+    var otp by remember { mutableStateOf("") }
+    var invitationBusy by remember { mutableStateOf(false) }
+    var invitationError by remember { mutableStateOf("") }
     var name by remember { mutableStateOf(initialPartner?.name ?: "") }
     var phone by remember { mutableStateOf(initialPartner?.phone ?: "") }
+    val ownerOnlyNotice = if (isTamil) {
+        "பணியிட உரிமையாளர் மட்டுமே அழைப்புகளை அனுப்ப முடியும். இந்த எண்ணை அழைக்க உரிமையாளரிடம் கேளுங்கள்."
+    } else {
+        "Only the workspace Owner can send invitations. Ask the Owner to invite this number."
+    }
     var selectedRole by remember {
         mutableStateOf(
             if (isCollaborationOwner) {
                 com.example.data.auth.RoleUtils.normalizeRole(initialPartner?.role ?: "Partner")
+            } else if (initialPartner != null) {
+                com.example.data.auth.RoleUtils.normalizeRole(initialPartner.role)
             } else {
-                com.example.data.auth.RoleUtils.ROLE_OPERATOR
+                ""
             }
         )
     }
@@ -3618,19 +3861,20 @@ fun PartnerFormDialog(
     val nameRequester = remember { BringIntoViewRequester() }
     val phoneRequester = remember { BringIntoViewRequester() }
     val isNameInvalid = name.isBlank()
-    val isPhoneInvalid = phone.isBlank()
+    val isPhoneInvalid = if (initialPartner == null) !com.example.ui.util.isInvitationPhoneValid(phone) else !com.example.ui.util.isOptionalContactPhoneValid(phone)
 
-    val allowedRoles = remember(isCollaborationOwner) {
+    val allowedRoles = remember(isCollaborationOwner, initialPartner) {
         if (isCollaborationOwner) {
             listOf(
-                com.example.data.auth.RoleUtils.ROLE_CO_OWNER,
                 com.example.data.auth.RoleUtils.ROLE_PARTNER,
                 com.example.data.auth.RoleUtils.ROLE_OPERATOR
             )
-        } else {
+        } else if (initialPartner != null) {
             listOf(
-                com.example.data.auth.RoleUtils.ROLE_OPERATOR
+                com.example.data.auth.RoleUtils.normalizeRole(initialPartner.role)
             )
+        } else {
+            emptyList()
         }
     }
 
@@ -3668,17 +3912,45 @@ fun PartnerFormDialog(
                     },
                     modifier = Modifier.fillMaxWidth().trackFocusedField(nameRequester, coroutineScope)
                 )
+                if (!isCollaborationOwner && initialPartner == null) {
+                    Card(
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(containerColor = AlertDueRed.copy(alpha = 0.1f)),
+                        border = BorderStroke(1.dp, AlertDueRed.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth().testTag("card_owner_only_invitation_notice")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = AlertDueRed,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = ownerOnlyNotice,
+                                color = AlertDueRed,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
                 OutlinedTextField(
                     value = phone,
                     onValueChange = { phone = it },
-                    label = { Text(if (isTamil) "தொலைபேசி எண் *" else "Phone Number *") },
+                    label = { Text(if (initialPartner == null) (if (isTamil) "தொலைபேசி எண் *" else "Phone Number *") else (if (isTamil) "தொலைபேசி எண் (விருப்பத்தேர்வு)" else "Phone Number (Optional)")) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                     singleLine = true,
                     isError = hasAttemptedSubmit && isPhoneInvalid,
                     supportingText = {
                         if (hasAttemptedSubmit && isPhoneInvalid) {
                             Text(
-                                if (isTamil) "தொலைபேசி எண் தேவை *" else "Phone number is required *",
+                                if (isTamil) "முழுமையான தொலைபேசி எண்ணை உள்ளிடவும்" else "Please enter a complete phone number",
                                 color = AlertDueRed,
                                 fontSize = 10.sp
                             )
@@ -3694,6 +3966,11 @@ fun PartnerFormDialog(
                     color = ForestGreenHeader
                 )
 
+                if (otpSent && !instantVerified) {
+                    OutlinedTextField(value = otp, onValueChange = { otp = it.filter(Char::isDigit).take(6) },
+                        label = { Text("Invitation OTP shared by the target person") }, singleLine = true)
+                }
+                if (invitationError.isNotBlank()) Text(invitationError, color = AlertDueRed)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -3703,7 +3980,7 @@ fun PartnerFormDialog(
                         val roleLabel = com.example.data.auth.RoleUtils.getRoleDisplayName(roleOption, isTamil)
                         FilterChip(
                             selected = isSelected,
-                            onClick = { selectedRole = roleOption },
+                            onClick = { if (initialPartner == null) selectedRole = roleOption },
                             label = { Text(roleLabel, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = DeepSageGreen,
@@ -3718,6 +3995,10 @@ fun PartnerFormDialog(
             Button(
                 onClick = {
                     hasAttemptedSubmit = true
+                    if (initialPartner == null && !isCollaborationOwner) {
+                        invitationError = ownerOnlyNotice
+                        return@Button
+                    }
                     if (!isNameInvalid && !isPhoneInvalid) {
                         val partner = PartnerEntity(
                             id = initialPartner?.id ?: 0,
@@ -3726,12 +4007,40 @@ fun PartnerFormDialog(
                             role = selectedRole,
                             photoUri = initialPartner?.photoUri ?: ""
                         )
-                        onSave(partner)
+                        if (initialPartner != null) {
+                            onSave(partner.copy(workspaceId = initialPartner.workspaceId))
+                        } else if (!invitationBusy) {
+                            invitationBusy = true; invitationError = ""
+                            coroutineScope.launch {
+                                try {
+                                    if (!otpSent) {
+                                        var baseContext: android.content.Context = invitationContext
+                                        while (baseContext is android.content.ContextWrapper && baseContext !is android.app.Activity) baseContext = baseContext.baseContext
+                                        val activity = baseContext as? android.app.Activity ?: throw IllegalStateException("Invitation requires the active screen")
+                                        invitationService.begin(activity, workspaceId, name.trim(), phone.trim(), selectedRole,
+                                            onCodeSent = { otpSent = true; invitationBusy = false },
+                                            onError = { invitationError = it; invitationBusy = false },
+                                            onVerified = { instantVerified = true; otpSent = true; invitationBusy = false })
+                                    } else {
+                                        invitationService.confirm(if (instantVerified) "" else otp)
+                                        invitationBusy = false
+                                        onSave(partner.copy(workspaceId = workspaceId))
+                                    }
+                                } catch (e: Exception) {
+                                    invitationBusy = false
+                                    invitationError = if (e is SecurityException && e.message == com.example.data.firebase.WorkspaceInvitationService.OWNER_ONLY_ERROR) {
+                                        ownerOnlyNotice
+                                    } else {
+                                        e.message ?: "Invitation could not be verified"
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = DeepSageGreen)
             ) {
-                Text(if (initialPartner != null) (if (isTamil) "புதுப்பிக்க" else "Update") else (if (isTamil) "சேமி" else "Save Partner"))
+                Text(if (initialPartner != null) (if (isTamil) "புதுப்பிக்க" else "Update") else (if (invitationBusy) "Verifying…" else if (instantVerified) "Confirm and Add Member" else if (otpSent) "Verify OTP and Add Member" else "Send Invitation OTP"))
             }
         },
         dismissButton = {
@@ -3982,6 +4291,8 @@ fun BusinessSettingsPage(
                         label = { Text(if (isTamil) "தொடர்பு தொலைபேசி எண்" else "Primary Contact Phone") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         singleLine = true,
+                        isError = !com.example.ui.util.isOptionalContactPhoneValid(businessPhone),
+                        supportingText = { if (!com.example.ui.util.isOptionalContactPhoneValid(businessPhone)) Text("Please enter a complete phone number") },
                         modifier = Modifier.fillMaxWidth().trackFocusedField(phoneReq, coroutineScope)
                     )
                     OutlinedTextField(
@@ -4020,7 +4331,7 @@ fun BusinessSettingsPage(
                                 val updated = settings.copy(
                                     businessName = businessName,
                                     ownerName = ownerName,
-                                    businessPhone = businessPhone,
+                                    businessPhone = com.example.ui.util.requireOptionalContactPhone(businessPhone),
                                     defaultHourlyRate = rateVal,
                                     businessAddress = address,
                                     profilePhotoUri = profilePhotoUri
@@ -4032,6 +4343,7 @@ fun BusinessSettingsPage(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("btn_save_business_settings"),
+                            enabled = com.example.ui.util.isOptionalContactPhoneValid(businessPhone),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = DeepSageGreen)
                         ) {
@@ -4061,17 +4373,22 @@ fun BusinessSettingsPage(
 }
 @Composable
 fun SqliteSyncStatusPage(
+    cloudConnectionState: com.example.data.firebase.CloudConnectionState = com.example.data.firebase.CloudConnectionState.IDLE,
+    pendingActions: List<com.example.data.entity.PendingOperationEntity> = emptyList(),
+    syncMessage: String = "",
     settings: AppSettingsEntity,
     isOnline: Boolean,
     isSyncing: Boolean,
     totalUnsyncedCount: Int,
+    rejectedOperationCount: Int = 0,
     unsyncedJobsCount: Int,
     unsyncedExpensesCount: Int,
     unsyncedWithdrawalsCount: Int,
     unsyncedCustomersCount: Int,
     isSimulatedOffline: Boolean,
     onToggleSimulatedOffline: ((Boolean) -> Unit)?,
-    onTriggerSync: () -> Unit
+    onTriggerSync: () -> Unit,
+    onRetryRejectedCollection: (String) -> Unit = {}
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     LazyColumn(
@@ -4080,6 +4397,33 @@ fun SqliteSyncStatusPage(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        items(pendingActions, key = { it.operationId }) { action ->
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("${action.entityType} #${action.entityId} · ${action.mutationType}", fontWeight = FontWeight.Bold)
+                    Text(when (action.state) {
+                        "REJECTED" -> if (isTamil) "ஒத்திசைவு நிராகரிக்கப்பட்டது" else "Sync rejected — local action retained"
+                        "INVALIDATED" -> if (isTamil) "நீக்கப்பட்ட உறுப்பினர் அல்லது பதிவு" else "Cancelled action retained — see reason below"
+                        else -> if (action.failureReason.startsWith("Blocked by a rejected earlier action")) {
+                            if (isTamil) "முந்தைய நிராகரிக்கப்பட்ட செயலால் தடுக்கப்பட்டது" else "Blocked — earlier action rejected"
+                        } else if (isTamil) "ஒத்திசைவுக்காக காத்திருக்கிறது" else "Waiting to sync"
+                    })
+                    val diagnostic = com.example.ui.util.OperationDiagnostic.guidance(action)
+                    Text("Operation: ${action.operationId}")
+                    Text("Workspace: ${action.workspaceId} · Attempts: ${action.attempts}")
+                    Text("Original action time: ${action.actionTime}")
+                    Text("${diagnostic.category} · ${if (diagnostic.retryable) "Retryable" else "No automatic retry"}")
+                    Text(diagnostic.nextAction)
+                    if (action.failureReason.isNotBlank()) Text("Backend/sync error: ${action.failureReason}", color = AlertDueRed)
+                    if (action.state == "REJECTED" && action.entityType == "PAYMENT" &&
+                        action.failureReason.contains("PERMISSION_DENIED", ignoreCase = true)) {
+                        TextButton(onClick = { onRetryRejectedCollection(action.operationId) }, enabled = isOnline && !isSyncing) {
+                            Text("Retry after access is fixed")
+                        }
+                    }
+                }
+            }
+        }
         // Status Hero Card
         item {
             val infiniteTransition = rememberInfiniteTransition(label = "sqlite_sync_anim")
@@ -4163,14 +4507,18 @@ fun SqliteSyncStatusPage(
                                             )
                                     )
                                     Text(
-                                        text = if (!isOnline) {
+                                        text = if (rejectedOperationCount > 0) {
+                                            rejectedOperationCount.toString() + " actions need review; original data retained"
+                                        } else if (cloudConnectionState == com.example.data.firebase.CloudConnectionState.ERROR) {
+                                            "Cloud access failed — check workspace permissions"
+                                        } else if (!isOnline) {
                                             if (isTamil) "ஆஃப்லைன் பயன்முறை" else "Offline Storage Mode"
                                         } else if (isSyncing) {
                                             if (isTamil) "கிளவுடிற்கு ஒத்திசைக்கப்படுகிறது..." else "Syncing with Cloud..."
                                         } else if (totalUnsyncedCount > 0) {
                                             if (isTamil) "$totalUnsyncedCount பதிவுகள் கிளவுடிற்கு தயாராக உள்ளன" else "$totalUnsyncedCount Items Pending Upload"
                                         } else {
-                                            if (isTamil) "அனைத்து பதிவுகளும் ஒத்திசைக்கப்பட்டது" else "All SQLite Records Synced"
+                                            if (isTamil) "அனைத்து பதிவுகளும் ஒத்திசைக்கப்பட்டது" else "Local queue empty; cloud connection checked separately"
                                         },
                                         fontSize = 17.sp,
                                         fontWeight = FontWeight.Bold,
@@ -4252,6 +4600,7 @@ fun SqliteSyncStatusPage(
                             fontWeight = FontWeight.Bold
                         )
                     }
+                    if (syncMessage.isNotBlank()) Text(syncMessage, fontSize = 12.sp, color = TextPrimaryDark)
                 }
             }
         }

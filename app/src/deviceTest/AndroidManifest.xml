@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <application android:label="AIDHUNT Trac Emulator" android:networkSecurityConfig="@xml/device_test_network" tools:replace="android:label">
+        <!-- Compose instrumentation host exists only in the isolated demo variant. -->
+        <activity android:name="androidx.activity.ComponentActivity" android:exported="true" />
+    </application>
+</manifest>

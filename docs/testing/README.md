@@ -26,4 +26,4 @@ This area holds our comprehensive test strategies, matrices, case specifications
 
 ## Technical Verification Policy
 
-Every critical test documented in this framework corresponds to an active, automated Robolectric or unit test in our regression test suite. Gaps between business requirements (Intended) and current code capabilities (Built) are explicitly analyzed and documented, ensuring full transparency.
+These files are test specifications and candidate mappings, not executed coverage guarantees. Some historical mappings were withdrawn during reconciliation. Use exact assertions and current JUnit/run artifacts; missing evidence remains NOT VERIFIED. See docs/handbook/06-verification.md and the explicit instrumentation plan.

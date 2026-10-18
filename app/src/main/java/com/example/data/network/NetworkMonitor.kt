@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 /**
  * Monitors live device network connectivity (WiFi / Cellular / Ethernet)
@@ -27,7 +28,19 @@ class NetworkMonitor(context: Context) {
     private var onNetworkAvailableListener: (() -> Unit)? = null
 
     init {
-        try {
+        if (com.example.BuildConfig.DEVICE_TEST) {
+            CoroutineScope(Dispatchers.IO).launch {
+                while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                    val reachable = listOf(19099, 18180, 15001).all { port ->
+                        try { java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", port), 500) }; true } catch (_: Exception) { false }
+                    }
+                    val restored = reachable && !_isOnline.value
+                    _isOnline.value = reachable
+                    if (restored) onNetworkAvailableListener?.invoke()
+                    kotlinx.coroutines.delay(2000)
+                }
+            }
+        } else try {
             val networkRequest = NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build()
@@ -73,6 +86,7 @@ class NetworkMonitor(context: Context) {
     }
 
     private fun checkInitialConnectivity(): Boolean {
+        if (com.example.BuildConfig.DEVICE_TEST) return false
         return try {
             val activeNetwork = connectivityManager?.activeNetwork ?: return false
             val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false

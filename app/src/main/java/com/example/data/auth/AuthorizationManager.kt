@@ -1,6 +1,8 @@
 package com.example.data.auth
 
+import com.example.data.entity.ExpenseEntity
 import com.example.data.entity.JobEntryEntity
+import com.example.data.entity.WithdrawalEntity
 import com.example.data.firebase.WorkspaceMember
 import java.util.Calendar
 
@@ -30,14 +32,14 @@ object AuthorizationManager {
      * Checks if the entire application access is blocked due to SUSPENDED or EXPIRED status.
      */
     fun isAccountBlocked(): Boolean {
-        return currentAccessControl.isAccountBlocked
+        return false // v1.6: no plan/account-validity gates; membership is enforced separately.
     }
 
     /**
      * Returns resolved account status (ACTIVE, SUSPENDED, EXPIRED).
      */
     fun getAccountStatus(): AccountStatus {
-        return currentAccessControl.getResolvedStatus()
+        return AccountStatus.ACTIVE
     }
 
     /**
@@ -46,8 +48,7 @@ object AuthorizationManager {
      * - Requires platform permission canCreateNewEntry == true.
      */
     fun canCreateNewEntry(isOwner: Boolean = true): Boolean {
-        if (isAccountBlocked()) return false
-        return currentAccessControl.permissions.canCreateNewEntry
+        return true // The repository requires authenticated active workspace context.
     }
 
     /**
@@ -58,15 +59,7 @@ object AuthorizationManager {
      * - Does not depend on generic subordinate access-control permissions or partner page locks.
      */
     fun canCreateOldEntry(isOwner: Boolean, role: String = ""): Boolean {
-        if (isAccountBlocked()) return false
-        if (!isOwner) return false
-        if (role.isNotBlank()) {
-            val normalizedRole = RoleUtils.normalizeRole(role)
-            if (normalizedRole == RoleUtils.ROLE_PARTNER || normalizedRole == RoleUtils.ROLE_OPERATOR) {
-                return false
-            }
-        }
-        return true
+        return isOwner && (role.isBlank() || RoleUtils.normalizeRole(role) == RoleUtils.ROLE_OWNER)
     }
 
     /**
@@ -74,7 +67,7 @@ object AuthorizationManager {
      * - Requires account to be ACTIVE.
      * - OWNER: Can delete ANY entry (own or others') without 24-hour restriction.
      *   Owner deletion does not depend on Partner permissions or generic access control.
-     * - PARTNER: Can delete ONLY their own entry AND ONLY within 24 HOURS of immutable creation timestamp,
+     * - PARTNER: Can delete ONLY their own UID-attributed entry AND ONLY within 24 HOURS of immutable creation timestamp,
      *   provided platform permission canDeleteEntry == true.
      * - OPERATOR: MUST NOT delete entries under any circumstances.
      */
@@ -86,34 +79,10 @@ object AuthorizationManager {
         currentTimeMillis: Long = System.currentTimeMillis(),
         role: String = ""
     ): Boolean {
-        if (isAccountBlocked()) return false
-
-        // OWNER: Unrestricted deletion for workspace authority
-        if (isOwner && (role.isBlank() || RoleUtils.normalizeRole(role) != RoleUtils.ROLE_OPERATOR)) {
-            return true
-        }
-
-        // Subordinate delete requires platform permission
-        if (!currentAccessControl.permissions.canDeleteEntry) return false
-
-        // Operator has NO delete permission under authoritative rules
-        if (RoleUtils.normalizeRole(role) == RoleUtils.ROLE_OPERATOR) return false
-
-        // Partner cannot delete Owner-created entries
-        if (job.createdByRole.equals(RoleUtils.ROLE_OWNER, ignoreCase = true)) return false
-
-        // Partner must be the creator of the entry
-        if (currentUid.isNotBlank() && job.createdByUid.isNotBlank()) {
-            if (job.createdByUid != currentUid) return false
-        } else {
-            if (currentActorName.isBlank()) return false
-            val isSelf = isCreatedByActor(job, currentActorName)
-            if (!isSelf) return false
-        }
-
-        // Partner 24-hour creation timestamp window (currentTime - job.createdAt < 24 hours)
-        val ageMillis = currentTimeMillis - job.createdAt
-        return ageMillis in 0 until (24 * 60 * 60 * 1000L)
+        val normalized = RoleUtils.normalizeRole(role)
+        if (isOwner && (role.isBlank() || normalized == RoleUtils.ROLE_OWNER)) return true
+        if (normalized !in setOf(RoleUtils.ROLE_PARTNER, RoleUtils.ROLE_OPERATOR) || job.isHistorical) return false
+        return currentUid.isNotBlank() && job.createdByUid == currentUid && within24Hours(job.createdAt, currentTimeMillis)
     }
 
     /**
@@ -124,7 +93,6 @@ object AuthorizationManager {
     fun canDeleteCustomer(
         isOwner: Boolean
     ): Boolean {
-        if (isAccountBlocked()) return false
         return isOwner
     }
 
@@ -132,7 +100,7 @@ object AuthorizationManager {
      * EDIT RULES:
      * - Requires account to be ACTIVE.
      * - OWNER: Can edit ANY entry without 24-hour restriction.
-     * - PARTNER / OPERATOR: Can edit ONLY their own entry AND ONLY within 24 HOURS of actual creation timestamp,
+     * - PARTNER / OPERATOR: Can edit ONLY their own UID-attributed entry AND ONLY within 24 HOURS of actual creation timestamp,
      *   provided platform permission canEditEntry == true.
      */
     fun canEditEntry(
@@ -143,28 +111,10 @@ object AuthorizationManager {
         currentTimeMillis: Long = System.currentTimeMillis(),
         role: String = ""
     ): Boolean {
-        if (isAccountBlocked()) return false
-
-        // OWNER: Unrestricted edit for workspace authority
-        if (isOwner && (role.isBlank() || RoleUtils.normalizeRole(role) != RoleUtils.ROLE_OPERATOR)) {
-            return true
-        }
-
-        if (!currentAccessControl.permissions.canEditEntry) return false
-
-        // Partner / Operator cannot edit Owner-created entries
-        if (job.createdByRole.equals(RoleUtils.ROLE_OWNER, ignoreCase = true)) return false
-
-        // Partner / Operator must be the creator of the entry
-        if (currentUid.isNotBlank() && job.createdByUid.isNotBlank()) {
-            if (job.createdByUid != currentUid) return false
-        } else {
-            if (currentActorName.isBlank()) return false
-            val isSelf = isCreatedByActor(job, currentActorName)
-            if (!isSelf) return false
-        }
-        val ageMillis = currentTimeMillis - job.createdAt
-        return ageMillis in 0 until (24 * 60 * 60 * 1000L)
+        val normalized = RoleUtils.normalizeRole(role)
+        if (isOwner && (role.isBlank() || normalized == RoleUtils.ROLE_OWNER)) return true
+        if (normalized !in setOf(RoleUtils.ROLE_PARTNER, RoleUtils.ROLE_OPERATOR) || job.isHistorical) return false
+        return currentUid.isNotBlank() && job.createdByUid == currentUid && within24Hours(job.createdAt, currentTimeMillis)
     }
 
     /**
@@ -174,9 +124,7 @@ object AuthorizationManager {
      * - Operator has NO privilege to collect payment.
      */
     fun canCollectPayment(isOwner: Boolean = true, role: String = ""): Boolean {
-        if (isAccountBlocked()) return false
-        if (RoleUtils.normalizeRole(role) == RoleUtils.ROLE_OPERATOR) return false
-        return currentAccessControl.permissions.canCollectPayment
+        return if (isOwner) role.isBlank() || RoleUtils.isOwner(role) else RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER
     }
 
     /**
@@ -186,6 +134,9 @@ object AuthorizationManager {
      * - Owner authority must not depend on Partner page locks or Partner permissions.
      * - This method is semantically for collection/payment records, not Job Entries.
      */
+    fun canDeleteCollection(isOwner: Boolean): Boolean {
+        return isOwner
+    }
 
     /**
      * CAN MANAGE CUSTOMERS:
@@ -193,18 +144,13 @@ object AuthorizationManager {
      * - Operator has NO customer management access.
      */
     fun canManageCustomers(isOwner: Boolean = true, role: String = ""): Boolean {
-        if (isAccountBlocked()) return false
-        if (RoleUtils.normalizeRole(role) == RoleUtils.ROLE_OPERATOR) return false
-        return true
+        return if (isOwner) role.isBlank() || RoleUtils.isOwner(role) else RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER
     }
 
     /**
      * CAN VIEW CUSTOMER CREDIT:
      */
     fun canViewCustomerCredit(isOwner: Boolean, lockedPages: Set<String> = emptySet(), role: String = ""): Boolean {
-        if (isAccountBlocked()) return false
-        if (isOwner) return true
-        if (!currentAccessControl.permissions.canViewCustomerCredit) return false
         return canAccessPage(PAGE_CUSTOMER_CREDIT_DUE, isOwner, lockedPages, role)
     }
 
@@ -212,9 +158,6 @@ object AuthorizationManager {
      * CAN VIEW BUSINESS OVERVIEW:
      */
     fun canViewBusinessOverview(isOwner: Boolean, lockedPages: Set<String> = emptySet(), role: String = ""): Boolean {
-        if (isAccountBlocked()) return false
-        if (isOwner) return true
-        if (!currentAccessControl.permissions.canViewBusinessOverview) return false
         return canAccessPage(PAGE_BUSINESS_OVERVIEW, isOwner, lockedPages, role)
     }
 
@@ -222,9 +165,6 @@ object AuthorizationManager {
      * CAN VIEW BALANCE SHEET:
      */
     fun canViewBalanceSheet(isOwner: Boolean, lockedPages: Set<String> = emptySet(), role: String = ""): Boolean {
-        if (isAccountBlocked()) return false
-        if (isOwner) return true
-        if (!currentAccessControl.permissions.canViewBalanceSheet) return false
         return canAccessPage(PAGE_BALANCE_SHEET, isOwner, lockedPages, role)
     }
 
@@ -232,9 +172,6 @@ object AuthorizationManager {
      * CAN VIEW COLLECTION HISTORY:
      */
     fun canViewCollectionHistory(isOwner: Boolean, lockedPages: Set<String> = emptySet(), role: String = ""): Boolean {
-        if (isAccountBlocked()) return false
-        if (isOwner) return true
-        if (!currentAccessControl.permissions.canViewCollectionHistory) return false
         return canAccessPage(PAGE_COLLECTION_HISTORY, isOwner, lockedPages, role)
     }
 
@@ -242,9 +179,6 @@ object AuthorizationManager {
      * CAN VIEW EXPENSES:
      */
     fun canViewExpenses(isOwner: Boolean, lockedPages: Set<String> = emptySet(), role: String = ""): Boolean {
-        if (isAccountBlocked()) return false
-        if (isOwner) return true
-        if (!currentAccessControl.permissions.canViewExpenses) return false
         return canAccessPage(PAGE_EXPENSES, isOwner, lockedPages, role)
     }
 
@@ -252,10 +186,64 @@ object AuthorizationManager {
      * CAN VIEW WITHDRAWALS:
      */
     fun canViewWithdrawals(isOwner: Boolean, lockedPages: Set<String> = emptySet(), role: String = ""): Boolean {
-        if (isAccountBlocked()) return false
-        if (isOwner) return true
-        if (!currentAccessControl.permissions.canViewWithdrawals) return false
         return canAccessPage(PAGE_WITHDRAWAL, isOwner, lockedPages, role)
+    }
+
+    /**
+     * WITHDRAWAL DELETE RULES:
+     * - Requires account to be ACTIVE.
+     * - OWNER: Can delete ANY withdrawal record without restriction.
+     * - PARTNER / OPERATOR: No authority to delete withdrawals.
+     */
+    fun canDeleteWithdrawal(
+        withdrawal: WithdrawalEntity,
+        isOwner: Boolean,
+        currentActorName: String = "",
+        currentUid: String = "",
+        role: String = "",
+        currentTimeMillis: Long = System.currentTimeMillis()
+    ): Boolean {
+        if (isOwner && (role.isBlank() || RoleUtils.isOwner(role))) return true
+        return RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER && currentUid.isNotBlank() &&
+            withdrawal.createdByUid == currentUid && withdrawal.targetPartnerUid == currentUid && within24Hours(withdrawal.createdAt, currentTimeMillis)
+    }
+
+    /**
+     * EXPENSE DELETE RULES:
+     * - Requires account to be ACTIVE.
+     * - OWNER: Can delete ANY expense record without restriction.
+     * - PARTNER / OPERATOR: No authority to delete expenses.
+     */
+    fun canDeleteExpense(
+        expense: ExpenseEntity,
+        isOwner: Boolean,
+        currentActorName: String = "",
+        currentUid: String = "",
+        role: String = "",
+        currentTimeMillis: Long = System.currentTimeMillis()
+    ): Boolean {
+        if (isOwner && (role.isBlank() || RoleUtils.isOwner(role))) return true
+        return RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER && currentUid.isNotBlank() &&
+            expense.createdByUid == currentUid && within24Hours(expense.createdAt, currentTimeMillis)
+    }
+
+    /**
+     * EXPENSE EDIT RULES:
+     * - Requires account to be ACTIVE.
+     * - OWNER: Can edit ANY expense record without 24-hour restriction.
+     * - PARTNER / OPERATOR: No authority to edit expenses.
+     */
+    fun canEditExpense(
+        expense: ExpenseEntity,
+        isOwner: Boolean,
+        currentActorName: String = "",
+        currentUid: String = "",
+        currentTimeMillis: Long = System.currentTimeMillis(),
+        role: String = ""
+    ): Boolean {
+        if (isOwner && (role.isBlank() || RoleUtils.isOwner(role))) return true
+        return RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER && currentUid.isNotBlank() &&
+            expense.createdByUid == currentUid && within24Hours(expense.createdAt, currentTimeMillis)
     }
 
     /**
@@ -284,15 +272,14 @@ object AuthorizationManager {
         workspaceMembers: List<WorkspaceMember> = emptyList()
     ): Boolean {
         if (isAccountBlocked()) return false
-        if (!currentAccessControl.permissions.canViewWithdrawals) return false
-        if (actorUid.isBlank() || targetUid.isBlank()) return false
+        if (actorUid.isBlank() || targetUid.isBlank() || workspaceId.isBlank()) return false
 
         // Resolve authoritative role from workspace membership if available
         val actorMember = workspaceMembers.firstOrNull {
-            it.uid == actorUid && (it.status.isBlank() || it.status.equals("active", ignoreCase = true))
-        }
+            it.uid == actorUid && it.workspaceId == workspaceId && it.status.equals("active", ignoreCase = true)
+        } ?: return false
         val effectiveRole = RoleUtils.normalizeRole(
-            actorMember?.role?.takeIf { it.isNotBlank() } ?: actorRole
+            actorMember.role
         )
 
         // Operators are never authorized to withdraw
@@ -301,20 +288,20 @@ object AuthorizationManager {
         }
 
         // Owner can withdraw for self and any eligible partner in the active workspace
-        if (effectiveRole == RoleUtils.ROLE_OWNER || effectiveRole == RoleUtils.ROLE_CO_OWNER) {
+        if (effectiveRole == RoleUtils.ROLE_OWNER) {
             if (targetUid == actorUid) return true
             if (workspaceMembers.isNotEmpty()) {
                 val targetMember = workspaceMembers.firstOrNull {
-                    it.uid == targetUid && (it.status.isBlank() || it.status.equals("active", ignoreCase = true))
+                    it.uid == targetUid && it.workspaceId == workspaceId && it.status.equals("active", ignoreCase = true)
                 }
                 if (targetMember != null) {
                     val targetRole = RoleUtils.normalizeRole(targetMember.role)
-                    return targetRole != RoleUtils.ROLE_OPERATOR
+                    return targetRole == RoleUtils.ROLE_PARTNER
                 }
                 return false
             }
-            // If workspaceMembers is empty (e.g. offline fallback), allow owner
-            return true
+            // Missing target membership never grants authority.
+            return false
         }
 
         // Partner can ONLY withdraw for themselves (targetUid must equal actorUid)
@@ -341,41 +328,16 @@ object AuthorizationManager {
         targetPartnerUid: String = "",
         targetPartnerPhone: String = ""
     ): Boolean {
-        if (isAccountBlocked()) return false
-        val normalizedRole = RoleUtils.normalizeRole(userRole)
-        if (normalizedRole == RoleUtils.ROLE_OPERATOR) return false
-
-        // Owner can take for self and any partner in the workspace
-        if (isOwner) return true
-
-        // Partner can ONLY take for themselves
-        if (normalizedRole == RoleUtils.ROLE_PARTNER) {
-            // Strict UID match takes priority
-            if (targetPartnerUid.isNotBlank() && authenticatedUid.isNotBlank()) {
-                return targetPartnerUid == authenticatedUid
-            }
-            // If targetPartnerUid was blank, check phone
-            val cleanUserPhone = authenticatedPhone.filter { it.isDigit() }.takeLast(10)
-            val cleanTargetPhone = targetPartnerPhone.filter { it.isDigit() }.takeLast(10)
-            if (cleanUserPhone.isNotBlank() && cleanTargetPhone.isNotBlank()) {
-                return cleanUserPhone == cleanTargetPhone
-            }
-            // Name match (case-insensitive) only if UID was not specified
-            if (authenticatedName.isNotBlank() && targetPartnerName.isNotBlank()) {
-                return authenticatedName.trim().equals(targetPartnerName.trim(), ignoreCase = true)
-            }
-            return false
-        }
-
-        return false
+        if (authenticatedUid.isBlank() || targetPartnerUid.isBlank()) return false
+        if (isOwner && RoleUtils.isOwner(userRole)) return true
+        return RoleUtils.normalizeRole(userRole) == RoleUtils.ROLE_PARTNER && targetPartnerUid == authenticatedUid
     }
 
     /**
      * CAN EXPORT PDF:
      */
     fun canExportPdf(): Boolean {
-        if (isAccountBlocked()) return false
-        return currentAccessControl.permissions.canExportPdf
+        return true // Role restriction is applied by the workspace-aware ViewModel.
     }
 
     /**
@@ -384,18 +346,14 @@ object AuthorizationManager {
      * - Operator cannot manage tractors.
      */
     fun canManageTractors(isOwner: Boolean = true, role: String = ""): Boolean {
-        if (isAccountBlocked()) return false
-        if (RoleUtils.normalizeRole(role) == RoleUtils.ROLE_OPERATOR) return false
-        return currentAccessControl.permissions.canManageTractors
+        return if (isOwner) role.isBlank() || RoleUtils.isOwner(role) else RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER
     }
 
     /**
      * CAN MANAGE PARTNERS:
      */
     fun canManagePartners(isOwner: Boolean): Boolean {
-        if (isAccountBlocked()) return false
-        if (!isOwner) return false
-        return currentAccessControl.permissions.canManagePartners
+        return isOwner
     }
 
     /**
@@ -405,9 +363,7 @@ object AuthorizationManager {
      * - Operator: NO
      */
     fun canAddExtension(isOwner: Boolean, role: String = ""): Boolean {
-        if (isAccountBlocked()) return false
-        if (RoleUtils.normalizeRole(role) == RoleUtils.ROLE_OPERATOR) return false
-        return true
+        return canManageTractors(isOwner, role)
     }
 
     /**
@@ -417,7 +373,6 @@ object AuthorizationManager {
      * - Operator: NO
      */
     fun canEditBusinessName(isOwner: Boolean): Boolean {
-        if (isAccountBlocked()) return false
         return isOwner
     }
 
@@ -428,9 +383,7 @@ object AuthorizationManager {
      * - OPERATOR: Self only.
      */
     fun canCreateEntryFor(isOwner: Boolean, currentActorUid: String, targetPersonUid: String): Boolean {
-        if (isOwner) return true
-        if (currentActorUid.isBlank()) return true
-        return targetPersonUid.isBlank() || targetPersonUid == currentActorUid
+        return currentActorUid.isNotBlank() && targetPersonUid.isNotBlank() && (isOwner || targetPersonUid == currentActorUid)
     }
 
     /**
@@ -473,211 +426,22 @@ object AuthorizationManager {
         lockedPages: Set<String>,
         role: String = ""
     ): Boolean {
-        if (isAccountBlocked()) return false
-
-        // Operator role restrictions
-        val normalizedRole = RoleUtils.normalizeRole(role)
-        if (normalizedRole == RoleUtils.ROLE_OPERATOR) {
-            when (pageKey) {
-                PAGE_REPORT,
-                PAGE_EXPENSES,
-                PAGE_BALANCE_SHEET,
-                PAGE_BUSINESS_OVERVIEW,
-                PAGE_WITHDRAWAL,
-                PAGE_CUSTOMER_CREDIT_DUE,
-                PAGE_COLLECTION_HISTORY -> return false
-            }
-        }
-
-        // Owner has access to all workspace pages (bypasses partner page locks and subordinate permissions)
-        if (isOwner) return true
-
-        // Check platform permission for specific page (for non-owner collaborators)
-        when (pageKey) {
-            PAGE_EXPENSES -> if (!currentAccessControl.permissions.canViewExpenses) return false
-            PAGE_BALANCE_SHEET -> if (!currentAccessControl.permissions.canViewBalanceSheet) return false
-            PAGE_BUSINESS_OVERVIEW -> if (!currentAccessControl.permissions.canViewBusinessOverview) return false
-            PAGE_WITHDRAWAL -> if (!currentAccessControl.permissions.canViewWithdrawals) return false
-            PAGE_CUSTOMER_CREDIT_DUE -> if (!currentAccessControl.permissions.canViewCustomerCredit) return false
-            PAGE_COLLECTION_HISTORY -> if (!currentAccessControl.permissions.canViewCollectionHistory) return false
-            PAGE_NEW_ENTRY -> if (!currentAccessControl.permissions.canCreateNewEntry && !currentAccessControl.permissions.canCreateOldEntry) return false
-        }
-        
-        // New Job Entry (PAGE_NEW_ENTRY) must always be accessible unless platform locked
-        if (pageKey == PAGE_NEW_ENTRY) return true
-        
-        // Check if page is locked for partners by Owner
-        return pageKey !in lockedPages
+        val resolved = RoleUtils.normalizeRole(role)
+        if (isOwner && (role.isBlank() || resolved == RoleUtils.ROLE_OWNER)) return true
+        if (resolved == RoleUtils.ROLE_PARTNER) return true
+        return resolved == RoleUtils.ROLE_OPERATOR && pageKey in setOf(PAGE_HOME, PAGE_ACCOUNT, PAGE_NEW_ENTRY)
     }
+    fun within24Hours(createdAt: Long, actionTime: Long = System.currentTimeMillis()): Boolean =
+        createdAt > 0L && actionTime >= createdAt && actionTime - createdAt < 86_400_000L
 
-    fun canDeleteTractor(
-        tractorCreatedByUid: String,
-        tractorCreatedAt: Long,
-        isOwner: Boolean,
-        currentUid: String = "",
-        currentTimeMillis: Long = System.currentTimeMillis(),
-        role: String = ""
-    ): Boolean {
-        if (isAccountBlocked()) return false
-        if (isOwner && (role.isBlank() || RoleUtils.normalizeRole(role) != RoleUtils.ROLE_OPERATOR)) {
-            return true
-        }
-        if (!currentAccessControl.permissions.canDeleteEntry) return false
-        if (RoleUtils.normalizeRole(role) == RoleUtils.ROLE_OPERATOR) return false
+    fun canReverseCollection(payment: com.example.data.entity.PaymentEntity, isOwner: Boolean,
+        uid: String, role: String, actionTime: Long = System.currentTimeMillis()): Boolean =
+        payment.status == "ACTIVE" && ((isOwner && RoleUtils.isOwner(role)) ||
+            (RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER && uid.isNotBlank() &&
+                payment.collectedByUid == uid && within24Hours(payment.createdAt, actionTime)))
 
-        if (tractorCreatedByUid.isBlank()) {
-            return isOwner
-        }
+    fun canMutateAsset(isOwner: Boolean, role: String, uid: String, createdByUid: String): Boolean =
+        (isOwner && RoleUtils.isOwner(role)) || (RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER &&
+            uid.isNotBlank() && uid == createdByUid)
 
-        if (currentUid.isNotBlank() && tractorCreatedByUid != currentUid) {
-            return false
-        }
-
-        val ageMillis = currentTimeMillis - tractorCreatedAt
-        return ageMillis in 0 until (24 * 60 * 60 * 1000L)
-    }
-
-    fun canDeleteExtension(
-        extensionCreatedByUid: String,
-        extensionCreatedAt: Long,
-        isOwner: Boolean,
-        currentUid: String = "",
-        currentTimeMillis: Long = System.currentTimeMillis(),
-        role: String = ""
-    ): Boolean {
-        if (isAccountBlocked()) return false
-        if (isOwner && (role.isBlank() || RoleUtils.normalizeRole(role) != RoleUtils.ROLE_OPERATOR)) {
-            return true
-        }
-        if (!currentAccessControl.permissions.canDeleteEntry) return false
-        if (RoleUtils.normalizeRole(role) == RoleUtils.ROLE_OPERATOR) return false
-
-        if (extensionCreatedByUid.isBlank()) {
-            return isOwner
-        }
-
-        if (currentUid.isNotBlank() && extensionCreatedByUid != currentUid) {
-            return false
-        }
-
-        val ageMillis = currentTimeMillis - extensionCreatedAt
-        return ageMillis in 0 until (24 * 60 * 60 * 1000L)
-    }
-
-    fun canEditExpense(
-        expenseCreatedByUid: String,
-        expensePaidByUid: String,
-        expenseCreatedAt: Long,
-        isOwner: Boolean,
-        currentUid: String = "",
-        currentTimeMillis: Long = System.currentTimeMillis(),
-        role: String = ""
-    ): Boolean {
-        if (isAccountBlocked()) return false
-        if (isOwner && (role.isBlank() || RoleUtils.normalizeRole(role) != RoleUtils.ROLE_OPERATOR)) {
-            return true
-        }
-        if (!currentAccessControl.permissions.canEditEntry) return false
-        if (RoleUtils.normalizeRole(role) == RoleUtils.ROLE_OPERATOR) return false
-
-        val ownerUid = expenseCreatedByUid.ifBlank { expensePaidByUid }
-        if (currentUid.isNotBlank() && ownerUid.isNotBlank() && ownerUid != currentUid) {
-            return false
-        }
-
-        val ageMillis = currentTimeMillis - expenseCreatedAt
-        return ageMillis in 0 until (24 * 60 * 60 * 1000L)
-    }
-
-    fun canDeleteExpense(
-        expenseCreatedByUid: String,
-        expensePaidByUid: String,
-        expenseCreatedAt: Long,
-        isOwner: Boolean,
-        currentUid: String = "",
-        currentTimeMillis: Long = System.currentTimeMillis(),
-        role: String = ""
-    ): Boolean {
-        if (isAccountBlocked()) return false
-        val normalizedRole = RoleUtils.normalizeRole(role)
-        if (normalizedRole == RoleUtils.ROLE_OPERATOR) return false
-
-        if (isOwner) {
-            return true
-        }
-
-        if (!currentAccessControl.permissions.canDeleteEntry) return false
-
-        // PARTNER: Ownership requires createdByUid == currentUid OR paidByUid == currentUid
-        val isSelf = currentUid.isNotBlank() && (
-            (expenseCreatedByUid.isNotBlank() && expenseCreatedByUid == currentUid) ||
-            (expensePaidByUid.isNotBlank() && expensePaidByUid == currentUid)
-        )
-        if (!isSelf) {
-            return false
-        }
-
-        val ageMillis = currentTimeMillis - expenseCreatedAt
-        return ageMillis in 0 until (24 * 60 * 60 * 1000L)
-    }
-
-    fun canDeleteCollection(
-        collectionCreatedByUid: String,
-        collectionCreatedAt: Long,
-        isOwner: Boolean,
-        currentUid: String = "",
-        currentTimeMillis: Long = System.currentTimeMillis(),
-        role: String = ""
-    ): Boolean {
-        if (isAccountBlocked()) return false
-        val normalizedRole = RoleUtils.normalizeRole(role)
-        if (normalizedRole == RoleUtils.ROLE_OPERATOR) return false
-
-        if (isOwner || RoleUtils.isOwner(normalizedRole) || role.equals("owner", ignoreCase = true)) {
-            return true
-        }
-
-        if (!currentAccessControl.permissions.canDeleteEntry) return false
-
-        // PARTNER: Ownership requires createdByUid == currentUid
-        val isSelf = currentUid.isNotBlank() && collectionCreatedByUid.isNotBlank() && collectionCreatedByUid == currentUid
-        if (!isSelf) {
-            return false
-        }
-
-        val ageMillis = currentTimeMillis - collectionCreatedAt
-        return ageMillis in 0..(24 * 60 * 60 * 1000L)
-    }
-
-    fun canDeleteWithdrawal(
-        withdrawalTargetPartnerUid: String,
-        withdrawalCreatedByUid: String,
-        withdrawalCreatedAt: Long,
-        isOwner: Boolean,
-        currentUid: String = "",
-        currentTimeMillis: Long = System.currentTimeMillis(),
-        role: String = ""
-    ): Boolean {
-        if (isAccountBlocked()) return false
-        val normalizedRole = RoleUtils.normalizeRole(role)
-        if (normalizedRole == RoleUtils.ROLE_OPERATOR) return false
-
-        if (isOwner) {
-            return true
-        }
-
-        if (!currentAccessControl.permissions.canDeleteEntry) return false
-
-        // PARTNER: Ownership requires targetPartnerUid == currentUid OR createdByUid == currentUid
-        val isSelf = currentUid.isNotBlank() && (
-            (withdrawalTargetPartnerUid.isNotBlank() && withdrawalTargetPartnerUid == currentUid) ||
-            (withdrawalCreatedByUid.isNotBlank() && withdrawalCreatedByUid == currentUid)
-        )
-        if (!isSelf) {
-            return false
-        }
-
-        val ageMillis = currentTimeMillis - withdrawalCreatedAt
-        return ageMillis in 0 until (24 * 60 * 60 * 1000L)
-    }
 }

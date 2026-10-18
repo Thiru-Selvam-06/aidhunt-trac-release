@@ -644,7 +644,7 @@ class ExampleRobolectricTest {
             totalAmount = 5000.0,
             amountReceived = 5000.0,
             pendingAmount = 0.0,
-            addedByPartner = "Owner" // Owner created for Partner Perumal
+            addedByPartner = "Owner", createdByUid = "owner", entryForUid = "perumal", financialAttributionUid = "perumal"
         )
 
         val scope = com.example.ui.util.FinancialScope(mode = com.example.ui.util.FinancialScopeMode.OVERALL)
@@ -664,7 +664,7 @@ class ExampleRobolectricTest {
             expenses = emptyList(),
             withdrawals = emptyList(),
             partners = emptyList(),
-            workspaceMembers = emptyList(),
+            workspaceMembers = listOf(com.example.data.firebase.WorkspaceMember(uid = "perumal", workspaceId = "ws_attribution_test", role = "PARTNER", status = "ACTIVE", displayName = "Partner Perumal")),
             scope = scope
         )
 
@@ -853,11 +853,11 @@ class ExampleRobolectricTest {
         assertEquals(2500.0, expTotal, 0.01)
 
         // 10. Delete second job: Job removed, linked expense removed, Customer Due recalculated correctly
-        expenseDao.deleteExpensesForJob(job2.id)
+        expenseDao.deleteExpensesForJob(job2.workspaceId, job2.id)
         jobDao.deleteJob(job2)
 
         val remainingJobs = jobDao.getJobsForWorkspace(wsId).first()
-        val remainingExpenses = expenseDao.getExpensesForJob(job2.id)
+        val remainingExpenses = expenseDao.getExpensesForJob(job2.workspaceId, job2.id)
         due = jobDao.getTotalPendingForWorkspace(wsId).first() ?: 0.0
         recorded = jobDao.getTotalRecordedForWorkspace(wsId).first() ?: 0.0
 
@@ -1131,11 +1131,11 @@ class ExampleRobolectricTest {
 
         val scope = FinancialScope(mode = FinancialScopeMode.OVERALL)
         val breakdowns = FinancialCalculationEngine.calculatePartnerBreakdown(
-            jobs = jobs,
+            jobs = jobs.map { job -> job.copy(workspaceId = "test", createdByUid = "owner", entryForUid = if (job.operatorName == "Owner") "owner" else "partner") },
             expenses = emptyList(),
             withdrawals = emptyList(),
             partners = emptyList(),
-            workspaceMembers = emptyList(),
+            workspaceMembers = listOf(com.example.data.firebase.WorkspaceMember(uid = "owner", workspaceId = "test", role = "OWNER", status = "ACTIVE", displayName = "Owner"), com.example.data.firebase.WorkspaceMember(uid = "partner", workspaceId = "test", role = "PARTNER", status = "ACTIVE", displayName = "Partner 1")),
             scope = scope
         )
 

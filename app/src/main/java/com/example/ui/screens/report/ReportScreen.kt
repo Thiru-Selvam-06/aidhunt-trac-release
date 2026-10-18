@@ -104,7 +104,6 @@ fun ReportScreen(
     onAddExpense: (ExpenseEntity) -> Unit,
     onUpdateExpense: (ExpenseEntity) -> Unit,
     onDeleteExpense: (ExpenseEntity) -> Unit,
-    canDeleteExpense: ((ExpenseEntity) -> Boolean)? = null,
     onAddWithdrawal: (WithdrawalEntity) -> Unit,
     onDeleteWithdrawal: (WithdrawalEntity) -> Unit,
     onUpdateCustomer: (CustomerEntity) -> Unit = {},
@@ -115,14 +114,14 @@ fun ReportScreen(
     onDeleteJob: ((JobEntryEntity) -> Unit)? = null,
     isOwner: Boolean = false,
     actorName: String = "",
-    actorUid: String = "",
-    currentUserRole: String = "",
+    currentUid: String = "",
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
+    businessOverviewMembers: List<com.example.data.firebase.WorkspaceMember>? = null,
     payments: List<com.example.data.entity.PaymentEntity> = emptyList(),
     onStartOldEntry: ((Long) -> Unit)? = null,
     initialScope: com.example.ui.util.FinancialScope = com.example.ui.util.FinancialScope(mode = com.example.ui.util.FinancialScopeMode.OVERALL),
     onUpdateFinancialScope: ((com.example.ui.util.FinancialScope) -> Unit)? = null,
-    onDeleteCollection: ((Long, String, Long) -> Unit)? = null,
+    onDeleteCollection: ((Long) -> Unit)? = null,
     partnerPercentages: Map<String, Int> = emptyMap(),
     onUpdatePartnerPercentages: (Map<String, Int>) -> Unit = {},
     profitShareAllocations: Map<String, Int> = emptyMap(),
@@ -150,6 +149,8 @@ fun ReportScreen(
                     pendingCustomersCount = synchronizedCustomers.count { it.balanceDue > 0 },
                     payments = payments,
                     jobs = jobs,
+                    workspaceMembers = workspaceMembers,
+                    currentUid = currentUid,
                     isOwner = isOwner,
                     initiateOldDatePick = currentSubPage == ReportSubPage.OLD_ENTRY && isOwner && com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner),
                     onStartOldEntry = onStartOldEntry,
@@ -158,6 +159,7 @@ fun ReportScreen(
             }
             ReportSubPage.EXPENSES -> {
                 ExpensesTab(
+                    workspaceMembers = workspaceMembers,
                     settings = settings,
                     expenses = expenses,
                     jobs = jobs,
@@ -166,7 +168,9 @@ fun ReportScreen(
                     onAddExpense = onAddExpense,
                     onUpdateExpense = onUpdateExpense,
                     onDeleteExpense = onDeleteExpense,
-                    canDeleteExpense = { exp -> canDeleteExpense?.invoke(exp) ?: true }
+                    isOwner = isOwner,
+                    actorName = actorName,
+                    currentUid = currentUid
                 )
             }
             ReportSubPage.BALANCE_SHEET -> {
@@ -193,7 +197,7 @@ fun ReportScreen(
                     expenses = expenses,
                     withdrawals = withdrawals,
                     partners = partners,
-                    workspaceMembers = workspaceMembers,
+                    workspaceMembers = businessOverviewMembers ?: workspaceMembers,
                     customers = customers,
                     payments = payments,
                     totalSales = totalSales,
@@ -206,7 +210,8 @@ fun ReportScreen(
                     onBack = { onSubPageSelected(ReportSubPage.BALANCE_SHEET) },
                     onEditJob = onEditJob,
                     onDeleteJob = onDeleteJob,
-                    isOwner = isOwner
+                    isOwner = isOwner,
+                    currentUid = currentUid
                 )
             }
             ReportSubPage.WITHDRAWAL -> {
@@ -223,6 +228,7 @@ fun ReportScreen(
                     workspaceMembers = workspaceMembers,
                     isOwner = isOwner,
                     currentUserName = actorName,
+                    currentUid = currentUid,
                     partnerPercentages = partnerPercentages,
                     onUpdatePartnerPercentages = onUpdatePartnerPercentages,
                     profitShareAllocations = profitShareAllocations,
@@ -243,6 +249,7 @@ fun ReportScreen(
                     onDeleteCustomer = onDeleteCustomer,
                     isOwner = isOwner,
                     actorName = actorName,
+                    actorUid = currentUid,
                     workspaceMembers = workspaceMembers,
                     partners = partners,
                     expenses = expenses
@@ -256,9 +263,8 @@ fun ReportScreen(
                     workspaceMembers = workspaceMembers,
                     partners = partners,
                     isOwner = isOwner,
+                    currentUid = currentUid,
                     ownerName = actorName,
-                    actorUid = actorUid,
-                    currentUserRole = currentUserRole,
                     onDeleteCollection = onDeleteCollection
                 )
             }
@@ -277,6 +283,8 @@ fun ReportMenuDashboard(
     pendingCustomersCount: Int,
     payments: List<com.example.data.entity.PaymentEntity> = emptyList(),
     jobs: List<com.example.data.entity.JobEntryEntity> = emptyList(),
+    workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
+    currentUid: String = "",
     isOwner: Boolean = false,
     initiateOldDatePick: Boolean = false,
     onStartOldEntry: ((Long) -> Unit)? = null,
@@ -310,8 +318,26 @@ fun ReportMenuDashboard(
         }
     }
 
-    val totalCollected = payments.sumOf { it.amount }
-    val collectionsCount = com.example.ui.util.FinancialCalculationEngine.countConsolidatedCollectionRecords(payments, jobs)
+    val collectionSource = remember(settings.workspaceId, payments, jobs, workspaceMembers, isOwner, currentUid) {
+        authorizedCollectionSource(
+            workspaceId = settings.workspaceId,
+            payments = payments,
+            jobs = jobs,
+            workspaceMembers = workspaceMembers,
+            isOwner = isOwner,
+            currentUid = currentUid
+        )
+    }
+    val totalCollected = if (collectionSource.payments.isNotEmpty()) {
+        collectionSource.payments.filter { it.status == "ACTIVE" }.sumOf { it.amount }
+    } else {
+        collectionSource.legacyJobs.sumOf { it.amountReceived }
+    }
+    val collectionsCount = if (collectionSource.payments.isNotEmpty()) {
+        collectionSource.payments.count { it.status == "ACTIVE" }
+    } else {
+        collectionSource.legacyJobs.size
+    }
 
     Column(
         modifier = Modifier

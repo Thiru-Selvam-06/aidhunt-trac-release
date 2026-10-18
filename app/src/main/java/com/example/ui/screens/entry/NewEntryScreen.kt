@@ -139,6 +139,7 @@ import com.example.ui.theme.TextSecondaryDark
 import com.example.ui.viewmodel.FIXED_WORK_TYPES
 import com.example.ui.viewmodel.FixedWorkType
 import com.example.ui.viewmodel.NewEntryDraft
+import com.example.ui.viewmodel.linkedExpensePayerUid
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.Locale
@@ -181,6 +182,10 @@ fun NewEntryScreen(
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
+    val actorRole = com.example.data.auth.RoleUtils.normalizeRole(workspaceMembers.firstOrNull {
+        it.uid == currentUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true)
+    }?.role)
+    val canReceivePayment = actorRole in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)
 
     val allAvailableWorkTypes: List<FixedWorkType> = remember(workTypeExtensions) {
         val builtIn: List<FixedWorkType> = FIXED_WORK_TYPES
@@ -212,7 +217,12 @@ fun NewEntryScreen(
 
     // 1. Partner / Person Identification & Owner Selection Logic
     val ownerDisplayName = settings.ownerName.ifBlank { settings.activePartnerName.ifBlank { "Owner" } }
-    val currentPartnerName = settings.activePartnerName.ifBlank { settings.ownerName.ifBlank { "Partner" } }
+    val activeMemberName = workspaceMembers.firstOrNull {
+        it.uid == currentUid && it.status.equals("active", ignoreCase = true)
+    }?.displayName?.trim().orEmpty()
+    val currentPartnerName = activeMemberName.ifBlank {
+        settings.activePartnerName.ifBlank { settings.ownerName.ifBlank { "Partner" } }
+    }
 
     val activeRegisteredPartners = remember(workspaceMembers, currentUid) {
         workspaceMembers
@@ -348,8 +358,7 @@ fun NewEntryScreen(
 
     val isTractorInvalid = selectedTractor.isBlank() || (tractors.isNotEmpty() && tractors.none { it.label == selectedTractor })
     val isCustomerNameInvalid = customerNameInput.isBlank()
-    val isPhoneRequired = false
-    val isCustomerPhoneInvalid = customerPhoneInput.isNotBlank() && (customerPhoneInput.length != 10 || !customerPhoneInput.all { it.isDigit() })
+    val isCustomerPhoneInvalid = !com.example.ui.util.isOptionalContactPhoneValid(customerPhoneInput)
     val isTimeInvalid = computedDurationMinutes <= 0L
     val isWorkAmountInvalid = if (isWorkAmountManuallyEdited) {
         (customWorkAmountInput.toDoubleOrNull() ?: 0.0) <= 0.0
@@ -525,7 +534,7 @@ fun NewEntryScreen(
                     addedByPartner = effectivePersonName,
                     dateTimestamp = startMillis,
                     relatedJobId = if (draft.entryId > 0L) draft.entryId else null,
-                    createdAt = if (draft.isOldEntry && draft.historicalDateMillis != null) startMillis else System.currentTimeMillis()
+                    createdAt = System.currentTimeMillis()
                 )
             } else null,
             linkedExpenses = draft.expensesList.map { exp ->
@@ -541,7 +550,7 @@ fun NewEntryScreen(
                     } else effectivePersonName,
                     dateTimestamp = startMillis,
                     relatedJobId = if (draft.entryId > 0L) draft.entryId else null,
-                    createdAt = if (draft.isOldEntry && draft.historicalDateMillis != null) startMillis else System.currentTimeMillis(),
+                    createdAt = System.currentTimeMillis(),
                     paidBy = exp.paidBy,
                     paidByPartner = if (exp.paidBy == "I Paid") {
                         if (exp.paidByPartner.isNotBlank()) exp.paidByPartner else effectivePersonName
@@ -570,15 +579,9 @@ fun NewEntryScreen(
 
                 val originalCreatedAt = draft.originalCreatedAt
                 val originalAddedBy = draft.originalAddedByPartner
-                val resolvedCreatedAt = if (draft.isOldEntry && draft.historicalDateMillis != null) {
-                    startMillis
-                } else if (originalCreatedAt != null && originalCreatedAt > 0L) {
-                    originalCreatedAt
-                } else {
-                    System.currentTimeMillis()
-                }
-
-                // Determine Creator vs Entry For identity
+                val resolvedCreatedAt = if (draft.isEditingExistingEntry) {
+                    draft.originalCreatedAt ?: System.currentTimeMillis()
+                } else System.currentTimeMillis()
                 val activeCreatorRole = if (isCollaborationOwner) com.example.data.auth.RoleUtils.ROLE_OWNER else com.example.data.auth.RoleUtils.normalizeRole(workspaceMembers.find { it.uid == currentUid }?.role ?: "Partner")
                 val activeCreatorName = if (isCollaborationOwner) ownerDisplayName else currentPartnerName
 
@@ -643,6 +646,7 @@ fun NewEntryScreen(
                 }
 
                 val resolvedOperatorName = if (isCollaborationOwner) effectivePersonName else activeCreatorName
+                val entryTargetUid = if (isCollaborationOwner) draft.selectedPersonUid.ifBlank { currentUid } else currentUid
                 val job = JobEntryEntity(
                     id = entryId,
                     customerId = resolvedCustomerId,
@@ -661,6 +665,9 @@ fun NewEntryScreen(
                     amountReceived = amountReceived,
                     pendingAmount = pendingAmount,
                     notes = finalNotes,
+                    isHistorical = draft.isOldEntry,
+                    entryForUid = entryTargetUid,
+                    financialAttributionUid = entryTargetUid,
                     addedByPartner = resolvedCreatorName,
                     createdAt = resolvedCreatedAt,
                     createdByUid = resolvedCreatorUid,
@@ -687,7 +694,8 @@ fun NewEntryScreen(
                             relatedJobId = entryId,
                             createdAt = resolvedCreatedAt,
                             paidBy = "I Paid",
-                            paidByPartner = resolvedOperatorName
+                            paidByPartner = effectivePersonName,
+                            paidByUid = linkedExpensePayerUid("I Paid", "", entryTargetUid)
                         )
                     )
                 }
@@ -707,11 +715,9 @@ fun NewEntryScreen(
                             createdAt = resolvedCreatedAt,
                             paidBy = draftExp.paidBy,
                             paidByPartner = if (draftExp.paidBy == "I Paid") {
-                                if (draftExp.paidByPartner.isNotBlank()) draftExp.paidByPartner else resolvedOperatorName
+                                if (draftExp.paidByPartner.isNotBlank()) draftExp.paidByPartner else effectivePersonName
                             } else "",
-                            paidByUid = if (draftExp.paidBy == "I Paid") {
-                                draftExp.paidByUid.ifBlank { resolvedCreatorUid }
-                            } else "",
+                            paidByUid = linkedExpensePayerUid(draftExp.paidBy, draftExp.paidByUid, entryTargetUid),
                             createdByUid = resolvedCreatorUid,
                             createdByRole = resolvedCreatorRole
                         )
@@ -945,15 +951,15 @@ fun NewEntryScreen(
                                 ) {
                                     Icon(
                                         imageVector = if (draft.isPersonLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                                        contentDescription = if (draft.isPersonLocked) "Person Locked" else "Person Unlocked",
+                                        contentDescription = if (draft.isPersonLocked) "Entry default saved" else "Set entry default",
                                         tint = if (draft.isPersonLocked) DeepSageGreen else AppTheme.colors.textMuted,
                                         modifier = Modifier.size(12.dp)
                                     )
                                     Text(
                                         text = if (draft.isPersonLocked) {
-                                            if (isTamil) "பூட்டப்பட்டது" else "Locked"
+                                            if (isTamil) "இயல்புநிலை" else "Default"
                                         } else {
-                                            if (isTamil) "பூட்டு" else "Lock"
+                                            if (isTamil) "இயல்புநிலை அமை" else "Set default"
                                         },
                                         fontSize = 10.5.sp,
                                         fontWeight = FontWeight.SemiBold,
@@ -1415,7 +1421,7 @@ fun NewEntryScreen(
                         OutlinedTextField(
                             value = customerPhoneInput,
                             onValueChange = { input ->
-                                val digitsOnly = input.filter { it.isDigit() }.take(10)
+                                val digitsOnly = sanitizePhoneNumberForStorage(input)
                                 onUpdateDraft(draft.copy(customerPhoneInput = digitsOnly, isCustomerPhoneManuallyEdited = true))
                                 showSuggestions = true
                             },
@@ -1433,7 +1439,7 @@ fun NewEntryScreen(
                             supportingText = {
                                 if (hasAttemptedReview && isCustomerPhoneInvalid) {
                                     Text(
-                                        text = if (isTamil) "சரியான 10 இலக்க எண் தேவை" else "Valid 10-digit number required",
+                                        text = if (isTamil) "முழுமையான தொலைபேசி எண்ணை உள்ளிடவும்" else "Please enter a complete phone number",
                                         color = AlertDueRed,
                                         fontSize = 10.sp
                                     )
@@ -1838,6 +1844,7 @@ fun NewEntryScreen(
                     ) {
                         OutlinedTextField(
                             value = amountReceivedInput,
+                            enabled = canReceivePayment && draft.originalCreatedAt == null,
                             onValueChange = { onUpdateDraft(draft.copy(amountReceivedInput = it)) },
                             label = { Text(if (isTamil) "பெற்ற தொகை *" else "Amount Received (${settings.currency}) *", fontSize = 11.5.sp, maxLines = 1) },
                             singleLine = true,
@@ -1932,165 +1939,168 @@ fun NewEntryScreen(
             }
 
             // 5. Multiple Expenses (Optional)
-            item {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
+            if (canReceivePayment) {
+                item {
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = if (isTamil) "5. செலவுகள் (விருப்பத்தேர்வு)" else "5. Expenses (Optional)",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = DeepSageGreen
-                        )
-
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color.White,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, DeepSageGreen),
-                            modifier = Modifier.clickable {
-                                expenseToEdit = null
-                                showAddExpenseModal = true
-                            }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = null,
-                                    tint = DeepSageGreen,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = if (isTamil) "செலவு சேர்க்க" else "Add Expense",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = DeepSageGreen
-                                )
-                            }
-                        }
-                    }
+                            Text(
+                                text = if (isTamil) "5. செலவுகள் (விருப்பத்தேர்வு)" else "5. Expenses (Optional)",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = DeepSageGreen
+                            )
 
-                    // Multiple Expenses List
-                    draft.expensesList.forEachIndexed { index, exp ->
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color.White,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, SageOutline.copy(alpha = 0.5f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    expenseToEdit = exp
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.White,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, DeepSageGreen),
+                                modifier = Modifier.clickable {
+                                    expenseToEdit = null
                                     showAddExpenseModal = true
                                 }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    val isFuel = exp.expenseType.contains("Diesel", ignoreCase = true) || exp.expenseType.contains("Petrol", ignoreCase = true) || exp.expenseType.contains("Oil", ignoreCase = true)
-                                    val iconBg = if (isFuel) Color(0xFFFFEFE5) else Color(0xFFE8F1FC)
-                                    val iconTint = if (isFuel) Color(0xFFE65100) else Color(0xFF1976D2)
-                                    val iconVector = if (isFuel) Icons.Default.LocalGasStation else Icons.Default.Build
-
-                                    Box(
-                                        modifier = Modifier
-                                            .size(40.dp)
-                                            .background(iconBg, RoundedCornerShape(8.dp)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = iconVector,
-                                            contentDescription = null,
-                                            tint = iconTint,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-
-                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(
-                                            text = exp.expenseType,
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 13.5.sp,
-                                            color = AppTheme.colors.textPrimary
-                                        )
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = if (exp.paidBy == "I Paid") Icons.Default.Person else Icons.Default.Storefront,
-                                                contentDescription = null,
-                                                tint = TextMutedDark,
-                                                modifier = Modifier.size(13.dp)
-                                            )
-                                            Text(
-                                                text = if (exp.paidBy == "I Paid" && exp.paidByPartner.isNotBlank()) exp.paidByPartner else exp.paidBy,
-                                                fontSize = 11.5.sp,
-                                                color = TextMutedDark
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    Text(
-                                        text = formatInr(exp.amount, settings.currency),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = AppTheme.colors.textPrimary
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = null,
+                                        tint = DeepSageGreen,
+                                        modifier = Modifier.size(14.dp)
                                     )
-                                    IconButton(
-                                        onClick = {
-                                            expenseToEdit = exp
-                                            showAddExpenseModal = true
-                                        },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Edit,
-                                            contentDescription = "Edit",
-                                            tint = DeepSageGreen,
-                                            modifier = Modifier.size(17.dp)
-                                        )
+                                    Text(
+                                        text = if (isTamil) "செலவு சேர்க்க" else "Add Expense",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = DeepSageGreen
+                                    )
+                                }
+                            }
+                        }
+
+                        // Multiple Expenses List
+                        draft.expensesList.forEachIndexed { index, exp ->
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color.White,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, SageOutline.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        expenseToEdit = exp
+                                        showAddExpenseModal = true
                                     }
-                                    IconButton(
-                                        onClick = {
-                                            val updated = draft.expensesList.toMutableList().also { it.removeAt(index) }
-                                            onUpdateDraft(draft.copy(expensesList = updated))
-                                        },
-                                        modifier = Modifier.size(32.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = "Delete",
-                                            tint = AlertDueRed,
-                                            modifier = Modifier.size(18.dp)
+                                        val isFuel = exp.expenseType.contains("Diesel", ignoreCase = true) || exp.expenseType.contains("Petrol", ignoreCase = true) || exp.expenseType.contains("Oil", ignoreCase = true)
+                                        val iconBg = if (isFuel) Color(0xFFFFEFE5) else Color(0xFFE8F1FC)
+                                        val iconTint = if (isFuel) Color(0xFFE65100) else Color(0xFF1976D2)
+                                        val iconVector = if (isFuel) Icons.Default.LocalGasStation else Icons.Default.Build
+
+                                        Box(
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .background(iconBg, RoundedCornerShape(8.dp)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = iconVector,
+                                                contentDescription = null,
+                                                tint = iconTint,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                text = exp.expenseType,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 13.5.sp,
+                                                color = AppTheme.colors.textPrimary
+                                            )
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (exp.paidBy == "I Paid") Icons.Default.Person else Icons.Default.Storefront,
+                                                    contentDescription = null,
+                                                    tint = TextMutedDark,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                                Text(
+                                                    text = if (exp.paidBy == "I Paid" && exp.paidByPartner.isNotBlank()) exp.paidByPartner else exp.paidBy,
+                                                    fontSize = 11.5.sp,
+                                                    color = TextMutedDark
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(
+                                            text = formatInr(exp.amount, settings.currency),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            color = AppTheme.colors.textPrimary
                                         )
+                                        IconButton(
+                                            onClick = {
+                                                expenseToEdit = exp
+                                                showAddExpenseModal = true
+                                            },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Edit",
+                                                tint = DeepSageGreen,
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                val updated = draft.expensesList.toMutableList().also { it.removeAt(index) }
+                                                onUpdateDraft(draft.copy(expensesList = updated))
+                                            },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Delete",
+                                                tint = AlertDueRed,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
+
             }
 
             // 6. Work Notes Section
@@ -2165,7 +2175,7 @@ fun NewEntryScreen(
                             val errorMsg = when {
                                 isTractorInvalid -> if (isTamil) "டிராக்டரைத் தேர்வுசெய்க" else "Please select a tractor"
                                 isCustomerNameInvalid -> if (isTamil) "வாடிக்கையாளர் பெயர் தேவை" else "Customer name is required"
-                                isCustomerPhoneInvalid -> if (isTamil) "சரியான 10 இலக்க தொலைபேசி எண்ணை உள்ளிடவும்" else "Enter a valid 10-digit mobile number"
+                                isCustomerPhoneInvalid -> if (isTamil) "முழுமையான தொலைபேசி எண்ணை உள்ளிடவும்" else "Please enter a complete phone number"
                                 isTimeInvalid -> if (isTamil) "வேலை நேரம் பூஜ்ஜியத்திற்கு மேல் இருக்க வேண்டும்" else "Work duration must be greater than 0"
                                 isWorkAmountInvalid -> if (isTamil) "வேலைத் தொகை பூஜ்ஜியத்திற்கு மேல் இருக்க வேண்டும்" else "Work amount must be greater than 0"
                                 isAmountReceivedExcess -> if (isTamil) "பெற்ற தொகை மொத்த கட்டணத்தை (${formatInr(finalTotalAmount, settings.currency)}) விட அதிகமாக இருக்கக்கூடாது" else "Amount Received cannot exceed Total Payable (${formatInr(finalTotalAmount, settings.currency)})"
@@ -2241,7 +2251,7 @@ fun NewEntryScreen(
         )
     }
 
-    if (showAddExpenseModal) {
+    if (showAddExpenseModal && canReceivePayment) {
         AddExpenseModal(
             entryForPartnerName = effectivePersonName,
             currency = settings.currency,
@@ -2830,7 +2840,7 @@ fun AddExpenseModal(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "I Paid",
+                                        text = "$entryForPartnerName Paid",
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.sp,
                                         color = if (isIPaid) DeepSageGreen else Color(0xFF334155)

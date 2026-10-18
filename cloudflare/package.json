@@ -1,0 +1,12 @@
+{
+  "name": "aidhunt-trac-trusted-worker",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test *.test.mjs" },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "beta",
+    "@rollup/plugin-commonjs": "^28.0.0",
+    "cf": "^1.0.0-beta.16",
+    "vite": "^7.0.0"
+  }
+}

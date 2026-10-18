@@ -9,10 +9,35 @@ import com.example.data.firebase.WorkspaceMember
 import com.example.ui.util.FinancialCalculationEngine
 import com.example.ui.viewmodel.DraftExpenseItem
 import com.example.ui.viewmodel.NewEntryDraft
+import com.example.ui.viewmodel.linkedExpensePayerUid
 import org.junit.Assert.*
 import org.junit.Test
 
 class NewEntryExpenseAndTakingCategoriesTest {
+
+    @Test fun newEntryPersonalFundingUsesSelectedMemberAndEditsRetainPayer() {
+        assertEquals("owner_uid", linkedExpensePayerUid("I Paid", "", "owner_uid"))
+        assertEquals("partner_uid", linkedExpensePayerUid("I Paid", "", "partner_uid"))
+        assertEquals("owner_uid", linkedExpensePayerUid("I Paid", "owner_uid", "partner_uid"))
+        assertEquals("", linkedExpensePayerUid("Business Paid", "partner_uid", "owner_uid"))
+    }
+
+    @Test fun selectedPartnerPayerSurvivesFirestoreRoundTripAndCreditsOnlyPartnerInvestment() {
+        val expense = createExpense(amount = 150.0, paidByPartner = "Partner Two",
+            paidByUid = linkedExpensePayerUid("I Paid", "", "partner_two"),
+            createdByUid = "owner_uid", createdByRole = "OWNER", relatedJobId = 42L)
+        val restored = expenseFromFirestoreMap(expense.toFirestoreMap(), expense.id, expense.workspaceId)
+        assertEquals("owner_uid", restored.createdByUid)
+        assertEquals("partner_two", restored.paidByUid)
+        val statuses = FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+            jobs = emptyList(), expenses = listOf(restored), withdrawals = emptyList(),
+            workspaceMembers = listOf(
+                WorkspaceMember(uid = "owner_uid", role = "OWNER", status = "ACTIVE", displayName = "Owner"),
+                WorkspaceMember(uid = "partner_two", role = "PARTNER", status = "ACTIVE", displayName = "Partner Two")),
+            profitShareAllocations = mapOf("owner_uid" to 50, "partner_two" to 50))
+        assertEquals(0.0, statuses.first { it.partnerUid == "owner_uid" }.totalInvestment, 0.0)
+        assertEquals(150.0, statuses.first { it.partnerUid == "partner_two" }.totalInvestment, 0.0)
+    }
 
     private fun createJob(received: Double): JobEntryEntity =
         JobEntryEntity(

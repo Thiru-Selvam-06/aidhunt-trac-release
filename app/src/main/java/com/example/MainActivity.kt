@@ -92,6 +92,7 @@ fun MainAppContent(
     val currentReportSubPage by viewModel.currentReportSubPage.collectAsState()
     val currentAccountSubPage by viewModel.currentAccountSubPage.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
+    val cloudConnectionState by viewModel.cloudConnectionState.collectAsState()
     val isOnline by viewModel.isEffectiveOnline.collectAsState()
     val totalUnsyncedCount by viewModel.totalUnsyncedCount.collectAsState()
     val unsyncedJobsCount by viewModel.unsyncedJobsCount.collectAsState()
@@ -100,9 +101,13 @@ fun MainAppContent(
     val unsyncedCustomersCount by viewModel.unsyncedCustomersCount.collectAsState()
     val simulatedOffline by viewModel.simulatedOffline.collectAsState()
     val syncMessage by viewModel.syncMessage.collectAsState()
+    val rejectedOperationCount by viewModel.rejectedOperationCount.collectAsState()
+    val blockedOperationCount by viewModel.blockedOperationCount.collectAsState()
+    val retainedOperationWarning by viewModel.retainedOperationWarning.collectAsState()
     val pendingInvitations by viewModel.pendingInvitations.collectAsState()
     val activeWorkspaceId by viewModel.activeWorkspaceId.collectAsState()
     val workspaceMembers by viewModel.workspaceMembers.collectAsState()
+    val activeWorkspaceMembers by viewModel.activeWorkspaceMembers.collectAsState()
     val isCollaborationOwner by viewModel.isCollaborationOwner.collectAsState()
     val isSavingJob by viewModel.isSavingJob.collectAsState()
     val lockedPages by viewModel.lockedPages.collectAsState()
@@ -236,6 +241,13 @@ fun MainAppContent(
                     rightActionIcon = null
                     onRightActionClick = null
                 }
+                AccountSubPage.DELETED_USERS -> {
+                    topBarTitle = "Deleted Users"
+                    showBackButton = true
+                    onBackAction = { viewModel.setAccountSubPage(AccountSubPage.MAIN) }
+                    rightActionIcon = null
+                    onRightActionClick = null
+                }
                 AccountSubPage.SQLITE_SYNC_STATUS -> {
                     topBarTitle = if (isTamil) "SQLite & கிளவுட் ஒத்திசைவு" else "SQLite & Cloud Sync"
                     showBackButton = true
@@ -257,24 +269,15 @@ fun MainAppContent(
     // Firebase sessions to bypass the Login screen (the reported "No account found" → Home bug).
     val isAuthenticated = authState is com.example.data.firebase.AuthState.Authenticated
 
-    // Use currentUser only as a HINT to keep the splash visible while the async Firestore
-    // profile check is still running. Once authState resolves to any definitive state
-    // (Authenticated / Unauthenticated / Error), this hint is no longer needed.
-    val firebaseCurrentUser = try { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser } catch (_: Exception) { null }
-    val isAuthStillBeingConfirmed = firebaseCurrentUser != null &&
-        authState !is com.example.data.firebase.AuthState.Authenticated &&
-        authState !is com.example.data.firebase.AuthState.Unauthenticated &&
-        authState !is com.example.data.firebase.AuthState.Error &&
-        authState !is com.example.data.firebase.AuthState.CodeSent
-
-    // STRICT DATA BOUNDARY: show splash while:
-    // 1. Startup auth resolution hasn't completed yet (2.5s safety timeout)
-    // 2. Firebase has a currentUser but authState hasn't been confirmed by Firestore yet
-    // 3. User is authenticated but workspace is not yet Ready
-    val isAuthInitializing = !isStartupAuthResolved ||
-        isAuthStillBeingConfirmed ||
-        (isAuthenticated && workspaceInitState !is com.example.data.repository.WorkspaceInitState.Ready)
-
+    // A verified Authenticated state and ready workspace are still required for Home.
+    // Do not dispose LoginScreen during an interactive OTP/email/Google request.
+    val isAuthInitializing = com.example.ui.util.shouldShowStartupSplash(
+        isStartupAuthResolved, authState,
+        workspaceInitState is com.example.data.repository.WorkspaceInitState.Ready ||
+            workspaceInitState is com.example.data.repository.WorkspaceInitState.CachedReady,
+        workspaceInitState is com.example.data.repository.WorkspaceInitState.Error ||
+            workspaceInitState is com.example.data.repository.WorkspaceInitState.SelectionRequired
+    )
     if (isAuthInitializing) {
         StartupSplashScreen()
     } else if (!isAuthenticated) {
@@ -415,11 +418,23 @@ fun MainAppContent(
             isLoggingIn = authState is com.example.data.firebase.AuthState.Loading || isSyncing,
             errorMessage = authError
         )
+    } else if (workspaceInitState is com.example.data.repository.WorkspaceInitState.Error ||
+        workspaceInitState is com.example.data.repository.WorkspaceInitState.SelectionRequired) {
+        val choices by viewModel.availableWorkspaces.collectAsState()
+        com.example.ui.screens.auth.WorkspaceRecoveryScreen(
+            message = (workspaceInitState as? com.example.data.repository.WorkspaceInitState.Error)?.exception?.message ?: "Choose the workspace and role you want to use.",
+            workspaces = (workspaceInitState as? com.example.data.repository.WorkspaceInitState.SelectionRequired)?.workspaces ?: choices,
+            canCreate = !com.example.BuildConfig.PHYSICAL_TEST,
+            onRetry = { viewModel.retryWorkspaceDiscovery() },
+            onSwitch = { ws -> viewModel.switchWorkspace(ws, onError = onShowToast) },
+            onCreate = { name, business -> viewModel.createAccountForPhoneUser(name, business, onError = onShowToast) },
+            onLogout = { viewModel.logout() }
+        )
     } else {
         val accessControl by viewModel.accessControlState.collectAsState()
         val isCollaborationOwner by viewModel.isCollaborationOwner.collectAsState()
         val currentUserRole by viewModel.currentUserRole.collectAsState()
-        if (accessControl.isAccountBlocked) {
+        if (viewModel.isAccountBlocked()) {
             com.example.ui.components.AccountSuspendedOrExpiredScreen(
                 accessControl = accessControl,
                 settings = settings,
@@ -475,8 +490,21 @@ fun MainAppContent(
                         isSyncing = isSyncing,
                         isOnline = isOnline,
                         totalUnsyncedCount = totalUnsyncedCount,
+                        rejectedOperationCount = rejectedOperationCount,
+                        blockedOperationCount = blockedOperationCount,
+                        cloudConnectionState = cloudConnectionState,
                         onSyncClick = {
-                            viewModel.pushUnsyncedToCloud()
+                            when (com.example.ui.util.cloudStatusAction(rejectedOperationCount, cloudConnectionState)) {
+                                com.example.ui.util.CloudStatusAction.OPEN_RETAINED_ACTIONS -> {
+                                    viewModel.setBottomTab(BottomTab.ACCOUNT)
+                                    viewModel.setAccountSubPage(AccountSubPage.SQLITE_SYNC_STATUS)
+                                }
+                                com.example.ui.util.CloudStatusAction.RETRY_LISTENERS_AND_QUEUE -> {
+                                    viewModel.retryCloudListeners()
+                                    viewModel.pushUnsyncedToCloud()
+                                }
+                                com.example.ui.util.CloudStatusAction.SYNC_QUEUE -> viewModel.pushUnsyncedToCloud()
+                            }
                         },
                         onPartnerSelected = { partner ->
                             viewModel.setActivePartner(partner)
@@ -521,24 +549,24 @@ fun MainAppContent(
                     Crossfade(targetState = currentTab, label = "tab_crossfade") { tab ->
                         when (tab) {
                             BottomTab.HOME -> {
-                                val summary by viewModel.balanceSheetSummary.collectAsState()
+                                val homeSummary = remember(jobs) { com.example.ui.util.HomeRecordSummary.from(jobs) }
                                 HomeScreen(
                                     settings = settings,
-                                    totalRecorded = summary.totalRecorded,
-                                    totalReceived = summary.totalReceived,
-                                    totalPending = summary.totalDue,
-                                    totalCustomerDue = summary.totalDue,
-                                    totalExpenses = summary.totalExpenses,
-                                    availableBalance = summary.availableBalance,
-                                    recentJobs = jobs,
+                                    totalRecorded = homeSummary.recorded,
+                                    totalCustomerDue = homeSummary.due,
+                                    totalExpenses = totalExpenses,
+                                    availableBalance = availableAmount,
+                                    recentJobs = todayJobs.take(20),
+                                    recordedJobCount = homeSummary.count,
                                     expenses = expenses,
                                     isOnline = isOnline,
                                     isSyncing = isSyncing,
                                     unsyncedCount = totalUnsyncedCount,
                                     syncMessage = syncMessage,
+                                    retainedOperationWarning = retainedOperationWarning,
                                     isOwner = isCollaborationOwner,
                                     currentUid = viewModel.currentUid ?: "",
-                                    workspaceMembers = workspaceMembers,
+                                    workspaceMembers = activeWorkspaceMembers,
                                     partners = partners,
                                     authenticatedUserName = authenticatedUserName,
                                     authenticatedUserRole = authenticatedUserRole,
@@ -566,8 +594,7 @@ fun MainAppContent(
                                     },
                                     onDeleteJob = { job ->
                                         if (viewModel.canDeleteEntry(job)) {
-                                            viewModel.deleteJob(job)
-                                            onShowToast(if (isTamil) "வேலைப் பதிவு நீக்கப்பட்டது" else "Job entry deleted")
+                                            viewModel.deleteJob(job, onResult = onShowToast)
                                         } else {
                                             onShowToast(if (isTamil) "பதிவை நீக்க அனுமதி இல்லை" else "You do not have permission to delete this entry")
                                         }
@@ -619,10 +646,10 @@ fun MainAppContent(
                                         }
                                     },
                                     onDeleteExpense = { expense ->
-                                        viewModel.deleteExpense(expense)
-                                        onShowToast(if (isTamil) "செலவு நீக்கப்பட்டது" else "Expense deleted")
+                                        viewModel.deleteExpense(expense,
+                                            onQueued = { onShowToast(if (isTamil) "செலவு நீக்கம் சாதனத்தில் சேமிக்கப்பட்டது; மேக உறுதிப்படுத்தல் நிலுவையில் உள்ளது" else "Expense deletion saved on this device; cloud confirmation pending") },
+                                            onError = { onShowToast(it) })
                                     },
-                                    canDeleteExpense = { expense -> viewModel.canDeleteExpense(expense) },
                                     onAddWithdrawal = { withdrawal ->
                                         viewModel.addWithdrawal(
                                             withdrawal,
@@ -648,7 +675,7 @@ fun MainAppContent(
                                             onShowToast(if (isTamil) "கட்டணம் வசூலிக்க அனுமதி இல்லை" else "Payment collection is restricted")
                                         } else {
                                             viewModel.recordCustomerPayment(customer, amount, dateMillis, method, note) {
-                                                onShowToast(if (isTamil) "${customer.name} - ₹${amount.toInt()} கட்டணம் பதிவு செய்யப்பட்டது" else "Payment of ₹${amount.toInt()} recorded for ${customer.name}")
+                                                onShowToast(if (isTamil) "வசூல் சாதனத்தில் சேமிக்கப்பட்டது; மேக ஒத்திசைவு நிலுவையில் உள்ளது" else "Collection saved on this device; cloud confirmation pending")
                                             }
                                         }
                                     },
@@ -666,7 +693,7 @@ fun MainAppContent(
                                                 collectedByName = collectorName,
                                                 collectedByRole = collectorRole
                                             ) {
-                                                onShowToast(if (isTamil) "${customer.name} - ₹${amount.toInt()} கட்டணம் பதிவு செய்யப்பட்டது" else "Payment of ₹${amount.toInt()} recorded for ${customer.name}")
+                                                onShowToast(if (isTamil) "வசூல் சாதனத்தில் சேமிக்கப்பட்டது; மேக ஒத்திசைவு நிலுவையில் உள்ளது" else "Collection saved on this device; cloud confirmation pending")
                                             }
                                         }
                                     },
@@ -684,44 +711,34 @@ fun MainAppContent(
                                     },
                                     onDeleteJob = { job ->
                                         if (viewModel.canDeleteEntry(job)) {
-                                            viewModel.deleteJob(job)
-                                            onShowToast(if (isTamil) "வேலைப் பதிவு நீக்கப்பட்டது" else "Job entry deleted")
+                                            viewModel.deleteJob(job, onResult = onShowToast)
                                         } else {
                                             onShowToast(if (isTamil) "பதிவை நீக்க அனுமதி இல்லை" else "You do not have permission to delete this entry")
                                         }
                                     },
                                     onDeleteCustomer = { customer ->
                                         if (viewModel.canDeleteCustomer()) {
-                                            viewModel.deleteCustomer(customer)
-                                            onShowToast(if (isTamil) "வாடிக்கையாளர் நீக்கப்பட்டார்" else "Customer deleted")
+                                            viewModel.deleteCustomer(customer) {
+                                                onShowToast("Customer removed on this device; cloud deletion pending")
+                                            }
                                         } else {
                                             onShowToast(if (isTamil) "வாடிக்கையாளரை நீக்க அனுமதி இல்லை" else "You do not have permission to delete customers")
                                         }
                                     },
-                                    onDeleteCollection = { id, collectorUid, createdAt ->
-                                        val isOwner = isCollaborationOwner
-                                        val currentUid = viewModel.currentUid ?: ""
-                                        val role = authenticatedUserRole
-                                        viewModel.deleteCollection(
-                                            paymentId = id,
-                                            collectorUid = collectorUid,
-                                            createdAt = createdAt,
-                                            currentUid = currentUid,
-                                            role = role,
-                                            isOwner = isOwner,
-                                            onSuccess = {
-                                                onShowToast(if (isTamil) "வசூல் பதிவு நீக்கப்பட்டது" else "Collection record deleted")
-                                            },
-                                            onError = { msg ->
-                                                onShowToast(msg)
-                                            }
-                                        )
+                                    onDeleteCollection = { paymentId ->
+                                        if (viewModel.canDeleteCollection()) {
+                                            viewModel.deleteCollection(paymentId,
+                                                onSuccess = { onShowToast("Collection reversal saved on this device; cloud sync pending") },
+                                                onError = { onShowToast(it) })
+                                        } else {
+                                            onShowToast(if (isTamil) "வசூல் பதிவை நீக்க அனுமதி இல்லை" else "You do not have permission to delete collections")
+                                        }
                                     },
                                     isOwner = isCollaborationOwner,
                                     actorName = if (isCollaborationOwner) settings.ownerName.ifBlank { "Owner" } else settings.activePartnerName.ifBlank { "Partner" },
-                                    actorUid = viewModel.currentUid ?: "",
-                                    currentUserRole = authenticatedUserRole,
-                                    workspaceMembers = workspaceMembers,
+                                    currentUid = viewModel.currentUid ?: "",
+                                    workspaceMembers = activeWorkspaceMembers,
+                                    businessOverviewMembers = activeWorkspaceMembers,
                                     payments = payments,
                                     partnerPercentages = viewModel.partnerPercentages.collectAsState().value,
                                     onUpdatePartnerPercentages = { viewModel.updatePartnerPercentages(it) },
@@ -831,7 +848,7 @@ fun MainAppContent(
                                     draft = draft,
                                     isSaving = isSavingJob,
                                     isCollaborationOwner = isCollaborationOwner,
-                                    workspaceMembers = workspaceMembers,
+                                    workspaceMembers = activeWorkspaceMembers,
                                     currentUid = currentActorUid,
                                     workTypeExtensions = workTypeExtensions,
                                     onUpdateDraft = { viewModel.updateNewEntryDraft(it) },
@@ -869,7 +886,24 @@ fun MainAppContent(
 
                             BottomTab.ACCOUNT -> {
                                 val actorUid = viewModel.currentUid ?: ""
+                                val availableWorkspaces by viewModel.availableWorkspaces.collectAsState()
+                                androidx.compose.runtime.LaunchedEffect(actorUid) { viewModel.loadAvailableWorkspaces() }
+                                val deletedUsers by viewModel.deletedUsers.collectAsState()
+                                val deletedUsersError by viewModel.deletedUsersError.collectAsState()
+                                androidx.compose.runtime.LaunchedEffect(currentAccountSubPage) {
+                                    if (currentAccountSubPage == AccountSubPage.DELETED_USERS) viewModel.refreshDeletedUsers()
+                                }
+                                val pendingActions by viewModel.pendingActions.collectAsState()
                                 AccountScreen(
+                                    availableWorkspaces = availableWorkspaces,
+                                    onSwitchWorkspace = { id -> viewModel.switchWorkspace(id, onError = onShowToast) },
+                                    pendingActions = pendingActions,
+                                    cloudConnectionState = cloudConnectionState,
+                                    onUpdateExtension = { viewModel.updateExtension(it) },
+                                    onDeleteExtension = { viewModel.deleteExtension(it) },
+                                    deletedUsers = deletedUsers,
+                                    deletedUsersError = deletedUsersError,
+                                    onPermanentlyDeleteUser = { uid, confirmation -> viewModel.permanentlyDeleteUser(uid, confirmation) },
                                     currentSubPage = currentAccountSubPage,
                                     onSubPageSelected = { viewModel.setAccountSubPage(it) },
                                     settings = settings,
@@ -882,6 +916,9 @@ fun MainAppContent(
                                     unsyncedWithdrawalsCount = unsyncedWithdrawalsCount,
                                     unsyncedCustomersCount = unsyncedCustomersCount,
                                     totalUnsyncedCount = totalUnsyncedCount,
+                                    rejectedOperationCount = rejectedOperationCount,
+                                    blockedOperationCount = blockedOperationCount,
+                                    syncMessage = syncMessage,
                                     pendingInvitations = pendingInvitations,
                                     workspaceMembers = workspaceMembers,
                                     isCollaborationOwner = isCollaborationOwner,
@@ -895,15 +932,12 @@ fun MainAppContent(
                                     isSimulatedOffline = simulatedOffline,
                                     onToggleSimulatedOffline = { viewModel.toggleSimulatedOffline(it) },
                                     onTriggerSync = {
+                                        viewModel.retryCloudListeners()
                                         viewModel.pushUnsyncedToCloud()
                                     },
+                                    onRetryRejectedCollection = { viewModel.retryRejectedCollection(it) },
                                     canAddExtension = viewModel.canAddExtension(),
                                     workTypeExtensions = workTypeExtensions,
-                                    canDeleteExtension = { ext -> viewModel.canDeleteExtension(ext) },
-                                    onDeleteExtension = { ext ->
-                                        viewModel.deleteExtension(ext)
-                                        onShowToast(if (isTamil) "வேலை வகை நீக்கப்பட்டது" else "Extension deleted")
-                                    },
                                     onAddExtension = { extName ->
                                         viewModel.addExtension(extName) {
                                             onShowToast(if (isTamil) "வேலை வகை சேர்க்கப்பட்டது" else "Extension added")
@@ -954,8 +988,27 @@ fun MainAppContent(
                                         }
                                     },
                                     onDeletePartner = {
-                                        viewModel.deletePartner(it)
-                                        onShowToast(if (isTamil) "நீக்கப்பட்டது" else "Record removed")
+                                        if (!viewModel.canManagePartners()) {
+                                            onShowToast(if (isTamil) "பங்குதாரர்களை நீக்க அனுமதி இல்லை" else "Partner management is restricted")
+                                        } else {
+                                            viewModel.deletePartner(it, onComplete = { onShowToast("Member access removed; records retained") }, onError = onShowToast)
+                                        }
+                                    },
+                                    onRemovePendingInvitation = { pending ->
+                                        viewModel.removePendingPartnerInvitation(pending) { result ->
+                                            val message = when (result) {
+                                                com.example.data.repository.WorkspaceRepository.PendingInvitationCleanupResult.Deleted,
+                                                com.example.data.repository.WorkspaceRepository.PendingInvitationCleanupResult.AlreadyGone ->
+                                                    if (isTamil) "நிலுவையில் உள்ள அழைப்பு நீக்கப்பட்டது" else "Pending invitation removed"
+                                                com.example.data.repository.WorkspaceRepository.PendingInvitationCleanupResult.Registered ->
+                                                    if (isTamil) "இந்த கணக்கு ஏற்கனவே இணைக்கப்பட்டுள்ளது" else "This account is already connected"
+                                                is com.example.data.repository.WorkspaceRepository.PendingInvitationCleanupResult.Rejected ->
+                                                    result.message
+                                                is com.example.data.repository.WorkspaceRepository.PendingInvitationCleanupResult.Failed ->
+                                                    result.message
+                                            }
+                                            onShowToast(message)
+                                        }
                                     },
                                     onUpdateSettings = {
                                         viewModel.updateSettings(it) { onShowToast(if (isTamil) "அமைப்புகள் புதுப்பிக்கப்பட்டன" else "Settings updated") }

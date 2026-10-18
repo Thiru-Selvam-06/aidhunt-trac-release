@@ -1,0 +1,1327 @@
+{
+  "screens": [
+    "app/src/main/java/com/example/ui/screens/account/AccountScreen.kt",
+    "app/src/main/java/com/example/ui/screens/account/DeletedUsersPage.kt",
+    "app/src/main/java/com/example/ui/screens/auth/FirstAccountSetupDialog.kt",
+    "app/src/main/java/com/example/ui/screens/auth/LoginScreen.kt",
+    "app/src/main/java/com/example/ui/screens/auth/WorkspaceRecoveryScreen.kt",
+    "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
+    "app/src/main/java/com/example/ui/screens/home/HomeScreen.kt",
+    "app/src/main/java/com/example/ui/screens/report/BalanceSheetTab.kt",
+    "app/src/main/java/com/example/ui/screens/report/BusinessOverviewScreen.kt",
+    "app/src/main/java/com/example/ui/screens/report/CollectionHistoryModel.kt",
+    "app/src/main/java/com/example/ui/screens/report/CollectionHistoryTab.kt",
+    "app/src/main/java/com/example/ui/screens/report/CustomerCreditDueTab.kt",
+    "app/src/main/java/com/example/ui/screens/report/ExpensesTab.kt",
+    "app/src/main/java/com/example/ui/screens/report/MemberFinancialData.kt",
+    "app/src/main/java/com/example/ui/screens/report/ReportScreen.kt",
+    "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt"
+  ],
+  "viewmodels": [
+    "app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt",
+    "app/src/main/java/com/example/ui/viewmodel/NewEntryDraft.kt"
+  ],
+  "repositories": [
+    "app/src/main/java/com/example/data/repository/AuthRepository.kt",
+    "app/src/main/java/com/example/data/repository/SyncResult.kt",
+    "app/src/main/java/com/example/data/repository/WorkspaceRepository.kt",
+    "app/src/main/java/com/example/data/repository/WorkspaceRequestFence.kt",
+    "app/src/main/java/com/example/data/repository/WorkspaceRequestOutcome.kt"
+  ],
+  "daos": [
+    "app/src/main/java/com/example/data/dao/Daos.kt",
+    "app/src/main/java/com/example/data/dao/DeletedMemberDao.kt",
+    "app/src/main/java/com/example/data/dao/PendingOperationDao.kt"
+  ],
+  "entities": [
+    "app/src/main/java/com/example/data/entity/DeletedMemberEntity.kt",
+    "app/src/main/java/com/example/data/entity/Entities.kt",
+    "app/src/main/java/com/example/data/entity/PendingOperationEntity.kt"
+  ],
+  "unit_tests": [
+    "app/src/test/java/com/example/ArchitectureIntegrationTest.kt",
+    "app/src/test/java/com/example/ArchivedRecordAuthorizationTest.kt",
+    "app/src/test/java/com/example/AuthSessionRecoveryTest.kt",
+    "app/src/test/java/com/example/BusinessOverviewAttributionTest.kt",
+    "app/src/test/java/com/example/BusinessOverviewChartMembersTest.kt",
+    "app/src/test/java/com/example/BusinessOverviewCircleUiTest.kt",
+    "app/src/test/java/com/example/CashBalanceRegressionTest.kt",
+    "app/src/test/java/com/example/ClientDeliveryRequirementsTest.kt",
+    "app/src/test/java/com/example/CloudListenerHealthTest.kt",
+    "app/src/test/java/com/example/CollectionFormRegressionTest.kt",
+    "app/src/test/java/com/example/CollectionHistoryCardExpandableTest.kt",
+    "app/src/test/java/com/example/CollectionHistoryDetailsTest.kt",
+    "app/src/test/java/com/example/CollectionHistoryGroupingTest.kt",
+    "app/src/test/java/com/example/CollectionPersistenceTest.kt",
+    "app/src/test/java/com/example/CollectionPolicyTest.kt",
+    "app/src/test/java/com/example/CollectionVisibilityRegressionTest.kt",
+    "app/src/test/java/com/example/CompleteRegressionPipelineTest.kt",
+    "app/src/test/java/com/example/CustomerDeletionDialogTest.kt",
+    "app/src/test/java/com/example/EntryAcknowledgementDependenciesTest.kt",
+    "app/src/test/java/com/example/EntryCreationTimestampPersistenceTest.kt",
+    "app/src/test/java/com/example/EntryDeletionReconciliationTest.kt",
+    "app/src/test/java/com/example/EntryFinancialMutationPolicyTest.kt",
+    "app/src/test/java/com/example/EntryMutationAuthorizationTest.kt",
+    "app/src/test/java/com/example/ExampleRobolectricTest.kt",
+    "app/src/test/java/com/example/ExampleUnitTest.kt",
+    "app/src/test/java/com/example/ExpenseIdentityDetailsTest.kt",
+    "app/src/test/java/com/example/ExpenseWorkspaceIsolationTest.kt",
+    "app/src/test/java/com/example/ExtensionDetailsNavigationTest.kt",
+    "app/src/test/java/com/example/FinalTargetedClientFixesTest.kt",
+    "app/src/test/java/com/example/FinalTwoClientFixesTest.kt",
+    "app/src/test/java/com/example/FinancialConsistencyAndSyncRepairTest.kt",
+    "app/src/test/java/com/example/GreetingScreenshotTest.kt",
+    "app/src/test/java/com/example/HomeFinancialVisibilityTest.kt",
+    "app/src/test/java/com/example/HomeRecordSummaryTest.kt",
+    "app/src/test/java/com/example/InitialWorkspaceSettingsTest.kt",
+    "app/src/test/java/com/example/LocalLedgerReferenceTest.kt",
+    "app/src/test/java/com/example/MemberDetailsNavigationTest.kt",
+    "app/src/test/java/com/example/NewEntryExpenseAndTakingCategoriesTest.kt",
+    "app/src/test/java/com/example/OfflineActionTimeTest.kt",
+    "app/src/test/java/com/example/OperationDiagnosticTest.kt",
+    "app/src/test/java/com/example/OperationRoleMatrixTest.kt",
+    "app/src/test/java/com/example/PartnerEarningsChartTest.kt",
+    "app/src/test/java/com/example/PartnerWithdrawalsProfitShareTest.kt",
+    "app/src/test/java/com/example/PaymentReversalAndCollectionHistoryTest.kt",
+    "app/src/test/java/com/example/PdfAuthorizationTest.kt",
+    "app/src/test/java/com/example/PendingInvitationCleanupContractTest.kt",
+    "app/src/test/java/com/example/PhoneOnlySignupRoutingTest.kt",
+    "app/src/test/java/com/example/PurgeReconciliationProtocolTest.kt",
+    "app/src/test/java/com/example/RecordIdentityPolicyTest.kt",
+    "app/src/test/java/com/example/RetainedOperationWarningTest.kt",
+    "app/src/test/java/com/example/RoomMigrationChainTest.kt",
+    "app/src/test/java/com/example/RoomScopeTest.kt",
+    "app/src/test/java/com/example/StartupAuthPresentationTest.kt",
+    "app/src/test/java/com/example/TractorCardAuthorizationTest.kt",
+    "app/src/test/java/com/example/TrustedCommandRoutingTest.kt",
+    "app/src/test/java/com/example/V16ArchitectureContractTest.kt",
+    "app/src/test/java/com/example/VerifiedProfileRecoveryTest.kt",
+    "app/src/test/java/com/example/WithdrawalLedgerNavigationTest.kt",
+    "app/src/test/java/com/example/WorkspaceBuildBoundaryTest.kt",
+    "app/src/test/java/com/example/WorkspaceCachedLedgerRecoveryTest.kt",
+    "app/src/test/java/com/example/WorkspaceCommandProtocolTest.kt",
+    "app/src/test/java/com/example/WorkspaceDatabaseContractTest.kt",
+    "app/src/test/java/com/example/WorkspaceDiscoveryPolicyTest.kt",
+    "app/src/test/java/com/example/WorkspaceInvitationErrorClassificationTest.kt",
+    "app/src/test/java/com/example/WorkspaceInvitationPolicyTest.kt",
+    "app/src/test/java/com/example/WorkspaceMemberPresentationTest.kt",
+    "app/src/test/java/com/example/WorkspacePickerUiTest.kt",
+    "app/src/test/java/com/example/WorkspaceRequestFenceTest.kt",
+    "app/src/test/java/com/example/WorkspaceRequestOutcomeTest.kt",
+    "app/src/test/java/com/example/WorkspaceSelectionPolicyTest.kt",
+    "app/src/test/java/com/example/ui/screens/report/DriverEarningsConsistencyTest.kt"
+  ],
+  "instrumentation_tests": [
+    "app/src/androidTest/java/com/example/CollectionFormDeviceTest.kt",
+    "app/src/androidTest/java/com/example/DatabaseWorkspaceDeviceTest.kt",
+    "app/src/androidTest/java/com/example/DeviceEmulatorIntegrationTest.kt",
+    "app/src/androidTest/java/com/example/ExampleInstrumentedTest.kt",
+    "app/src/androidTest/java/com/example/PhoneRegistrationDeviceTest.kt",
+    "app/src/androidTest/java/com/example/PurgeProtocolDeviceTest.kt",
+    "app/src/androidTest/java/com/example/WorkspaceSelectionDeviceTest.kt"
+  ],
+  "backend_tests": [
+    "functions/entry-deletion-emulator.test.js",
+    "functions/entry-deletion-http.test.js",
+    "functions/entry-deletion-policy.test.js",
+    "functions/invitation-policy.test.js",
+    "functions/migration/legacy-timestamps.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.bypass.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.clone.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.disable.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.events.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.freeze.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.itemmaxage.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.lock.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.nokey.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.queumaxage.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.sync.clone.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.sync.events.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.sync.test.js",
+    "functions/node_modules/lru-memoizer/test/lru-memoizer.test.js",
+    "functions/security.integration.test.js"
+  ],
+  "worker_tests": [
+    "cloudflare/firestore-rest.test.mjs",
+    "cloudflare/google-auth.test.mjs",
+    "cloudflare/operations.test.mjs"
+  ],
+  "rules_tests": [
+    "security-tests/architecture.test.cjs",
+    "security-tests/listener-queries.test.cjs",
+    "security-tests/phone-onboarding.test.cjs",
+    "security-tests/purge-protocol.test.cjs",
+    "security-tests/security-recovery.test.cjs",
+    "security-tests/workspace-discovery.test.cjs"
+  ],
+  "workflows": [
+    ".github/workflows/android-ci.yml",
+    ".github/workflows/verify-reproducibility.yml"
+  ],
+  "backend_endpoints": [
+    "beginWorkspaceInvitation",
+    "redeemWorkspaceInvitation",
+    "deleteWorkspaceCustomer",
+    "deleteWorkspaceEntry"
+  ],
+  "dao_queries": [
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getPartnersForWorkspace",
+      "sql": "SELECT * FROM partners WHERE workspaceId = :workspaceId ORDER BY id ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getPartnersForWorkspaces",
+      "sql": "SELECT * FROM partners WHERE workspaceId IN (:workspaceIds) ORDER BY id ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getPartnersForWorkspaceOnce",
+      "sql": "SELECT * FROM partners WHERE workspaceId = :workspaceId ORDER BY id ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getPartnersForWorkspacesOnce",
+      "sql": "SELECT * FROM partners WHERE workspaceId IN (:workspaceIds) ORDER BY id ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getAllPartners",
+      "sql": "SELECT * FROM partners ORDER BY id ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteNotIn",
+      "sql": "DELETE FROM partners WHERE workspaceId = :workspaceId AND id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteNotIn",
+      "sql": "DELETE FROM partners WHERE id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllForWorkspace",
+      "sql": "DELETE FROM partners WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllForWorkspaces",
+      "sql": "DELETE FROM partners WHERE workspaceId IN (:workspaceIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAll",
+      "sql": "DELETE FROM partners",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCount",
+      "sql": "SELECT COUNT(*) FROM partners WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCount",
+      "sql": "SELECT COUNT(*) FROM partners WHERE workspaceId IN (:workspaceIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCount",
+      "sql": "SELECT COUNT(*) FROM partners",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTractorsForWorkspace",
+      "sql": "SELECT * FROM tractors WHERE workspaceId = :workspaceId ORDER BY id ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTractorsForWorkspaces",
+      "sql": "SELECT * FROM tractors WHERE workspaceId IN (:workspaceIds) ORDER BY id ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTractorsForWorkspaceOnce",
+      "sql": "SELECT * FROM tractors WHERE workspaceId = :workspaceId ORDER BY id ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTractorsForWorkspacesOnce",
+      "sql": "SELECT * FROM tractors WHERE workspaceId IN (:workspaceIds) ORDER BY id ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getAllTractors",
+      "sql": "SELECT * FROM tractors ORDER BY id ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteNotIn",
+      "sql": "DELETE FROM tractors WHERE workspaceId = :workspaceId AND id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteNotIn",
+      "sql": "DELETE FROM tractors WHERE id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllForWorkspace",
+      "sql": "DELETE FROM tractors WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllForWorkspaces",
+      "sql": "DELETE FROM tractors WHERE workspaceId IN (:workspaceIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAll",
+      "sql": "DELETE FROM tractors",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCount",
+      "sql": "SELECT COUNT(*) FROM tractors WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCount",
+      "sql": "SELECT COUNT(*) FROM tractors WHERE workspaceId IN (:workspaceIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCount",
+      "sql": "SELECT COUNT(*) FROM tractors",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCustomersForWorkspace",
+      "sql": "SELECT * FROM customers WHERE workspaceId = :workspaceId ORDER BY updatedAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCustomersForWorkspaces",
+      "sql": "SELECT * FROM customers WHERE workspaceId IN (:workspaceIds) ORDER BY updatedAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCustomersForWorkspaceOnce",
+      "sql": "SELECT * FROM customers WHERE workspaceId = :workspaceId ORDER BY updatedAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCustomersForWorkspacesOnce",
+      "sql": "SELECT * FROM customers WHERE workspaceId IN (:workspaceIds) ORDER BY updatedAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getAllCustomers",
+      "sql": "SELECT * FROM customers ORDER BY updatedAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCustomersWithDueForWorkspace",
+      "sql": "SELECT * FROM customers WHERE workspaceId = :workspaceId AND balanceDue > 0 ORDER BY balanceDue DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCustomersWithDueForWorkspaces",
+      "sql": "SELECT * FROM customers WHERE workspaceId IN (:workspaceIds) AND balanceDue > 0 ORDER BY balanceDue DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCustomersWithDue",
+      "sql": "SELECT * FROM customers WHERE balanceDue > 0 ORDER BY balanceDue DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getCustomerById",
+      "sql": "SELECT * FROM customers WHERE workspaceId = :workspaceId AND id = :id LIMIT 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "searchCustomers",
+      "sql": "SELECT * FROM customers WHERE workspaceId = :workspaceId AND (LOWER(name) LIKE '%' || LOWER(:query) || '%' OR phone LIKE '%' || :query || '%')",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "searchCustomers",
+      "sql": "SELECT * FROM customers WHERE workspaceId IN (:workspaceIds) AND (LOWER(name) LIKE '%' || LOWER(:query) || '%' OR phone LIKE '%' || :query || '%')",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "searchCustomers",
+      "sql": "SELECT * FROM customers WHERE LOWER(name) LIKE '%' || LOWER(:query) || '%' OR phone LIKE '%' || :query || '%'",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteSyncedNotIn",
+      "sql": "DELETE FROM customers WHERE workspaceId = :workspaceId AND isSynced = 1 AND id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteSyncedNotIn",
+      "sql": "DELETE FROM customers WHERE isSynced = 1 AND id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSyncedForWorkspace",
+      "sql": "DELETE FROM customers WHERE workspaceId = :workspaceId AND isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSynced",
+      "sql": "DELETE FROM customers WHERE isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCustomersForWorkspace",
+      "sql": "SELECT * FROM customers WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCustomers",
+      "sql": "SELECT * FROM customers WHERE isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "markCustomersSynced",
+      "sql": "UPDATE customers SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCountForWorkspace",
+      "sql": "SELECT COUNT(*) FROM customers WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCount",
+      "sql": "SELECT COUNT(*) FROM customers WHERE isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getJobsForWorkspace",
+      "sql": "SELECT * FROM job_entries WHERE workspaceId = :workspaceId ORDER BY createdAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getJobsForWorkspaces",
+      "sql": "SELECT * FROM job_entries WHERE workspaceId IN (:workspaceIds) ORDER BY createdAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getJobsForWorkspaceOnce",
+      "sql": "SELECT * FROM job_entries WHERE workspaceId = :workspaceId ORDER BY createdAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getJobsForWorkspacesOnce",
+      "sql": "SELECT * FROM job_entries WHERE workspaceId IN (:workspaceIds) ORDER BY createdAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getJobById",
+      "sql": "SELECT * FROM job_entries WHERE workspaceId = :workspaceId AND id = :id LIMIT 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getAllJobs",
+      "sql": "SELECT * FROM job_entries ORDER BY createdAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getJobsForCustomer",
+      "sql": "SELECT * FROM job_entries WHERE workspaceId = :workspaceId AND customerId = :customerId ORDER BY startTimeMillis DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getJobsForCustomer",
+      "sql": "SELECT * FROM job_entries WHERE workspaceId IN (:workspaceIds) AND customerId = :customerId ORDER BY startTimeMillis DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "searchJobs",
+      "sql": "SELECT * FROM job_entries WHERE workspaceId = :workspaceId AND (LOWER(customerName) LIKE '%' || LOWER(:query) || '%' OR LOWER(operatorName) LIKE '%' || LOWER(:query) || '%' OR LOWER(tractorLabel) LIKE '%' || LOWER(:query) || '%')",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "searchJobsForWorkspaces",
+      "sql": "SELECT * FROM job_entries WHERE workspaceId IN (:workspaceIds) AND (LOWER(customerName) LIKE '%' || LOWER(:query) || '%' OR LOWER(operatorName) LIKE '%' || LOWER(:query) || '%' OR LOWER(tractorLabel) LIKE '%' || LOWER(:query) || '%')",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "searchJobs",
+      "sql": "SELECT * FROM job_entries WHERE (LOWER(customerName) LIKE '%' || LOWER(:query) || '%' OR LOWER(operatorName) LIKE '%' || LOWER(:query) || '%' OR LOWER(tractorLabel) LIKE '%' || LOWER(:query) || '%')",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteSyncedNotIn",
+      "sql": "DELETE FROM job_entries WHERE workspaceId = :workspaceId AND isSynced = 1 AND id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteSyncedNotIn",
+      "sql": "DELETE FROM job_entries WHERE isSynced = 1 AND id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSyncedForWorkspace",
+      "sql": "DELETE FROM job_entries WHERE workspaceId = :workspaceId AND isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSyncedForWorkspaces",
+      "sql": "DELETE FROM job_entries WHERE workspaceId IN (:workspaceIds) AND isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSynced",
+      "sql": "DELETE FROM job_entries WHERE isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalReceivedForWorkspace",
+      "sql": "SELECT SUM(amountReceived) FROM job_entries WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalReceivedForWorkspaces",
+      "sql": "SELECT SUM(amountReceived) FROM job_entries WHERE workspaceId IN (:workspaceIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalReceived",
+      "sql": "SELECT SUM(amountReceived) FROM job_entries",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalRecordedForWorkspace",
+      "sql": "SELECT SUM(CASE WHEN totalAmount > 0 THEN totalAmount ELSE (amountReceived + pendingAmount) END) FROM job_entries WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalRecordedForWorkspaces",
+      "sql": "SELECT SUM(CASE WHEN totalAmount > 0 THEN totalAmount ELSE (amountReceived + pendingAmount) END) FROM job_entries WHERE workspaceId IN (:workspaceIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalRecorded",
+      "sql": "SELECT SUM(CASE WHEN totalAmount > 0 THEN totalAmount ELSE (amountReceived + pendingAmount) END) FROM job_entries",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalPendingForWorkspace",
+      "sql": "SELECT SUM(CASE WHEN pendingAmount > 0 THEN pendingAmount ELSE 0.0 END) FROM job_entries WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalPendingForWorkspaces",
+      "sql": "SELECT SUM(CASE WHEN pendingAmount > 0 THEN pendingAmount ELSE 0.0 END) FROM job_entries WHERE workspaceId IN (:workspaceIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalPending",
+      "sql": "SELECT SUM(CASE WHEN pendingAmount > 0 THEN pendingAmount ELSE 0.0 END) FROM job_entries",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedJobsForWorkspace",
+      "sql": "SELECT * FROM job_entries WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedJobs",
+      "sql": "SELECT * FROM job_entries WHERE isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "markJobsSynced",
+      "sql": "UPDATE job_entries SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCountForWorkspace",
+      "sql": "SELECT COUNT(*) FROM job_entries WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCountForWorkspaces",
+      "sql": "SELECT COUNT(*) FROM job_entries WHERE workspaceId IN (:workspaceIds) AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCount",
+      "sql": "SELECT COUNT(*) FROM job_entries WHERE isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getExpensesForWorkspace",
+      "sql": "SELECT * FROM expenses WHERE workspaceId = :workspaceId ORDER BY dateTimestamp DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getExpensesForWorkspaces",
+      "sql": "SELECT * FROM expenses WHERE workspaceId IN (:workspaceIds) ORDER BY dateTimestamp DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getExpensesForWorkspaceOnce",
+      "sql": "SELECT * FROM expenses WHERE workspaceId = :workspaceId ORDER BY dateTimestamp DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getExpensesForWorkspacesOnce",
+      "sql": "SELECT * FROM expenses WHERE workspaceId IN (:workspaceIds) ORDER BY dateTimestamp DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getAllExpenses",
+      "sql": "SELECT * FROM expenses ORDER BY dateTimestamp DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getExpensesForCustomer",
+      "sql": "SELECT * FROM expenses WHERE workspaceId = :workspaceId AND relatedJobId IN (SELECT id FROM job_entries WHERE workspaceId = :workspaceId AND customerId = :customerId) ORDER BY dateTimestamp DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getExpenseById",
+      "sql": "SELECT * FROM expenses WHERE workspaceId = :workspaceId AND id = :id LIMIT 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteSyncedNotIn",
+      "sql": "DELETE FROM expenses WHERE workspaceId = :workspaceId AND isSynced = 1 AND id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteSyncedNotIn",
+      "sql": "DELETE FROM expenses WHERE isSynced = 1 AND id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSyncedForWorkspace",
+      "sql": "DELETE FROM expenses WHERE workspaceId = :workspaceId AND isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSyncedForWorkspaces",
+      "sql": "DELETE FROM expenses WHERE workspaceId IN (:workspaceIds) AND isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSynced",
+      "sql": "DELETE FROM expenses WHERE isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getExpensesForJob",
+      "sql": "SELECT * FROM expenses WHERE workspaceId = :workspaceId AND relatedJobId = :jobId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteExpensesForJob",
+      "sql": "DELETE FROM expenses WHERE workspaceId = :workspaceId AND relatedJobId = :jobId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalExpensesForWorkspace",
+      "sql": "SELECT SUM(amount) FROM expenses WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalExpensesForWorkspaces",
+      "sql": "SELECT SUM(amount) FROM expenses WHERE workspaceId IN (:workspaceIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalExpenses",
+      "sql": "SELECT SUM(amount) FROM expenses",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedExpensesForWorkspace",
+      "sql": "SELECT * FROM expenses WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedExpenses",
+      "sql": "SELECT * FROM expenses WHERE isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "markExpensesSynced",
+      "sql": "UPDATE expenses SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCountForWorkspace",
+      "sql": "SELECT COUNT(*) FROM expenses WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCountForWorkspaces",
+      "sql": "SELECT COUNT(*) FROM expenses WHERE workspaceId IN (:workspaceIds) AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCount",
+      "sql": "SELECT COUNT(*) FROM expenses WHERE isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getWithdrawalsForWorkspace",
+      "sql": "SELECT * FROM withdrawals WHERE workspaceId = :workspaceId ORDER BY timestamp DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getWithdrawalsForWorkspaces",
+      "sql": "SELECT * FROM withdrawals WHERE workspaceId IN (:workspaceIds) ORDER BY timestamp DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getWithdrawalsForWorkspaceOnce",
+      "sql": "SELECT * FROM withdrawals WHERE workspaceId = :workspaceId ORDER BY timestamp DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getWithdrawalsForWorkspacesOnce",
+      "sql": "SELECT * FROM withdrawals WHERE workspaceId IN (:workspaceIds) ORDER BY timestamp DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getAllWithdrawals",
+      "sql": "SELECT * FROM withdrawals ORDER BY timestamp DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getWithdrawalById",
+      "sql": "SELECT * FROM withdrawals WHERE workspaceId = :workspaceId AND id = :id LIMIT 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteSyncedNotIn",
+      "sql": "DELETE FROM withdrawals WHERE workspaceId = :workspaceId AND isSynced = 1 AND id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteSyncedNotIn",
+      "sql": "DELETE FROM withdrawals WHERE isSynced = 1 AND id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSyncedForWorkspace",
+      "sql": "DELETE FROM withdrawals WHERE workspaceId = :workspaceId AND isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSyncedForWorkspaces",
+      "sql": "DELETE FROM withdrawals WHERE workspaceId IN (:workspaceIds) AND isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSynced",
+      "sql": "DELETE FROM withdrawals WHERE isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalWithdrawnForWorkspace",
+      "sql": "SELECT SUM(amount) FROM withdrawals WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalWithdrawnForWorkspaces",
+      "sql": "SELECT SUM(amount) FROM withdrawals WHERE workspaceId IN (:workspaceIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getTotalWithdrawn",
+      "sql": "SELECT SUM(amount) FROM withdrawals",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedWithdrawalsForWorkspace",
+      "sql": "SELECT * FROM withdrawals WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedWithdrawals",
+      "sql": "SELECT * FROM withdrawals WHERE isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "markWithdrawalsSynced",
+      "sql": "UPDATE withdrawals SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCountForWorkspace",
+      "sql": "SELECT COUNT(*) FROM withdrawals WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCountForWorkspaces",
+      "sql": "SELECT COUNT(*) FROM withdrawals WHERE workspaceId IN (:workspaceIds) AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedCount",
+      "sql": "SELECT COUNT(*) FROM withdrawals WHERE isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getSettingsForWorkspace",
+      "sql": "SELECT * FROM app_settings WHERE workspaceId = :workspaceId LIMIT 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getSettingsForWorkspaceOnce",
+      "sql": "SELECT * FROM app_settings WHERE workspaceId = :workspaceId LIMIT 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getSettings",
+      "sql": "SELECT * FROM app_settings LIMIT 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getSettingsOnce",
+      "sql": "SELECT * FROM app_settings LIMIT 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getAllSettingsOnce",
+      "sql": "SELECT * FROM app_settings",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteSettingsForWorkspace",
+      "sql": "DELETE FROM app_settings WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getPaymentsForWorkspace",
+      "sql": "SELECT * FROM payments WHERE workspaceId = :workspaceId ORDER BY collectedAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getPaymentsForWorkspaces",
+      "sql": "SELECT * FROM payments WHERE workspaceId IN (:workspaceIds) ORDER BY collectedAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getPaymentsForCustomer",
+      "sql": "SELECT * FROM payments WHERE workspaceId = :workspaceId AND customerId = :customerId ORDER BY collectedAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getPaymentById",
+      "sql": "SELECT * FROM payments WHERE workspaceId = :workspaceId AND id = :id",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getAllPayments",
+      "sql": "SELECT * FROM payments ORDER BY collectedAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deletePayment",
+      "sql": "DELETE FROM payments WHERE workspaceId = :workspaceId AND id = :id",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllForWorkspace",
+      "sql": "DELETE FROM payments WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteSyncedNotIn",
+      "sql": "DELETE FROM payments WHERE workspaceId = :workspaceId AND isSynced = 1 AND id NOT IN (:retainedIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllSyncedForWorkspace",
+      "sql": "DELETE FROM payments WHERE workspaceId = :workspaceId AND isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getUnsyncedPaymentsForWorkspace",
+      "sql": "SELECT * FROM payments WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "markPaymentsSynced",
+      "sql": "UPDATE payments SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getChecklistForWorkspace",
+      "sql": "SELECT * FROM checklist_items WHERE workspaceId = :workspaceId ORDER BY createdAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteChecklistItemById",
+      "sql": "DELETE FROM checklist_items WHERE workspaceId = :workspaceId AND id = :id",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllForWorkspace",
+      "sql": "DELETE FROM checklist_items WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getExtensionsForWorkspace",
+      "sql": "SELECT * FROM work_type_extensions WHERE workspaceId = :workspaceId ORDER BY name ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getExtensionsForWorkspaces",
+      "sql": "SELECT * FROM work_type_extensions WHERE workspaceId IN (:workspaceIds) ORDER BY name ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getExtensionsForWorkspaceOnce",
+      "sql": "SELECT * FROM work_type_extensions WHERE workspaceId = :workspaceId ORDER BY name ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "getAllExtensions",
+      "sql": "SELECT * FROM work_type_extensions ORDER BY name ASC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteNotIn",
+      "sql": "DELETE FROM work_type_extensions WHERE workspaceId = :workspaceId AND id NOT IN (:validIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "deleteAllForWorkspace",
+      "sql": "DELETE FROM work_type_extensions WHERE workspaceId = :workspaceId",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/DeletedMemberDao.kt",
+      "method": "observe",
+      "sql": "SELECT * FROM deleted_members WHERE workspaceId = :wsId ORDER BY removedAt DESC",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/DeletedMemberDao.kt",
+      "method": "get",
+      "sql": "SELECT * FROM deleted_members WHERE workspaceId = :wsId AND uid = :uid",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "getOperation",
+      "sql": "SELECT * FROM pending_operations WHERE operationId = :id LIMIT 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "requeueRejected",
+      "sql": "UPDATE pending_operations SET state = 'PENDING', failureReason = 'Manual retry after access check; previous: ' || failureReason WHERE operationId = :id AND state = 'REJECTED'",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "nextSequence",
+      "sql": "SELECT COALESCE(MAX(sequence), 0) + 1 FROM pending_operations",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "nextBatch",
+      "sql": "SELECT * FROM pending_operations WHERE workspaceId = :wsId AND actorUid = :uid AND state = 'PENDING' ORDER BY sequence LIMIT 20",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "pendingAfter",
+      "sql": "SELECT * FROM pending_operations WHERE workspaceId = :wsId AND actorUid = :uid AND state = 'PENDING' AND sequence > :after ORDER BY sequence LIMIT 20",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "unresolvedPredecessors",
+      "sql": "SELECT COUNT(*) FROM pending_operations WHERE workspaceId = :wsId AND entityType = :type AND entityId = :id AND sequence < :before AND state NOT IN ('INVALIDATED', 'ACKNOWLEDGED')",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "rejectedPredecessors",
+      "sql": "SELECT COUNT(*) FROM pending_operations WHERE workspaceId = :wsId AND entityType = :type AND entityId = :id AND sequence < :before AND state = 'REJECTED'",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "waiting",
+      "sql": "UPDATE pending_operations SET failureReason = :reason WHERE operationId = :id AND state = 'PENDING'",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "observe",
+      "sql": "SELECT * FROM pending_operations WHERE workspaceId = :wsId ORDER BY sequence",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "observeActor",
+      "sql": "SELECT * FROM pending_operations WHERE workspaceId = :wsId AND actorUid = :uid AND state != 'ACKNOWLEDGED' ORDER BY sequence",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "failed",
+      "sql": "UPDATE pending_operations SET attempts = attempts + 1, state = :state, failureReason = :reason WHERE operationId = :id",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "acknowledge",
+      "sql": "UPDATE pending_operations SET state = 'ACKNOWLEDGED', failureReason = '' WHERE operationId = :id",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "rejectedCount",
+      "sql": "SELECT COUNT(*) FROM pending_operations WHERE workspaceId = :wsId AND actorUid = :uid AND state = 'REJECTED'",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "outstanding",
+      "sql": "SELECT COUNT(*) FROM pending_operations WHERE workspaceId = :wsId AND entityType = :type AND entityId = :entityId AND state NOT IN ('ACKNOWLEDGED', 'INVALIDATED')",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "outstandingOperations",
+      "sql": "SELECT * FROM pending_operations WHERE workspaceId = :wsId AND state NOT IN ('INVALIDATED', 'ACKNOWLEDGED') ORDER BY sequence",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "waitingRecovery",
+      "sql": "UPDATE pending_operations SET failureReason = :reason WHERE operationId = :id AND state = 'REJECTED'",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "lastAcknowledged",
+      "sql": "SELECT * FROM pending_operations WHERE workspaceId = :wsId AND actorUid = :uid AND entityType = :type AND entityId = :id AND state = 'ACKNOWLEDGED' AND sequence < :before ORDER BY sequence DESC LIMIT 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "supersedeReconciledRejections",
+      "sql": "UPDATE pending_operations SET state = 'INVALIDATED', failureReason = failureReason || '; Superseded by a fresh authorized action' WHERE workspaceId = :wsId AND actorUid = :uid AND entityType = :type AND entityId = :id AND state = 'REJECTED' AND failureReason LIKE 'Confirmed state restored; %' AND NOT EXISTS (SELECT 1 FROM pending_operations p WHERE p.workspaceId = :wsId AND p.entityType = :type AND p.entityId = :id AND p.state = 'PENDING')",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "supersedeExpenseDeleteAfterEntryDelete",
+      "sql": "UPDATE pending_operations SET state = 'INVALIDATED', failureReason = failureReason || '; Linked Expense deleted by confirmed Entry transaction' WHERE workspaceId = :wsId AND entityType = 'EXPENSE' AND entityId = :id AND mutationType = 'DELETE' AND state = 'REJECTED'",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "resolveAbsentExpenseDelete",
+      "sql": "UPDATE pending_operations SET state = 'INVALIDATED', failureReason = failureReason || '; Record confirmed absent in Cloud and Room' WHERE operationId = :operationId AND workspaceId = :wsId AND entityType = 'EXPENSE' AND mutationType = 'DELETE' AND state = 'REJECTED'",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "invalidateRejectedEntryDelete",
+      "sql": "UPDATE pending_operations SET state = 'INVALIDATED', failureReason = 'Deletion retried after reconciliation' WHERE workspaceId = :wsId AND actorUid = :uid AND entityType = 'JOB' AND entityId = :id AND mutationType = 'DELETE' AND state = 'REJECTED'",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "invalidateActor",
+      "sql": "UPDATE pending_operations SET state = 'INVALIDATED', failureReason = 'Member permanently deleted' WHERE workspaceId = :wsId AND actorUid = :uid",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "invalidateEntity",
+      "sql": "UPDATE pending_operations SET state = 'INVALIDATED', failureReason = 'Record permanently deleted' WHERE workspaceId = :wsId AND entityType = :type AND entityId = :id",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    }
+  ],
+  "repository_methods": {
+    "AuthRepository.kt": [
+      "startListening",
+      "signInWithGoogle",
+      "signInWithEmail",
+      "signUpWithEmail",
+      "sendPhoneOtp",
+      "verifyPhoneOtp",
+      "signOut",
+      "setAuthenticatedProfile",
+      "getInstance"
+    ],
+    "SyncResult.kt": [],
+    "WorkspaceRepository.kt": [
+      "enforceSelfOnlyEntryIdentity",
+      "effectiveEntryStartTimeForEdit",
+      "initialWorkspaceSettings",
+      "getPersonalWorkspaceId",
+      "retryCloudListeners",
+      "loadCachedPercentages",
+      "updatePartnerPercentages",
+      "loadCachedProfitShareAllocations",
+      "loadProfitShareAllocationsFromCloud",
+      "updateProfitShareAllocations",
+      "migrateLegacyPercentagesToUidAllocations",
+      "getActiveUid",
+      "getEffectiveActorUid",
+      "getSavedUserLanguage",
+      "saveUserLanguage",
+      "getPersonalHourlyRate",
+      "setPersonalHourlyRate",
+      "loadCachedAccessControl",
+      "recordAuditEvent",
+      "getPartnerLockedPages",
+      "setPartnerPageLocked",
+      "getLockedPages",
+      "setPageLocked",
+      "refreshLockedPages",
+      "isCloudReady",
+      "normalizePhoneNumber",
+      "checkPhoneAccountExists",
+      "checkUserExists",
+      "checkApplicationAccountExists",
+      "createPersonalWorkspace",
+      "initializeForUser",
+      "listenToCollaborationGroupsDiscovery",
+      "attachRealtimeListenersForVisibleWorkspaces",
+      "syncRemotePaymentsToLocal",
+      "stopWorkspaceListeners",
+      "syncRemoteJobsToLocal",
+      "syncRemoteExpensesToLocal",
+      "syncRemoteCustomersToLocal",
+      "syncRemoteTractorsToLocal",
+      "syncRemotePartnersToLocal",
+      "syncRemoteWithdrawalsToLocal",
+      "getOrResolveWorkspaceId",
+      "requireRecordMembersActive",
+      "requireWorkspaceActor",
+      "cacheVerifiedMembership",
+      "restoreVerifiedMembership",
+      "pendingOperations",
+      "retryRejectedCollection",
+      "enqueue",
+      "reconcileRejectedOperation",
+      "contextMatches",
+      "clearCompoundDeleteMarkers",
+      "acknowledge",
+      "saveJobEntry",
+      "resolveRoleForWorkspace",
+      "isOwnerOfWorkspace",
+      "deleteJob",
+      "getExpensesForJob",
+      "addExpense",
+      "updateExpense",
+      "deleteExpense",
+      "getAvailableBalance",
+      "addWithdrawal",
+      "updateWithdrawal",
+      "deleteWithdrawal",
+      "updateCustomer",
+      "deleteCustomer",
+      "addOrFindCustomer",
+      "recordCustomerPayment",
+      "getPaymentsFlow",
+      "deletePayment",
+      "getChecklistFlow",
+      "addChecklistItem",
+      "updateChecklistItem",
+      "deleteChecklistItem",
+      "deleteChecklistItemById",
+      "recalculateCustomerStats",
+      "addTractor",
+      "getWorkTypeExtensionsFlow",
+      "addExtension",
+      "updateExtension",
+      "deleteExtension",
+      "updateTractor",
+      "deleteTractor",
+      "addPartner",
+      "updatePartner",
+      "deletePartner",
+      "refreshWorkspaceMembers",
+      "addPartnerDirectly",
+      "removePartner",
+      "removePendingPartnerInvitation",
+      "checkForInvitations",
+      "switchActiveWorkspace",
+      "removePartnerFromWorkspace",
+      "deletedMembers",
+      "refreshDeletedMembers",
+      "permanentlyDeleteMember",
+      "leaveCollaborationGroup",
+      "getGenuinePartnerWorkspaces",
+      "getAvailableWorkspaces",
+      "getWorkspaceMembers",
+      "updateSettings",
+      "pushUnsyncedToCloud",
+      "getInstance"
+    ],
+    "WorkspaceRequestFence.kt": [
+      "begin",
+      "invalidate",
+      "check"
+    ],
+    "WorkspaceRequestOutcome.kt": []
+  }
+}

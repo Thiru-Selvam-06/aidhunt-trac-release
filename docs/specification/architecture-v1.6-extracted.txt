@@ -1,0 +1,792 @@
+AIDHUNT Trac
+Stable Authoritative Architecture
+Identity • Workspace Isolation • RBAC • Record Authorization • Collections • Financial Attribution • Offline Sync
+STATUS
+VERSION
+AUTHORITATIVE DATE
+USE
+STABLE BASELINE
+v1.6
+09 October 2026
+Engineering source of truth for Codex implementation
+
+CORE SECURITY INVARIANTEvery business record belongs to exactly one workspace. A user may belong to multiple workspaces, but a UID never creates permission to cross a workspace boundary. All reads, writes, deletes, sync, cache, search, reports, financial calculations and exports remain scoped to the currently authorized workspace.
+
+This document captures the architecture explicitly established in the design discussion, including the final policy deltas locked after the first Firebase Rules review. It is intended to be handed to Codex as the stable baseline and implemented one area at a time. Older authorization documents and legacy rule models do not override this document.
+
+1. Purpose and Scope
+AIDHUNT Trac is an offline-capable, multi-workspace business application in which a single human identity can participate in multiple businesses. The security model must distinguish the person (Firebase Auth UID), the workspace membership, the role within that workspace, and the ownership or attribution of individual records.
+What this architecture defines
+How a fresh user creates a Firebase account and their first workspace.
+How an Owner invites a person who is already a user or has never used the app.
+How one OTP represents the invitation and consent handshake for joining a workspace.
+How OWNER, PARTNER and OPERATOR roles are assigned and interpreted per workspace.
+Exactly what each role can view, create, edit, delete, reverse, collect, use or manage.
+How workspace isolation is enforced through multiple layers, including Firestore Rules.
+How Partner collection history and financial attribution are preserved.
+Current-stage subscription scope: no subscription model restricts user validity, workspace creation, member invitations/additions, or record creation. Any future paid-plan design is out of current scope.
+How Room, offline queues and sync preserve workspace boundaries.
+What is not assumed
+There is no CO-OWNER role.
+A Partner lock mechanism for Expenses, Withdrawals, Balance Sheet, Customer Credit or Business Overview is not part of the current model. Partner visibility is currently allowed.
+Firestore Rules do not themselves validate SMS OTPs; Firebase Authentication / the trusted invitation flow performs OTP verification.
+No subscription or plan-based enforcement is implemented in the current stage. If a subscription/payment model is introduced later, its payment state must be server-owned and the architecture must be explicitly revised; the mobile client must not fabricate paid state.
+2. Non-Negotiable Architecture Invariants
+ID
+INVARIANT
+RULE
+I-01
+UID identity
+One Firebase Auth UID identifies one person. The UID never changes because another person is viewing the workspace.
+I-02
+Workspace-scoped role
+Role is determined by (memberUid, workspaceId). Role is not a global user property.
+I-03
+Fixed role set
+Only OWNER, PARTNER and OPERATOR exist.
+I-04
+Membership authority
+Workspace membership is the source for Partner/Operator authorization; workspace ownerUid identifies the Owner.
+I-05
+Hard workspace partition
+Every business record has exactly one workspaceId and must be accessed only in that workspace context.
+I-06
+Viewer independence
+Every member sees the same stored membership role assignments. Viewer identity changes only the viewer's own permissions.
+I-07
+Visibility != mutation
+Viewing another member's record never grants edit/delete/reverse authority over that record.
+I-08
+Identity fields remain distinct
+createdByUid, entryForUid, collectedByUid and financial attribution are different concepts and must not be substituted.
+I-09
+Original timestamp authority
+24-hour rules use the original createdAt; updatedAt must never reset a mutation window.
+I-10
+UI is not security
+Hidden buttons/dropdowns are UX enforcement. Firestore Rules must independently reject forged requests.
+I-11
+Offline isolation
+Pending Room mutations retain workspaceId and actor identity and can never be re-homed to another workspace.
+I-12
+Financial isolation
+FinancialCalculationEngine operates only on an authorized workspace dataset.
+
+PERMANENT ROLE-CONSISTENCY RULEFor Workspace A, if 123=OWNER, 456=PARTNER and 789=PARTNER, then viewing Workspace A from 123, 456 or 789's phone must show exactly those same stored role assignments. The current viewer's role may change the viewer's capabilities, but never the roles of other members.
+
+3. Identity and User Lifecycle
+3.1 Fresh person enters the app independently
+PERSON  |  vEnter phone number  |  vONE OTP generated and verified  |  vFirebase Auth UID  |  vNo workspace exists  |  vCreate Workspace  |  vUID becomes OWNER  |  vEnter app
+3.2 Owner invites an existing user
+OWNER (Workspace A)  |  vManage Members  |  vEnter target phone  |  vSelect PARTNER or OPERATOR  |  vONE invitation OTP  |  vTarget receives OTP on target phone  |  vTarget shares OTP with Owner  |  vOTP verified  |  vTarget UID already exists  |  vCreate membership:  workspaceId = A  memberUid   = Target UID  role        = PARTNER / OPERATOR  status      = ACTIVE
+3.3 Owner invites a brand-new person
+OWNER (Workspace A)  |  vEnter target phone + select role  |  vONE OTP sent to target phone  |  vTarget has no account / UID / workspace  |  vTarget shares OTP with Owner  |  vOTP verified  |  vCreate Firebase Auth UID  |  vCreate membership in Workspace A  role = PARTNER / OPERATOR  |  vTarget may later create their OWN workspace  and become OWNER there.
+FINAL INVITATION OTP RULE: The single invitation OTP is the join-handshake credential. For real phone-based OTP flows, it is single-use and expires after 5 minutes. Test-number flows currently have no time limit because the real OTP/SMS verification service is not enabled; this test-only exemption must not change production behavior.
+3.4 One person, multiple workspaces
+               USER UID                  |        +---------+---------+----------+        |                   |          |        v                   v          v   Workspace A         Workspace B  Workspace C      PARTNER              OWNER      OPERATORRole lookup:    role = role(memberUid, workspaceId)
+4. Workspace Membership Model
+A workspace is the container for business data. Membership is the relationship between a UID and that workspace. The same UID can have different roles in different workspaces without changing identity.
+Field
+Meaning
+Authoritative rule
+workspaceId
+The business/workspace security boundary.
+Must match the current workspace context for every business operation.
+memberUid
+Firebase Auth UID of the member.
+Immutable identity of the person.
+role
+OWNER / PARTNER / OPERATOR in THIS workspace.
+Derived from this workspace membership; not global.
+status
+ACTIVE / SUSPENDED / EXPIRED.
+Only ACTIVE grants normal workspace access.
+ownerUid
+UID of the workspace owner.
+Determines OWNER authority for that workspace.
+createdByUid
+Actor that created a record.
+Never substitutes for financial attribution automatically.
+entryForUid
+Person the job/entry is for.
+Used for entry financial attribution.
+collectedByUid
+Person who actually collected a payment.
+Independent of original entry creator.
+
+4.1 Role consistency example
+Workspace A  123 -> OWNER  456 -> PARTNER  789 -> PARTNERView from 123:  123 OWNER | 456 PARTNER | 789 PARTNERView from 456:  123 OWNER | 456 PARTNER | 789 PARTNERView from 789:  123 OWNER | 456 PARTNER | 789 PARTNEROnly the CURRENT VIEWER'S capability set changes.
+4.2 Owner member removal and Deleted Users lifecycle
+Only the OWNER may remove a workspace member. OWNER cannot change PARTNER <-> OPERATOR, cannot suspend/reactivate a member, cannot transfer ownership, and a workspace has exactly one OWNER.
+TWO-STAGE LIFECYCLE: Removing a member from the active workspace is Stage 1 and does not permanently delete business data. It immediately revokes that member’s access to this workspace and moves the member into an Owner-only Deleted Users section under Account. Stage 2 is an explicit permanent purge initiated later by the Owner from Deleted Users. Do not perform the permanent purge merely because the member was removed.
+STAGE 1 - REMOVE FROM WORKSPACE: The removed member can no longer enter or perform operations in this workspace. Their existing records remain in the same workspace with original UID attribution. Add an Owner-only Deleted Users section under Account and list the removed member there. In member/history views, retained records linked to the removed member are shown greyed out and read-only where applicable. Grey-out is presentation only and is not a security boundary.
+STAGE 1 - FINANCIAL CONTINUITY: Existing customer dues produced by retained Job/Entry records remain active. Current authorized OWNER/PARTNER users may continue to open the due, record a payment, and create new Collection History records against it under normal collection rules. Greyed/read-only applies to the removed member’s retained operational/source record, not to the authorized payment-collection action. Existing collection records remain available at this stage.
+STAGE 1 - NO NEW ATTRIBUTION TO REMOVED MEMBER: Active users may continue ordinary workspace operations for themselves or other currently eligible active members, but no new Entry, Expense, Withdrawal, Tractor or Extension may be created for, owned by, or attributed to the removed UID. Do not offer the removed member as an Entry-For, Expense-For, Withdrawal-For or equivalent target, and do not attach new operational records to the removed UID.
+STAGE 2 - PERMANENTLY DELETE FROM DELETED USERS: The Owner explicitly selects the removed member in Deleted Users, chooses Permanently Delete Records, and confirms. Delete the eligible data for that member from Firebase/Firestore and the corresponding local Room data in the CURRENT workspace only. Scope is based on creator AND target/beneficiary/financial-attribution identity, not creator alone: an Entry created by the Owner for Partner A is included when entryForUid or financialAttributionUid identifies Partner A; apply the equivalent createdByUid plus expenseForUid/financialAttributionUid and withdrawalForUid rules to Expenses and Withdrawals. Include Tractors/Extensions created by the removed UID, customer dues sourced by purged Entries, and collection records collected by the removed UID or attached to a purged due. Reconcile financial effects before deleting collection records so that a retained due is restored correctly if one of the removed member’s collections is purged from it. Normal in-app collection deletion remains reversal with status=REVERSED; permanent member purge is a separate, explicitly confirmed data-erasure workflow.
+WORKSPACE AND QUEUE SAFETY: Permanent purge must never delete the Firebase Authentication account/UID itself or any membership/data in the person’s other workspaces. Cancel or invalidate pending sync operations for the purged entities in this workspace so offline queued writes cannot recreate deleted documents. Process purge in an idempotent, retryable way; keep the member visible in Deleted Users as PURGE PENDING until cloud and local cleanup is confirmed, and report completion only after the scoped purge has succeeded.
+SHARED CUSTOMER AND DEPENDENCY SAFETY: Do not delete a Customer that is still referenced by any Entry or other business record retained for another workspace member. Delete it only after dependent records in the purge scope are removed and no retained records reference it. Where an asset record is purged but retained historical records need its identity for display, preserve the historical snapshot/reference required by those records rather than corrupting their history. Scope every query and deletion to the selected workspaceId.
+5. Authoritative Authorization Pipeline
+USER ACTION    |    vAuthenticated Firebase UID    |    vCurrent workspaceId    |    vMembership exists?    |--- NO ---> DENY    |    vStatus ACTIVE?    |--- NO ---> DENY    |    vRole in THIS workspace    |    +--> OWNER    +--> PARTNER    +--> OPERATOR            |            vCollection-specific RBAC            |            vRecord workspaceId matches?    |--- NO ---> DENY    |    vOwnership / attribution check    |    vOriginal timestamp check when applicable    |    vImmutable identity fields protected    |    vFirestore Security Rules    |  +-----+------+  |            | ALLOW        DENY  |  vAuthorized data operation
+5.1 Defense-in-depth layers
+Layer
+Responsibility
+Failure behavior
+UI capability layer
+Show only controls the viewer may use (for example, no Partner target dropdown for withdrawals).
+If wrong, UX is wrong, but it is not a security bypass.
+AuthorizationManager
+Single client business-authorization decision point.
+Unauthorized client operation rejected.
+Repository/data layer
+Require workspace context and preserve identity fields.
+Cross-context mutation rejected before persistence.
+Room/offline layer
+Store workspaceId + actor UID with pending mutations.
+Queued mutation cannot be moved to another workspace.
+FinancialCalculationEngine
+Calculate only from the authorized workspace dataset and UID attribution.
+No cross-workspace financial aggregation.
+Firestore Security Rules
+Final server-side enforcement of workspace + role + record constraints.
+Forged/unauthorized request rejected.
+
+
+6. RBAC: Complete Access Matrix
+The matrix deliberately separates VIEW, CREATE, EDIT, DELETE, REVERSE, USE and ownership/time scope. The word 'Allowed' is not used as a standalone permission.
+FEATURE
+OWNER
+PARTNER
+OPERATOR
+Home
+VIEW
+VIEW
+VIEW
+New Entry
+CREATE
+CREATE
+CREATE
+Old Historical Entries
+VIEW
+VIEW VIA BUSINESS OVERVIEW; NO MANAGEMENT
+NO ACCESS
+Reports / Analytics
+VIEW ALL WORKSPACE
+VIEW ALL WORKSPACE
+NO ACCESS
+Expenses
+VIEW ALL + OWNER CRUD
+VIEW ALL + own edit/delete <24h
+NO ACCESS
+Withdrawals
+VIEW ALL + create self/eligible Partner + delete any
+VIEW ALL + create self + delete own <24h
+NO ACCESS
+Balance Sheet
+VIEW ALL WORKSPACE
+VIEW ALL WORKSPACE
+NO ACCESS
+Customer Credit
+VIEW ALL WORKSPACE
+VIEW ALL WORKSPACE
+NO ACCESS
+Business Overview
+VIEW ALL WORKSPACE
+VIEW ALL WORKSPACE
+NO ACCESS
+Manage Members
+FULL
+NO ACCESS
+NO ACCESS
+Tractors
+FULL
+ADD / USE / EDIT OWN / DELETE OWN ANY TIME
+VIEW / USE
+Extensions
+FULL
+ADD / USE / EDIT OWN / DELETE OWN ANY TIME
+VIEW / USE
+Customers
+CREATE / EDIT / DELETE
+CREATE / EDIT
+NO ACCESS
+Edit Business Name
+YES
+NO
+NO
+Export PDF
+AUTHORIZED WORKSPACE
+AUTHORIZED WORKSPACE
+NO ACCESS
+
+NO LOCK ASSUMPTIONPartner visibility for Expenses, Withdrawals, Balance Sheet, Customer Credit and Business Overview is currently allowed. No future lock mechanism is assumed here. A later lock, if added, is an entitlement layer and must not redefine workspace identity or base RBAC.
+
+FINAL ENTRY TARGET RULE: OWNER may create for self or an eligible workspace member. PARTNER and OPERATOR may create entries for SELF ONLY.
+6.1 Job Entry / New Entry
+Operation
+OWNER
+PARTNER
+OPERATOR
+View workspace entries
+ALL
+ALL
+ALL
+Create entry
+YES
+YES
+YES
+Edit own-created
+ANY TIME
+OWN <24H
+OWN <24H
+Edit another member's
+YES
+NO
+NO
+Delete own-created
+ANY TIME
+OWN <24H
+OWN <24H
+Delete another member's
+YES
+NO
+NO
+
+6.2 Expenses
+Operation
+OWNER
+PARTNER
+OPERATOR
+View
+ALL WORKSPACE EXPENSES
+ALL WORKSPACE EXPENSES
+NO ACCESS
+Create
+Owner authority for defined eligible target
+SELF ONLY
+NO ACCESS
+Edit own
+OWNER AUTHORITY
+OWN <24H
+NO ACCESS
+Edit another member's
+YES / OWNER AUTHORITY
+NO
+NO
+Delete
+OWNER AUTHORITY
+OWN <24H
+NO
+
+Partner Add Expense UIPartner must not see an Expense For participant dropdown. The target is fixed to self. Firebase Rules must still reject a forged request that submits another member's UID.
+
+6.3 Tractors and Extensions
+Operation
+OWNER
+PARTNER
+OPERATOR
+View
+ALL WORKSPACE
+ALL WORKSPACE
+ALL WORKSPACE
+Use/select in work
+YES
+YES
+YES
+Create
+YES
+YES
+NO
+Edit own-created
+YES
+YES
+NO
+Edit another member's
+YES
+NO
+NO
+Delete own-created
+YES
+YES ANY TIME
+NO
+Delete another member's
+YES
+NO
+NO
+24-hour restriction on Partner delete
+NO
+NO
+NO
+
+Workspace-shared resourcesA Partner-created tractor or extension belongs to the workspace, becomes visible/usable by Owner, Partners and Operators in that same workspace, and remains subject to workspace isolation. Partner deletion of their own created tractor/extension has no 24-hour limit.
+
+6.4 Withdrawals
+Operation
+OWNER
+PARTNER
+OPERATOR
+View
+ALL WORKSPACE WITHDRAWALS
+ALL WORKSPACE WITHDRAWALS
+NO ACCESS
+Create for self
+YES
+YES
+NO
+Create for eligible Partner
+YES
+NO
+NO
+Create for another person
+YES if eligible
+NO
+NO
+Edit
+NO direct edit; use reverse/delete
+NO direct edit
+NO
+Delete own
+ANY TIME
+OWN <24H
+NO
+Delete another member's
+YES
+NO
+NO
+
+Partner Withdrawal UIPartner must not see a target-member dropdown. The target is always the authenticated Partner. Firebase Rules must also require withdrawalForUid == authenticated UID.
+
+6.5 Customer Collections / Payments
+Operation
+OWNER
+PARTNER
+OPERATOR
+View collection history
+ALL WORKSPACE
+ALL WORKSPACE
+NO ACCESS
+Collect customer payment
+YES
+YES
+NO
+Collect against Owner-created due
+YES
+YES
+NO
+collectedByUid
+Authenticated Owner UID
+Authenticated Partner UID
+N/A
+Reverse own collection
+ANY TIME
+OWN <24H
+NO
+Reverse another person's collection
+YES
+NO
+NO
+Edit collection record
+NO; append/reverse model
+NO; append/reverse model
+NO
+
+Split payment linkagePartial collections for the same customer's same obligation must retain the same customerId and the same jobId/creditId. The UI should visually branch them under the same customer/obligation so it is clear they are portions of one due, not unrelated payments.
+
+6.6 Customers
+Operation
+OWNER
+PARTNER
+OPERATOR
+View
+ALL WORKSPACE CUSTOMERS
+ALL WORKSPACE CUSTOMERS
+NO ACCESS
+Create
+YES
+YES
+NO
+Edit
+YES
+YES
+NO
+Delete
+YES
+NO
+NO
+
+FINAL HISTORICAL RULE: Historical Entry management (CREATE / EDIT / DELETE) is OWNER-only. PARTNER may VIEW historical entries through Business Overview; this does not grant historical mutation authority.
+6.7 Reports / Balance / Credit / Business Overview
+REPORT SURFACE COUNT: OWNER has 7 report sections. PARTNER has 6 report sections. The six Partner-visible sections are Business Overview, Customer Credit Due, Collection History, Expenses, Balance Sheet and Withdrawal. The seventh Owner-only section is Old Entry Creation. OPERATOR has no access to these restricted financial report sections.Partner visibility:  Owner-created records      -> VIEW  Partner A records          -> VIEW  Partner B records          -> VIEW  Own records                -> VIEWVisibility does NOT grant:  edit Owner records  delete Partner A records  reverse another member's payment
+7. Customer Due and Split-Collection Model
+Customer: ABC MotorsUnderlying Job / Due: J001Total Due: ₹50,000        |        +--------------------+        |                    |        v                    vCollection #1          Collection #2₹20,000               ₹30,000Collected by OWNER    Collected by PARTNERcustomerId=C001       customerId=C001jobId=J001            jobId=J001Both collections are portions of the SAME customer obligation.
+The collection history preserves the collector separately from the creator of the original job. A reversal does not erase history: the Partner's ₹30,000 collection changes to status=REVERSED, ₹30,000 returns to the same customer's outstanding due, and the Owner's earlier ₹20,000 collection remains untouched.
+FINAL DELETE LIFECYCLE RULE: Entries, Expenses, Withdrawals, Tractors, Extensions and Customers use hard deletion when DELETE is authorized, subject to dependency protection for shared Customers and historical references. Deleting a Due hard-deletes the underlying Job/Entry that created it. Normal collection deletion is never physical deletion: it changes the collection to status=REVERSED and restores the due. The separate, explicitly confirmed permanent purge from Deleted Users may physically remove collection records within that member’s purge scope only after the financial effects and dependent obligations have been reconciled.
+FINAL COLLECTION RULE: Collection reversal retains the collection record with status=REVERSED. Physical deletion is not the financial reversal operation.
+8. Financial Attribution Rules
+Financial identity must not be inferred from who clicked the create button. The system keeps distinct fields for record creation, business target, collection actor and financial attribution.
+Field
+Meaning
+Never assume
+createdByUid
+Who created/entered the record.
+Do not automatically treat as payer/beneficiary.
+entryForUid
+Who the business entry is for.
+Do not replace with createdByUid.
+collectedByUid
+Who actually collected the payment.
+Do not derive from original job creator.
+financialAttributionUid
+Who the amount is financially attributed to.
+Do not infer from UI operator alone.
+
+Example: Owner creates for Partner 1If Owner creates an entry for Partner 1 and selects 'I Paid' (investment/paid amount), the amount is attributed to Partner 1 because the entry is for Partner 1. The fact that Owner performed the data entry does not convert the amount into an Owner investment.
+
+8.1 Add Expense attribution
+The same attribution principle applies to Add Expense: if an expense is explicitly created for a participant, the financial attribution follows that participant. The creator identity remains separately recorded.
+9. Subscription (Future Scope; Not Implemented in Current Stage)
+CURRENT IMPLEMENTATION RULE: No subscription, paid-plan, account-validity, plan-expiry, member-count, workspace-creation, invitation, or record-creation restriction is implemented in this stage. Users may create workspaces, add members and create records subject only to authentication, workspace membership and role-based permissions. Do not add subscription gates or expiry checks.
+FUTURE CONCEPT ONLY: If a subscription model is approved in a future architecture revision, a workspace plan could cover its active members. This concept is not implemented or enforced now.
+FUTURE CONCEPT ONLY: A future plan might define personal-plan fallback or a FREE downgrade after coverage ends. This flow is not implemented and has no effect on current access.
+FUTURE ONLY: If a subscription model is approved later, workspace coverage may be shared by active members of that workspace.
+FUTURE ONLY: A separate member purchase would not be required solely to use a paid workspace, if that future model is adopted.
+FUTURE ONLY: Any personal-plan fallback or FREE downgrade requires a separate architecture decision; no expiry or downgrade check applies now.
+Workspace access is currently determined by authentication and workspace membership/role. Any future subscription must not itself grant workspace membership.
+No subscription state is required or checked in the current implementation. If subscription functionality is added later, its paid state must be server-owned.
+FINAL OFFLINE RULE: Every <24-hour permission window is measured operationally from immutable original createdAt; editing never resets or extends it. When an action is performed offline, record its local operation time in the durable pending operation and use it for delayed synchronization. This is the accepted practical model for this app: do not build cryptographic device attestation or an over-engineered clock-proof service. A sufficiently modified device could manipulate local time/state, and that limitation is accepted. Continue enforcing workspace, authenticated UID/session, cached role, creator/target and reference checks; offline support must not become a way to bypass role permissions.
+10. Offline, Room and Synchronization
+OFFLINE WORKFLOW1. Check the persisted authenticated session and cached workspace/role.2. Check the role permission and perform the local operation in Room.3. Atomically persist the local change and a durable pending operation; show the result as PENDING.4. When connectivity returns, process pending work in small, dependency-ordered groups in the background.5. Recheck cloud authorization and references. Mark only acknowledged operations SYNCED; keep retryable failures pending and expose permanent rejections.
+A pending mutation created in Workspace A must never be replayed against Workspace B.
+Changing the active workspace in the UI must not rewrite the workspaceId of a queued mutation.
+Local reads must be scoped to the active workspace.
+Other devices do not see offline-only changes until synchronization occurs.
+OFFLINE SESSION: A previously authenticated user must be able to reopen and use the app offline with the persisted authentication session and cached last-known workspace/membership/role context. Missing network alone must not log the user out. First-time Firebase phone/OTP sign-in still requires network and cannot be completed offline.
+OFFLINE OPERATIONS: Cached workspace data, lists, reports/calculations and all locally available workflows permitted by the cached role must continue to work offline, including New Entry, Owner-only Historical Entry management, permitted edits/deletes, customer collections/reversals, and withdrawals. Owner and Partner withdrawal behavior must follow the same role targets as online; Operator has no withdrawal access. Offline must not bypass RBAC.
+LOCAL AUTHORIZATION: Before changing Room or enqueueing an operation, use the last successfully synchronized membership/role snapshot for the active workspace and apply the same role/ownership/time rules. If the local account/workspace/role context is unavailable, do not guess permissions; defer the operation until a valid context exists.
+DURABLE QUEUE: Commit the local business change and its pending queue operation atomically. Keep operationId (for idempotent retry), workspaceId, actorUid, operation type, entity/record identity, sequence/order, recorded local operation time and dependency references. A workspace switch must never re-home a queued operation. A local hard delete must retain a queued delete command/tombstone until cloud acknowledgement.
+SYNC PERFORMANCE: Sync runs in the background using the project’s existing worker/queue mechanism. Drain a small bounded set of operations per pass (for example, around 10–20 operations, tuned to measured performance), with limited concurrency and a short yield between passes when needed. Do not push 100 records in one giant upload or dispatch every write simultaneously. Keep network work off the main thread and keep UI interactions responsive; do not build a second synchronization framework.
+DEPENDENCY ORDER: Preserve queue order and upload prerequisites before dependent operations (for example, a Job/Entry and its referenced records before a collection against its due; the original collection before a reversal). Retryable operations must have stable identifiers so a retry cannot duplicate a payment, entry or withdrawal.
+ACKNOWLEDGEMENT AND RETRY: Mark each operation SYNCED only after Firestore acknowledges that operation. Transient network/server failures remain pending and retry with bounded backoff. A permanent authorization, workspace, validation or conflict rejection must remain identifiable for recovery/diagnosis; never silently discard it or show it as synced. Continue processing independent queued work where dependencies permit. When a member is permanently purged, cancel or invalidate pending operations for affected entity IDs in that workspace and ensure they cannot later recreate purged records.
+WORKSPACE-LOCAL RESULTS: Pending offline changes immediately affect the current workspace’s Room-backed UI and calculations. They must not appear in another workspace or be combined with another workspace’s records. Other devices see these changes only after successful cloud synchronization.
+11. UI Capability Rules
+Scenario
+UI behavior
+Security enforcement
+Partner creates withdrawal
+Show only self; no member dropdown.
+Reject withdrawalForUid != caller UID.
+Partner creates expense
+Hide Expense For member selector; target self.
+Reject expenseForUid != caller UID.
+Partner edits entry
+Edit visible only on own-created entry while <24h.
+Reject other creators / expired window.
+Partner edits expense
+Edit visible only on own-created expense while <24h.
+Reject other creators / expired window.
+Partner deletes tractor/extension
+Delete available on own-created resource; no 24h timer.
+Reject another member's resource.
+Operator deletes entry
+Delete shown only for own-created entry while <24h.
+Allow Operator delete only for own-created entry while <24h; reject other or expired deletes.
+Partner reverses collection
+Reverse shown only for own collection <24h.
+Reject another collector's collection.
+Workspace switch
+Re-scope all data/query/caches to active workspace.
+Require record.workspaceId == authorized workspaceId.
+
+The UI should obtain capability decisions from the same authorization policy used by the client authorization layer. The UI is a usability surface; the actual security boundary remains server-side.
+12. Firebase Security Architecture
+request.auth.uid      |      +--> current workspaceId              |              +--> ownerUid?              |              +--> members/{uid}                       |                       +--> role                       +--> status              |              v      collection-specific authorization              |              +--> record.workspaceId == workspaceId              +--> ownership / attribution              +--> originalCreatedAt              +--> immutable fields              |              v          ALLOW / DENY
+12.1 Required server-side checks
+Authenticated UID.
+Exact workspace membership.
+ACTIVE status.
+Role in this workspace.
+Collection-level permission.
+Record workspaceId match.
+Ownership/creator and time-window checks where required.
+Attribution checks for entryForUid, expenseForUid, withdrawalForUid and collectedByUid.
+Immutable identity/workspace/timestamp protection.
+Default deny for unmatched paths.
+12.2 Migration data safety
+MIGRATION DATA SAFETY: The actual Firebase data state must be inspected before any destructive migration. Create and verify a restorable backup/export of the current project data before schema migration or purge testing. Do not assume data is disposable and do not reset/wipe production collections without explicit confirmation. If records already exist, use an incremental/backfill migration with validation; keep the original data recoverable until cutover checks pass.
+12.3 Legacy path rule
+The previous collaborationGroups authorization model must not remain an alternate authorization path. The target architecture uses /workspaces/{workspaceId}/... as the authoritative data model. Legacy paths must be migrated or explicitly denied before production.
+13. Canonical Data Contracts
+Data object
+Important fields
+Purpose
+Workspace
+workspaceId (document id), ownerUid, name, timestamps
+Root business security boundary.
+Member
+uid, workspaceId, role, status, createdAt
+Per-workspace role and membership.
+Pending invitation
+workspaceId, targetPhoneE164, inviterUid, requestedRole, status, expiresAt, trusted verification binding
+Invitation / consent handshake.
+Entry
+workspaceId, createdByUid, createdAt, entryForUid, financialAttributionUid
+Job entry + attribution.
+Expense
+workspaceId, createdByUid, createdAt, expenseForUid, financialAttributionUid
+Expense + attribution.
+Tractor
+workspaceId, createdByUid, createdAt
+Workspace-shared resource with creator ownership for mutations.
+Extension
+workspaceId, createdByUid, createdAt
+Workspace-shared resource with creator ownership for mutations.
+Withdrawal
+workspaceId, createdByUid, createdAt, withdrawalForUid
+Withdrawal actor/target separation.
+Collection
+workspaceId, customerId, jobId/creditId, amount, collectedByUid, status, createdAt
+Split payment history linked to the same obligation.
+Customer
+workspaceId, createdByUid, createdAt
+Workspace customer record.
+Workspace subscription (future scope only)
+No current-stage schema
+Not implemented; must not gate workspace/user validity, invitations, member addition or record creation.
+Personal subscription (future scope only)
+No current-stage schema
+Not implemented; no personal-plan fallback or FREE downgrade is enforced.
+Deleted User archive
+workspaceId, memberUid, originalRole, removedAt, purgeStatus
+Owner-only Deleted Users holding record after Stage 1 removal; no active workspace access. Retained until an explicit Stage 2 purge finishes.
+
+14. Access Decision Matrix by Record Type
+RECORD / SURFACE
+OWNER
+PARTNER
+OPERATOR
+CRITICAL LIMIT
+Entries
+All
+All
+All
+Partner own edit/delete <24h; Operator own delete <24h.
+Expenses
+All
+All
+None
+Partner own edit/delete <24h; no target-other UI.
+Withdrawals
+All
+All
+None
+Partner create self; own delete <24h.
+Collections
+All
+All
+None
+Partner collect and reverse only own collection <24h.
+Customers
+All
+All
+None
+Partner create/edit; Owner delete.
+Tractors
+All
+All
+All
+Partner add/edit/delete own anytime.
+Extensions
+All
+All
+All
+Partner add/edit/delete own anytime.
+Reports
+All
+All
+None
+Partner visibility allowed.
+Balance Sheet
+All
+All
+None
+Partner visibility allowed.
+Customer Credit
+All
+All
+None
+Partner visibility allowed.
+Business Overview
+All
+All
+None
+Partner visibility allowed.
+Members
+Manage
+View workspace membership data
+No management
+Viewer identity never changes stored roles.
+Settings / Business name
+Owner
+View exposed settings; no name edit
+No edit
+Owner-only mutation for business name/settings.
+
+15. Threat Model and Explicit Denials
+ID
+Attempt / mistake
+Expected
+Reason
+T-01
+Partner edits Owner's entry
+DENY
+createdByUid is not Partner UID.
+T-02
+Partner edits own entry after 24h
+DENY
+Original createdAt outside window.
+T-03
+Operator deletes own entry
+ALLOW only own <24h
+Operator has the same own-entry edit/delete <24h policy as Partner.
+T-04
+Partner withdraws for another member
+DENY
+withdrawalForUid must equal caller UID.
+T-05
+Partner sees withdrawal target dropdown
+MUST NOT SHOW
+Partner target is self-only; server still denies forged requests.
+T-06
+Partner edits another member's expense
+DENY
+Expense createdByUid must equal caller and window must be valid.
+T-07
+Partner deletes another member's tractor
+DENY
+Tractor createdByUid must equal caller.
+T-08
+Partner reverses Owner's collection
+DENY
+collectedByUid must equal caller.
+T-09
+Owner creates entry for Partner + 'I Paid'
+ATTRIBUTE TO PARTNER
+Business target / attribution is not the creator.
+T-10
+Same UID belongs to A and B
+ISOLATE
+Record workspaceId must match active authorization context.
+T-11
+Phone/name used to impersonate member
+DENY
+UID is authoritative security identity.
+T-12
+User blocked by plan/expiry/member-count/record-creation gate
+MUST NOT BLOCK
+No subscription enforcement is implemented in the current stage.
+T-13
+Partner views Workspace A while in Workspace B
+DENY
+Cross-workspace read violates the core invariant.
+T-14
+Owner removes a member from active workspace
+MOVE TO DELETED USERS; KEEP DATA
+Revoke current-workspace membership immediately; retain greyed/read-only records and keep existing dues collectible by authorized Owner/Partner users.
+T-15
+Owner permanently purges a removed member
+DELETE CURRENT-WORKSPACE SCOPE ONLY
+Match creator AND beneficiary/target UIDs; include linked dues/collections, reconcile financial effects, protect shared Customers referenced by retained records, and never affect another workspace or delete the global Firebase Auth UID.
+T-16
+A queued offline mutation targets a record already purged
+MUST NOT RESURRECT
+Invalidate the affected pending queue item; workspace-scoped purge and sync must be idempotent and retry-safe.
+
+16. Codex Implementation Contract
+Implement one area at a time. Each area must have both positive and negative tests before the next area changes.
+MILESTONE
+AREA
+EXIT CRITERIA
+M1
+Identity + workspace membership
+One UID; workspace-specific role; fresh owner flow.
+M2
+Invitation handshake
+One OTP; target consent; verified target UID; requested role bound.
+M3
+Workspace isolation
+No cross-workspace read/write; legacy alternate paths removed/denied.
+M4
+RBAC
+Owner/Partner/Operator capabilities computed per workspace.
+M5
+Entries
+Create/edit/delete with original <24h rules; Operator own delete included.
+M6
+Expenses
+Partner own expense edit/delete <24h; Partner expense target=self; no other-member target selector.
+M7
+Tractors/Extensions
+Partner add/edit/delete own anytime; workspace-shared visibility/use.
+M8
+Withdrawals
+Partner view all/create self/delete own <24h; no target dropdown.
+M9
+Collections
+Split linkage; collectedByUid; own reversal <24h.
+M10
+Financial attribution
+Creator vs target vs collector vs financial attribution separated.
+M11
+Room/offline/sync
+Offline session and role-permitted local operations; durable atomic queue; bounded dependency-ordered background sync; per-operation ack/retry; no bulk upload or main-thread blocking.
+M12
+Subscription (out of current scope)
+No plan/expiry/quota checks or subscription documents; no subscription-based restrictions on workspace, member or record creation.
+M13
+UI capabilities
+Controls mirror authorization; unavailable actions not shown.
+M14
+Security verification
+Complete positive/negative rules tests and regression suite.
+M15
+Deleted Users / permanent purge
+Stage 1 removes membership and lists the member in Deleted Users without deleting records. Stage 2 permanently deletes the member’s current-workspace data by creator and target UID, keeps shared references valid, reconciles dues/collections, cancels stale queued writes, and leaves other workspaces untouched.
+
+16.1 Required test pattern
+For EVERY role and EVERY operation:AUTHORIZED ACTION        -> PASSUNAUTHORIZED ACTION      -> DENYWRONG OWNER / CREATOR    -> DENYWRONG WORKSPACE          -> DENYEXPIRED 24H WINDOW       -> DENYIMMUTABLE FIELD CHANGE  -> DENYFor multi-workspace users:same UID + Workspace A -> A role + A data onlysame UID + Workspace B -> B role + B data onlyA data from B context  -> DENY
+17. Stable End-to-End Architecture
+                    PHONE                      |                      v                    ONE OTP                      |                      v                FIREBASE AUTH UID                      |          +-----------+-----------+          |                       |          v                       v   SELF REGISTRATION        OWNER INVITATION          |                       |          v                       v    CREATE WORKSPACE       ONE OTP HANDSHAKE          |                       |          v                       v        OWNER              MEMBERSHIP CREATED                                  |                         +--------+--------+                         |                 |                         v                 v                      PARTNER           OPERATOR                         |                 |                         +--------+--------+                                  |                                  v                    workspaceId + memberUid + role                                  |                                  v                                RBAC                                  |                                  v                     RECORD-LEVEL AUTH                                  |                   +--------------+--------------+                   |              |              |                WORKSPACE      OWNERSHIP        TIME                   |              |              |                   +--------------+--------------+                                  |                                  v                         IMMUTABLE FIELDS                                  |                                  v                        FIRESTORE SECURITY                         RULES / SERVER                                  |                         +--------+--------+                         |                 |                       ALLOW              DENY                         |                         v                  WORKSPACE-SCOPED DATA                         |              +----------+-----------+              |          |           |              v          v           v             ROOM     FIRESTORE   FINANCIAL             /SYNC      CLOUD      ENGINE              |          |           |              +----------+-----------+                         |                         v                 REPORTS / BALANCE /                    DUES / PDF / UI
+END-STATE PRINCIPLEOne person, one immutable UID. Many workspace memberships are allowed. One membership has one role in one workspace. Business records never cross workspace boundaries. Roles remain stable regardless of which member is viewing. Record mutation authority is narrower than visibility. Financial attribution is based on the business relationship and actor, not simply the creator.
+
+Final policy delta: v1.6 clarifies the two-stage Deleted Users lifecycle, UID-based permanent-purge scope, current-workspace-only deletion, practical offline clock limitation, and purge/sync consistency; locked role permissions remain unchanged.
+The normal invitation OTP is single-use and valid for 5 minutes. Test-number OTP flows currently have no time limit solely because the real OTP/SMS service is not enabled.
+Owner cannot change PARTNER <-> OPERATOR, suspend/reactivate, or transfer ownership. A workspace has exactly one OWNER.
+Stage 1 removal revokes membership, moves the member to the Owner-only Deleted Users section, keeps records greyed/read-only, and leaves existing dues collectible by authorized OWNER/PARTNER users.
+Stage 2 permanent purge is initiated from Deleted Users and deletes eligible data from the current workspace only, including records targeted to the member as well as records they created; delete dues sourced by purged Entries and reconcile related collections while protecting shared Customers still referenced by retained records.
+Member removal is two-stage: Remove from workspace first; permanently delete later from Deleted Users. No automatic or immediate hard purge occurs during Stage 1.
+OWNER has 7 report sections; PARTNER has 6: Business Overview, Customer Credit Due, Collection History, Expenses, Balance Sheet and Withdrawal are visible to both; Old Entry Creation is the Owner-only seventh section.
+18. Final Locked Decisions
+Three roles only: OWNER, PARTNER, OPERATOR.
+No CO-OWNER role.
+Fresh independent user creates a workspace and becomes OWNER.
+Owner invitation uses one OTP sent to the target phone; target sharing the OTP represents consent/handshake.
+A target can be brand-new or already have an account/workspace.
+An existing user's other workspaces remain unchanged when they join a new workspace.
+A new invited user can later create their own workspace and become its OWNER.
+Every member sees the same role assignment for every other member; viewer identity does not rewrite role values.
+Partner can view shared workspace records on the explicitly allowed surfaces, but view permission never grants edit/delete/reverse authority.
+Partner Entry edit/delete: own-created <24h.
+Partner Expense edit/delete: own-created <24h.
+Partner Tractor/Extension delete: own-created anytime; no 24-hour restriction.
+Partner Withdrawal: view all, create only for self, delete own <24h.
+Partner Collection: can collect customer due, including Owner-created due; collection stores collectedByUid; Partner may reverse only their own collection <24h.
+Split collections retain the same customer identity and underlying job/credit identity.
+Owner's earlier collection remains untouched when Partner reverses their later collection.
+Owner-created entry for Partner + 'I Paid' attributes the paid/invested amount to the Partner the entry is for.
+The same attribution principle is used for Add Expense.
+Partner withdrawal/expense target dropdowns are not shown when the target is self-only.
+UI hiding is not a security mechanism.
+Current stage: no subscription model or subscription-based validity, member-count, workspace-creation or record-creation restriction is implemented.
+Future paid-plan sharing/personal fallback is not implemented; it requires a separate explicit architecture revision before development.
+Practical offline model is accepted: recorded local operation time supports delayed sync, but it is not tamper-proof; do not over-engineer clock attestation. Offline actions still follow the cached role and workspace permissions.
+Workspace isolation applies to read/write/delete/sync/cache/search/report/financial/export operations.
+HAND-OFF STATEMENTThis document is the stable architectural baseline for implementation. When Codex encounters older code, legacy rules or older documentation that conflicts with these locked decisions, it should treat the conflict as migration work and preserve the architecture defined here. Changes to locked decisions require an explicit architecture revision rather than an incidental code change.

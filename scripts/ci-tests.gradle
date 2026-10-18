@@ -1,0 +1,26 @@
+// Disjoint test partitions; the default invocation still runs every unit test.
+allprojects {
+ tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+  maxHeapSize = "768m"
+  maxParallelForks = 1
+  jvmArgs "-XX:+UseSerialGC", "-XX:ActiveProcessorCount=2"
+  def suite = project.findProperty("ciSuite")
+  if (suite != null) {
+   def names = []
+   def known = ["unit", "database", "compose", "outbox"]
+   if (!known.contains(suite)) throw new GradleException("Unknown ciSuite: " + suite)
+   fileTree(project.file("src/test/java")).matching { include "**/*Test.kt" }.each { f ->
+    def body = f.getText("UTF-8")
+    def partition = body.contains("createComposeRule") ? "compose" :
+      (body.contains("Room.") || body.contains("SupportSQLite") ? "database" :
+      (f.name ==~ /.*(Command|Offline|Acknowledgement|Deletion|Operation|Sync|Dependencies|Routing|Recovery|Protocol).*Test.kt/ ? "outbox" : "unit"))
+    def packageMatch = body =~ /(?m)^\s*package\s+([A-Za-z_][\w.]*)/
+    if (!packageMatch.find()) throw new GradleException("Test source has no package: " + f)
+    if (suite == partition) names.add(packageMatch.group(1) + "." + f.name.replace(".kt",""))
+   }
+   if (names.empty) throw new GradleException("Empty ciSuite: " + suite)
+   filter { names.each { includeTestsMatching it } }
+   doFirst { logger.lifecycle("CI partition " + suite + ": " + names.sort().join(", ")) }
+  }
+ }
+}

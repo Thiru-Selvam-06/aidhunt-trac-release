@@ -136,7 +136,7 @@ fun LoginScreen(
     var emailInput by rememberSaveable { mutableStateOf("") }
     var passwordInput by rememberSaveable { mutableStateOf("") }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
-    var isSignUpMode by rememberSaveable { mutableStateOf(false) }
+    val isSignUpMode = false // New account creation is phone-OTP only.
 
     // Reusable Custom Error Popup State
     var activeErrorState by remember { mutableStateOf<LoginErrorState?>(null) }
@@ -153,6 +153,14 @@ fun LoginScreen(
     val passwordRequester = remember { BringIntoViewRequester() }
     val hiddenOtpFocusRequester = remember { FocusRequester() }
 
+    fun redirectToPhoneSignup() {
+        activeErrorState = null
+        selectedMethod = AuthMethod.PHONE
+        otpCode = ""
+        isOtpSent = false
+        passwordInput = ""
+        if (isGoogleAccountNotFound) onGoogleCancelRequested?.invoke()
+    }
     fun submitOtpVerification(code: String) {
         if (isVerifyingOtp) return
         val cleanCode = code.trim()
@@ -258,10 +266,10 @@ fun LoginScreen(
             activeErrorState = LoginErrorState(
                 title = if (isTamil) "கணக்கு கிடைக்கவில்லை" else "No account found",
                 message = if (isTamil) "இந்த Google கணக்கிற்கு AIDHUNT Trac கணக்கு எதுவும் இல்லை." else "No AIDHUNT Trac account is associated with this Google account.",
-                primaryActionLabel = if (isTamil) "கணக்கு உருவாக்கவும்" else "Create Account",
+                primaryActionLabel = if (isTamil) "தொலைபேசி OTP மூலம் உருவாக்கவும்" else "Create via Phone OTP",
                 onPrimaryAction = {
                     activeErrorState = null
-                    onGoogleCreateAccountRequested?.invoke()
+                    redirectToPhoneSignup()
                 },
                 dismissLabel = if (isTamil) "ரத்து செய்" else "Cancel",
                 onDismiss = {
@@ -398,7 +406,7 @@ fun LoginScreen(
 
         if (!isLoggingIn) {
             if (isSignUpMode) {
-                onEmailSignUpRequested?.invoke(trimmedEmail, trimmedPassword)
+                redirectToPhoneSignup()
             } else {
                 onEmailSignInRequested?.invoke(
                     trimmedEmail,
@@ -409,9 +417,9 @@ fun LoginScreen(
                             title = if (isTamil) "கணக்கு கிடைக்கவில்லை" else "No account found",
                             message = if (isTamil) "இந்த மின்னஞ்சலில் AIDHUNT Trac கணக்கு எதுவும் இல்லை." else "No AIDHUNT Trac account is associated with this email.",
                             subMessage = trimmedEmail,
-                            primaryActionLabel = if (isTamil) "கணக்கு உருவாக்கவும்" else "Create Account",
+                            primaryActionLabel = if (isTamil) "தொலைபேசி OTP மூலம் உருவாக்கவும்" else "Create via Phone OTP",
                             onPrimaryAction = {
-                                isSignUpMode = true
+                                redirectToPhoneSignup()
                                 activeErrorState = null
                             },
                             dismissLabel = if (isTamil) "மூடு" else "Close",
@@ -951,11 +959,11 @@ fun LoginScreen(
                                     color = Color(0xFFF0FDF4),
                                     border = BorderStroke(1.dp, Color(0xFFDCFCE7)),
                                     modifier = Modifier.clickable {
-                                        isSignUpMode = !isSignUpMode
+                                        redirectToPhoneSignup()
                                     }
                                 ) {
                                     Text(
-                                        text = if (isSignUpMode) (if (isTamil) "உள்நுழைவுக்கு மாறவும்" else "Switch to Sign In") else (if (isTamil) "புதியவரா? பதிவு செய்க" else "New? Sign Up"),
+                                        text = if (isSignUpMode) (if (isTamil) "உள்நுழைவுக்கு மாறவும்" else "Switch to Sign In") else (if (isTamil) "புதியவரா? பதிவு செய்க" else "Phone signup"),
                                         fontSize = 11.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF15803D),
@@ -1567,7 +1575,7 @@ private fun mapRawErrorToLoginError(
             LoginErrorState(
                 title = if (isTamil) "கணக்கு கிடைக்கவில்லை" else "No account found",
                 message = if (isTamil) "இந்த மொபைல் எண்ணிற்கு AIDHUNT Trac கணக்கு எதுவும் இல்லை." else "No AIDHUNT Trac account is associated with this phone number.",
-                primaryActionLabel = if (isTamil) "கணக்கு உருவாக்கவும்" else "Create Account",
+                primaryActionLabel = if (isTamil) "தொலைபேசி OTP மூலம் உருவாக்கவும்" else "Create via Phone OTP",
                 onPrimaryAction = onCreateAccount,
                 dismissLabel = if (isTamil) "மூடு" else "Close"
             )
@@ -1848,9 +1856,9 @@ private fun PhoneAccountCreationContent(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (isTamil)
-                                    "புதிய கணக்கு பதிவு செயல்முறை விரைவில் முழுமைபெறும். இந்த எண் அங்கீகரிக்கப்பட்டு தயாராக உள்ளது."
+                                    "உங்கள் தொலைபேசி எண் சரிபார்க்கப்பட்டது. பணியிடத்தை உருவாக்க உங்கள் விவரங்களைச் சமர்ப்பிக்கவும்."
                                 else
-                                    "Account creation flow is being finalized. Your phone number is verified and ready for workspace setup.",
+                                    "Your phone number is verified. Submit your details to create your workspace.",
                                 fontSize = 12.sp,
                                 color = Color(0xFF92400E),
                                 lineHeight = 16.sp

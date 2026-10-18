@@ -7,6 +7,11 @@ import com.google.firebase.FirebaseApp
 class TracApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        if (BuildConfig.DEVICE_TEST || BuildConfig.LIVE_TEST || BuildConfig.PHYSICAL_TEST) {
+            val demoApp = FirebaseApp.getInstance()
+            com.example.data.firebase.FirebaseEnvironment.initialize(demoApp)
+            return
+        }
         try {
             val app = if (FirebaseApp.getApps(this).isEmpty()) {
                 FirebaseApp.initializeApp(this)

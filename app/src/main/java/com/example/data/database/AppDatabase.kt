@@ -41,9 +41,11 @@ import kotlinx.coroutines.launch
         AppSettingsEntity::class,
         PaymentEntity::class,
         ChecklistItemEntity::class,
-        WorkTypeExtensionEntity::class
+        WorkTypeExtensionEntity::class,
+        com.example.data.entity.PendingOperationEntity::class,
+        com.example.data.entity.DeletedMemberEntity::class
     ],
-    version = 14,
+    version = 19,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -59,18 +61,22 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun checklistItemDao(): ChecklistItemDao
     abstract fun workTypeExtensionDao(): WorkTypeExtensionDao
 
+    abstract fun pendingOperationDao(): com.example.data.dao.PendingOperationDao
+
+    abstract fun deletedMemberDao(): com.example.data.dao.DeletedMemberDao
+
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
         val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE partners ADD COLUMN workspaceId TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE tractors ADD COLUMN workspaceId TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE customers ADD COLUMN workspaceId TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE job_entries ADD COLUMN workspaceId TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE expenses ADD COLUMN workspaceId TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE withdrawals ADD COLUMN workspaceId TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "partners", "workspaceId", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "tractors", "workspaceId", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "customers", "workspaceId", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "job_entries", "workspaceId", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "expenses", "workspaceId", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "withdrawals", "workspaceId", "TEXT NOT NULL DEFAULT ''")
 
                 // Recreate app_settings table with workspaceId as primary key
                 db.execSQL("""
@@ -113,17 +119,17 @@ abstract class AppDatabase : RoomDatabase() {
 
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE job_entries ADD COLUMN createdByUid TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE job_entries ADD COLUMN createdByRole TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "job_entries", "createdByUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "job_entries", "createdByRole", "TEXT NOT NULL DEFAULT ''")
             }
         }
 
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE job_entries ADD COLUMN editedByUid TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE job_entries ADD COLUMN editedByName TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE job_entries ADD COLUMN editedByRole TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE job_entries ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+                addColumnIfMissing(db, "job_entries", "editedByUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "job_entries", "editedByName", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "job_entries", "editedByRole", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "job_entries", "updatedAt", "INTEGER NOT NULL DEFAULT 0")
 
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS payments (
@@ -176,8 +182,8 @@ abstract class AppDatabase : RoomDatabase() {
 
         val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE expenses ADD COLUMN paidBy TEXT NOT NULL DEFAULT 'I Paid'")
-                db.execSQL("ALTER TABLE expenses ADD COLUMN paidByPartner TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "expenses", "paidBy", "TEXT NOT NULL DEFAULT 'I Paid'")
+                addColumnIfMissing(db, "expenses", "paidByPartner", "TEXT NOT NULL DEFAULT ''")
             }
         }
 
@@ -185,39 +191,112 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 // Authorization identity fields for WithdrawalEntity
                 // Safe defaults (empty string) preserve all existing withdrawal rows
-                db.execSQL("ALTER TABLE withdrawals ADD COLUMN targetPartnerUid TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE withdrawals ADD COLUMN createdByUid TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE withdrawals ADD COLUMN createdByRole TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "withdrawals", "targetPartnerUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "withdrawals", "createdByUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "withdrawals", "createdByRole", "TEXT NOT NULL DEFAULT ''")
             }
         }
 
         val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 // Authorization identity fields for ExpenseEntity
-                db.execSQL("ALTER TABLE expenses ADD COLUMN paidByUid TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE expenses ADD COLUMN createdByUid TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE expenses ADD COLUMN createdByRole TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "expenses", "paidByUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "expenses", "createdByUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "expenses", "createdByRole", "TEXT NOT NULL DEFAULT ''")
             }
+        }
+
+        private fun addColumnIfMissing(db: SupportSQLiteDatabase, table: String, name: String, definition: String) {
+            val found = db.query("PRAGMA table_info(`$table`)").use { cursor ->
+                var exists = false
+                while (cursor.moveToNext()) if (cursor.getString(cursor.getColumnIndexOrThrow("name")) == name) exists = true
+                exists
+            }
+            if (!found) db.execSQL("ALTER TABLE `$table` ADD COLUMN `$name` $definition")
         }
 
         val MIGRATION_12_13 = object : Migration(12, 13) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Fix missing columns in payments table
-                db.execSQL("ALTER TABLE payments ADD COLUMN createdAt INTEGER NOT NULL DEFAULT 0")
-
-                // Fix missing columns in tractors table
-                db.execSQL("ALTER TABLE tractors ADD COLUMN createdByUid TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE tractors ADD COLUMN createdByRole TEXT NOT NULL DEFAULT ''")
-
-                // Fix missing columns in work_type_extensions table
-                db.execSQL("ALTER TABLE work_type_extensions ADD COLUMN createdByUid TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE work_type_extensions ADD COLUMN createdByRole TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "job_entries", "isHistorical", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfMissing(db, "job_entries", "entryForUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "job_entries", "financialAttributionUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "expenses", "expenseForUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "expenses", "financialAttributionUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "tractors", "createdByUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "customers", "createdByUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "work_type_extensions", "createdByUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "payments", "status", "TEXT NOT NULL DEFAULT 'ACTIVE'")
+                addColumnIfMissing(db, "payments", "reversedAt", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfMissing(db, "payments", "reversedByUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "payments", "allocationsJson", "TEXT NOT NULL DEFAULT '[]'")
+                // Preserve legacy rows. UID/historical backfills require verified identity, never name/date guesses.
             }
         }
 
         val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Schema alignment for version 14
+                db.execSQL("CREATE TABLE IF NOT EXISTS pending_operations (operationId TEXT NOT NULL PRIMARY KEY, workspaceId TEXT NOT NULL, actorUid TEXT NOT NULL, entityType TEXT NOT NULL, entityId INTEGER NOT NULL, mutationType TEXT NOT NULL, sequence INTEGER NOT NULL, actionTime INTEGER NOT NULL, payloadJson TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL, failureReason TEXT NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_operations_workspaceId_actorUid_sequence ON pending_operations (workspaceId, actorUid, sequence)")
+            }
+        }
+
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Release14 lacks the local14 identity/history and durable queue additions.
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
+                db.execSQL("CREATE TABLE IF NOT EXISTS deleted_members (workspaceId TEXT NOT NULL, uid TEXT NOT NULL, displayName TEXT NOT NULL, role TEXT NOT NULL, removedAt INTEGER NOT NULL, removedByUid TEXT NOT NULL, purgeState TEXT NOT NULL, backupPath TEXT NOT NULL, backupSha256 TEXT NOT NULL, PRIMARY KEY(workspaceId, uid))")
+            }
+        }
+
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfMissing(db, "partners", "firebaseUid", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "payments", "createdAt", "INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** Rebuild keys without changing IDs or deleting records; duplicate IDs may coexist across workspaces. */
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (table in listOf("partners", "tractors", "customers", "job_entries", "payments", "expenses", "withdrawals", "checklist_items", "work_type_extensions")) {
+                    val columns = mutableListOf<String>()
+                    val definitions = mutableListOf<String>()
+                    db.query("PRAGMA table_info(`$table`)").use { cursor ->
+                        while (cursor.moveToNext()) {
+                            val name = cursor.getString(cursor.getColumnIndexOrThrow("name"))
+                            val type = cursor.getString(cursor.getColumnIndexOrThrow("type"))
+                            val notNull = cursor.getInt(cursor.getColumnIndexOrThrow("notnull")) != 0
+                            val defaultIndex = cursor.getColumnIndexOrThrow("dflt_value")
+                            val default = if (cursor.isNull(defaultIndex)) "" else " DEFAULT ${cursor.getString(defaultIndex)}"
+                            columns.add("`$name`")
+                            definitions.add("`$name` $type${if (notNull) " NOT NULL" else ""}$default")
+                        }
+                    }
+                    require(columns.isNotEmpty()) { "Missing table during workspace-key migration: $table" }
+                    db.execSQL("CREATE TABLE `${table}_scoped` (${definitions.joinToString(", ")}, PRIMARY KEY(`workspaceId`, `id`))")
+                    val names = columns.joinToString(", ")
+                    db.execSQL("INSERT INTO `${table}_scoped` ($names) SELECT $names FROM `$table`")
+                    val before = db.query("SELECT COUNT(*) FROM `$table`").use { it.moveToFirst(); it.getLong(0) }
+                    val after = db.query("SELECT COUNT(*) FROM `${table}_scoped`").use { it.moveToFirst(); it.getLong(0) }
+                    check(before == after) { "Migration row count differs for $table" }
+                    db.execSQL("DROP TABLE `$table`")
+                    db.execSQL("ALTER TABLE `${table}_scoped` RENAME TO `$table`")
+                }
+            }
+        }
+
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfMissing(db, "tractors", "createdByRole", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "work_type_extensions", "createdByRole", "TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (column in listOf("collectorUid", "collectorName", "collectorRole"))
+                    addColumnIfMissing(db, "payments", column, "TEXT NOT NULL DEFAULT ''")
             }
         }
 
@@ -226,9 +305,13 @@ abstract class AppDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "aidhunt_trac_v4.db"
-                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
-                .fallbackToDestructiveMigration(true)
+                    when {
+                        com.example.BuildConfig.DEVICE_TEST -> "aidhunt_device_test_v18.db"
+                        com.example.BuildConfig.LIVE_TEST -> "aidhunt_live_test_v18.db"
+                        com.example.BuildConfig.PHYSICAL_TEST -> "aidhunt_physical_test_v18.db"
+                        else -> "aidhunt_trac_v4.db"
+                    }
+                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
                 .build()
                 INSTANCE = instance
                 instance

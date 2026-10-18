@@ -1,0 +1,464 @@
+{
+  "unitClasses": [
+    {
+      "source": "app/src/test/java/com/example/ArchitectureIntegrationTest.kt",
+      "class": "com.example.ArchitectureIntegrationTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/ArchivedRecordAuthorizationTest.kt",
+      "class": "com.example.ArchivedRecordAuthorizationTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/AuthSessionRecoveryTest.kt",
+      "class": "com.example.AuthSessionRecoveryTest",
+      "partition": "outbox",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/BusinessOverviewAttributionTest.kt",
+      "class": "com.example.BusinessOverviewAttributionTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/BusinessOverviewChartMembersTest.kt",
+      "class": "com.example.BusinessOverviewChartMembersTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/BusinessOverviewCircleUiTest.kt",
+      "class": "com.example.BusinessOverviewCircleUiTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/CashBalanceRegressionTest.kt",
+      "class": "com.example.CashBalanceRegressionTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/ClientDeliveryRequirementsTest.kt",
+      "class": "com.example.ClientDeliveryRequirementsTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/CloudListenerHealthTest.kt",
+      "class": "com.example.CloudListenerHealthTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/CollectionFormRegressionTest.kt",
+      "class": "com.example.CollectionFormRegressionTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/CollectionHistoryCardExpandableTest.kt",
+      "class": "com.example.CollectionHistoryCardExpandableTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/CollectionHistoryDetailsTest.kt",
+      "class": "com.example.CollectionHistoryDetailsTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/CollectionHistoryGroupingTest.kt",
+      "class": "com.example.CollectionHistoryGroupingTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/CollectionPersistenceTest.kt",
+      "class": "com.example.CollectionPersistenceTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/CollectionPolicyTest.kt",
+      "class": "com.example.CollectionPolicyTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/CollectionVisibilityRegressionTest.kt",
+      "class": "com.example.CollectionVisibilityRegressionTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/CompleteRegressionPipelineTest.kt",
+      "class": "com.example.CompleteRegressionPipelineTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/CustomerDeletionDialogTest.kt",
+      "class": "com.example.CustomerDeletionDialogTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/EntryAcknowledgementDependenciesTest.kt",
+      "class": "com.example.EntryAcknowledgementDependenciesTest",
+      "partition": "outbox",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/EntryCreationTimestampPersistenceTest.kt",
+      "class": "com.example.EntryCreationTimestampPersistenceTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/EntryDeletionReconciliationTest.kt",
+      "class": "com.example.EntryDeletionReconciliationTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/EntryFinancialMutationPolicyTest.kt",
+      "class": "com.example.EntryFinancialMutationPolicyTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/EntryMutationAuthorizationTest.kt",
+      "class": "com.example.EntryMutationAuthorizationTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/ExampleRobolectricTest.kt",
+      "class": "com.example.ExampleRobolectricTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/ExampleUnitTest.kt",
+      "class": "com.example.ExampleUnitTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/ExpenseIdentityDetailsTest.kt",
+      "class": "com.example.ExpenseIdentityDetailsTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/ExpenseWorkspaceIsolationTest.kt",
+      "class": "com.example.ExpenseWorkspaceIsolationTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/ExtensionDetailsNavigationTest.kt",
+      "class": "com.example.ExtensionDetailsNavigationTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/FinalTargetedClientFixesTest.kt",
+      "class": "com.example.FinalTargetedClientFixesTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/FinalTwoClientFixesTest.kt",
+      "class": "com.example.FinalTwoClientFixesTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/FinancialConsistencyAndSyncRepairTest.kt",
+      "class": "com.example.FinancialConsistencyAndSyncRepairTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/GreetingScreenshotTest.kt",
+      "class": "com.example.GreetingScreenshotTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/HomeFinancialVisibilityTest.kt",
+      "class": "com.example.HomeFinancialVisibilityTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/HomeRecordSummaryTest.kt",
+      "class": "com.example.HomeRecordSummaryTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/InitialWorkspaceSettingsTest.kt",
+      "class": "com.example.InitialWorkspaceSettingsTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/LocalLedgerReferenceTest.kt",
+      "class": "com.example.LocalLedgerReferenceTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/MemberDetailsNavigationTest.kt",
+      "class": "com.example.MemberDetailsNavigationTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/NewEntryExpenseAndTakingCategoriesTest.kt",
+      "class": "com.example.NewEntryExpenseAndTakingCategoriesTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/OfflineActionTimeTest.kt",
+      "class": "com.example.OfflineActionTimeTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/OperationDiagnosticTest.kt",
+      "class": "com.example.OperationDiagnosticTest",
+      "partition": "outbox",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/OperationRoleMatrixTest.kt",
+      "class": "com.example.OperationRoleMatrixTest",
+      "partition": "outbox",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/PartnerEarningsChartTest.kt",
+      "class": "com.example.PartnerEarningsChartTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/PartnerWithdrawalsProfitShareTest.kt",
+      "class": "com.example.PartnerWithdrawalsProfitShareTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/PaymentReversalAndCollectionHistoryTest.kt",
+      "class": "com.example.PaymentReversalAndCollectionHistoryTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/PdfAuthorizationTest.kt",
+      "class": "com.example.PdfAuthorizationTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/PendingInvitationCleanupContractTest.kt",
+      "class": "com.example.PendingInvitationCleanupContractTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/PhoneOnlySignupRoutingTest.kt",
+      "class": "com.example.PhoneOnlySignupRoutingTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/PurgeReconciliationProtocolTest.kt",
+      "class": "com.example.PurgeReconciliationProtocolTest",
+      "partition": "outbox",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/RecordIdentityPolicyTest.kt",
+      "class": "com.example.RecordIdentityPolicyTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/RetainedOperationWarningTest.kt",
+      "class": "com.example.RetainedOperationWarningTest",
+      "partition": "outbox",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/RoomMigrationChainTest.kt",
+      "class": "com.example.RoomMigrationChainTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/RoomScopeTest.kt",
+      "class": "com.example.RoomScopeTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/StartupAuthPresentationTest.kt",
+      "class": "com.example.StartupAuthPresentationTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/TractorCardAuthorizationTest.kt",
+      "class": "com.example.TractorCardAuthorizationTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/TrustedCommandRoutingTest.kt",
+      "class": "com.example.TrustedCommandRoutingTest",
+      "partition": "outbox",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/ui/screens/report/DriverEarningsConsistencyTest.kt",
+      "class": "com.example.ui.screens.report.DriverEarningsConsistencyTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/V16ArchitectureContractTest.kt",
+      "class": "com.example.V16ArchitectureContractTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/VerifiedProfileRecoveryTest.kt",
+      "class": "com.example.VerifiedProfileRecoveryTest",
+      "partition": "outbox",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WithdrawalLedgerNavigationTest.kt",
+      "class": "com.example.WithdrawalLedgerNavigationTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspaceBuildBoundaryTest.kt",
+      "class": "com.example.WorkspaceBuildBoundaryTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspaceCachedLedgerRecoveryTest.kt",
+      "class": "com.example.WorkspaceCachedLedgerRecoveryTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspaceCommandProtocolTest.kt",
+      "class": "com.example.WorkspaceCommandProtocolTest",
+      "partition": "outbox",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspaceDatabaseContractTest.kt",
+      "class": "com.example.WorkspaceDatabaseContractTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspaceDiscoveryPolicyTest.kt",
+      "class": "com.example.WorkspaceDiscoveryPolicyTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspaceInvitationErrorClassificationTest.kt",
+      "class": "com.example.WorkspaceInvitationErrorClassificationTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspaceInvitationPolicyTest.kt",
+      "class": "com.example.WorkspaceInvitationPolicyTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspaceMemberPresentationTest.kt",
+      "class": "com.example.WorkspaceMemberPresentationTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspacePickerUiTest.kt",
+      "class": "com.example.WorkspacePickerUiTest",
+      "partition": "compose",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspaceRequestFenceTest.kt",
+      "class": "com.example.WorkspaceRequestFenceTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspaceRequestOutcomeTest.kt",
+      "class": "com.example.WorkspaceRequestOutcomeTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
+      "source": "app/src/test/java/com/example/WorkspaceSelectionPolicyTest.kt",
+      "class": "com.example.WorkspaceSelectionPolicyTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    }
+  ],
+  "instrumentation": {
+    "schemaVersion": 1,
+    "runnable": [
+      "com.example.DeviceEmulatorIntegrationTest",
+      "com.example.DatabaseWorkspaceDeviceTest",
+      "com.example.CollectionFormDeviceTest",
+      "com.example.ExampleInstrumentedTest"
+    ],
+    "blocked": {
+      "com.example.PhoneRegistrationDeviceTest": "Requires a fresh phone-auth emulator session; representative journeys use email fixtures and do not prove phone OTP.",
+      "com.example.PurgeProtocolDeviceTest": "Requires dedicated purge-v2 fixture and independently reviewed destructive acceptance harness; never run on live data.",
+      "com.example.WorkspaceSelectionDeviceTest": "Requires full-audit-a/b and audit-partner fixtures not supplied by the representative device seeder."
+    }
+  },
+  "backendFiles": [
+    "cloudflare/firestore-rest.test.mjs",
+    "cloudflare/google-auth.test.mjs",
+    "cloudflare/operations.test.mjs",
+    "functions/entry-deletion-emulator.test.js",
+    "functions/entry-deletion-http.test.js",
+    "functions/entry-deletion-policy.test.js",
+    "functions/invitation-policy.test.js",
+    "functions/migration/legacy-timestamps.test.js",
+    "functions/security.integration.test.js",
+    "security-tests/architecture.test.cjs",
+    "security-tests/listener-queries.test.cjs",
+    "security-tests/phone-onboarding.test.cjs",
+    "security-tests/purge-protocol.test.cjs",
+    "security-tests/security-recovery.test.cjs",
+    "security-tests/workspace-discovery.test.cjs"
+  ],
+  "errors": [],
+  "allControlsVerified": false,
+  "liveServicesVerified": false
+}

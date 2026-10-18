@@ -209,6 +209,7 @@ fun CustomerCreditDueTab(
     onDeleteCustomer: ((CustomerEntity) -> Unit)? = null,
     isOwner: Boolean = false,
     actorName: String = "",
+    actorUid: String = "",
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     partners: List<com.example.data.entity.PartnerEntity> = emptyList(),
     expenses: List<com.example.data.entity.ExpenseEntity> = emptyList()
@@ -320,10 +321,11 @@ fun CustomerCreditDueTab(
                     c.phone.contains(searchQuery) ||
                     c.location.contains(searchQuery, ignoreCase = true)
             
+            val hasActivity = c.totalBilled > 0.0 || c.totalPaid > 0.0
             val matchesStatus = when (selectedStatusFilter) {
                 CreditDueStatusFilter.ALL -> true
                 CreditDueStatusFilter.PENDING_DUE -> com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(c.balanceDue) > 0.0
-                CreditDueStatusFilter.PAID -> com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(c.balanceDue) <= 0.0
+                CreditDueStatusFilter.PAID -> com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(c.balanceDue) <= 0.0 && hasActivity
             }
             val matchesDate = if (selectedDateFilter == CreditDueDateFilter.ALL) {
                 true
@@ -815,7 +817,7 @@ fun CustomerCreditDueTab(
         // Keep updated customer data if changed in list
         val currentCustomer = synchronizedCustomers.find { it.id == customer.id } ?: customer
         val customerJobs = jobs.filter {
-            it.customerId == currentCustomer.id || it.customerName.equals(currentCustomer.name, ignoreCase = true)
+            it.workspaceId == currentCustomer.workspaceId && it.customerId == currentCustomer.id
         }
         CustomerDetailSheet(
             customer = currentCustomer,
@@ -850,7 +852,8 @@ fun CustomerCreditDueTab(
             onDeleteJob = onDeleteJob,
             onDeleteCustomer = onDeleteCustomer,
             isOwner = isOwner,
-            actorName = actorName
+            actorName = actorName,
+            actorUid = actorUid
         )
     }
     // Dialog to Add Payment for Customer
@@ -863,17 +866,19 @@ fun CustomerCreditDueTab(
             isOwner = isOwner,
             workspaceMembers = workspaceMembers,
             partners = partners,
+            actorUid = actorUid,
+            sourceJobs = jobs,
             onDismiss = { customerForPayment = null },
             onConfirm = { amount, dateMillis, method, note, cUid, cName, cRole ->
                 if (onRecordPaymentWithCollector != null) {
-                    onRecordPaymentWithCollector(customer, amount, dateMillis, method, note, cUid, cName, cRole)
+                    onRecordPaymentWithCollector(currentCustomer, amount, dateMillis, method, note, cUid, cName, cRole)
                 } else {
-                    onRecordPayment?.invoke(customer, amount, dateMillis, method, note)
+                    onRecordPayment?.invoke(currentCustomer, amount, dateMillis, method, note)
                 }
                 customerForPayment = null
                 // Also update selectedCustomer if open
                 if (selectedCustomer?.id == customer.id) {
-                    val updated = customers.find { it.id == customer.id }
+                    val updated = synchronizedCustomers.find { it.id == customer.id } ?: customers.find { it.id == customer.id }
                     if (updated != null) {
                         selectedCustomer = updated
                     }
@@ -939,7 +944,7 @@ fun CustomerCreditDueTab(
                 Button(
                     onClick = {
                         val sanitized = sanitizePhoneNumberForStorage(phoneInput)
-                        if (phoneInput.isNotBlank() && sanitized.length != 10 && sanitized.length !in 10..12) {
+                        if (!com.example.ui.util.isOptionalContactPhoneValid(phoneInput)) {
                             phoneError = true
                         } else {
                             val updatedCustomer = customer.copy(
@@ -951,12 +956,7 @@ fun CustomerCreditDueTab(
                                 selectedCustomer = updatedCustomer
                             }
                             customerToEditPhone = null
-                            val msg = if (sanitized.isBlank()) {
-                                if (isTamil) "கைபேசி எண் நீக்கப்பட்டது" else "Phone number removed"
-                            } else {
-                                if (isTamil) "கைபேசி எண் $sanitized ஆக மாற்றப்பட்டது" else "Phone number updated to $sanitized"
-                            }
-                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, if (isTamil) "கைபேசி எண் $sanitized ஆக மாற்றப்பட்டது" else "Phone number updated to $sanitized", Toast.LENGTH_SHORT).show()
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = DeepSageGreen)
@@ -1087,7 +1087,8 @@ fun CustomerCreditDueCard(
     onSharePdf: () -> Unit
 ) {
     val responsive = com.example.ui.theme.rememberResponsiveDimensions()
-    val isPaid = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customer.balanceDue) <= 0.0
+    val hasActivity = customer.totalBilled > 0.0 || customer.totalPaid > 0.0
+    val isPaid = hasActivity && com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customer.balanceDue) <= 0.0
     val avatarColor = getCustomerAvatarColor(customer.name)
     val initials = getCustomerInitials(customer.name)
 
@@ -1190,14 +1191,14 @@ fun CustomerCreditDueCard(
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Text(
-                                    text = if (isTamil) "செலுத்தப்பட்டது" else "PAID",
+                                    text = if (isTamil) "???????????????" else "PAID",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = SuccessPaidGreen
                                 )
                             }
                         }
-                    } else {
+                    } else if (customer.balanceDue > 0.0) {
                         Text(
                             text = formatInr(customer.balanceDue),
                             fontSize = 15.5.sp,
@@ -1205,10 +1206,23 @@ fun CustomerCreditDueCard(
                             color = AlertDueRed
                         )
                         Text(
-                            text = if (isTamil) "நிலுவை" else "Due",
+                            text = if (isTamil) "??????" else "Due",
                             fontSize = 10.5.sp,
                             fontWeight = FontWeight.Medium,
                             color = AlertDueRed
+                        )
+                    } else {
+                        Text(
+                            text = formatInr(0.0),
+                            fontSize = 15.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = TextSecondaryDark
+                        )
+                        Text(
+                            text = if (isTamil) "?????? ?????" else "No Due",
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = TextSecondaryDark
                         )
                     }
                 }
@@ -1346,6 +1360,7 @@ fun CustomerDetailSheet(
     onDeleteCustomer: ((CustomerEntity) -> Unit)? = null,
     isOwner: Boolean = false,
     actorName: String = "",
+    actorUid: String = "",
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     partners: List<com.example.data.entity.PartnerEntity> = emptyList(),
     expenses: List<com.example.data.entity.ExpenseEntity> = emptyList()
@@ -1412,7 +1427,8 @@ fun CustomerDetailSheet(
                         }
                     }
                     val roundedCustomerDue = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customer.balanceDue)
-                    StatusBadge(isPaid = roundedCustomerDue <= 0.0, pendingAmount = roundedCustomerDue)
+                    val hasCustomerActivity = customer.totalBilled > 0.0 || customer.totalPaid > 0.0
+                    StatusBadge(isPaid = roundedCustomerDue <= 0.0 && hasCustomerActivity, pendingAmount = roundedCustomerDue)
                 }
             }
             // Quick Actions: Add Payment, Call, WhatsApp, Share PDF Statement
@@ -1598,7 +1614,7 @@ fun CustomerDetailSheet(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    val isOldJob = job.notes.contains("Old", ignoreCase = true) || job.customerName.contains("old", ignoreCase = true) || job.notes.contains("Historical", ignoreCase = true) || job.workType.contains("Old", ignoreCase = true)
+                                    val isOldJob = job.isHistorical
                                     val dueTextColor = when {
                                         job.pendingAmount <= 0 -> SuccessPaidGreen
                                         isOldJob -> Color(0xFF991B1B)
@@ -1607,16 +1623,9 @@ fun CustomerDetailSheet(
                                     Text("${if (isTamil) "நிலுவை" else "Due"}: ${formatInr(job.pendingAmount)}", fontSize = 11.sp, color = dueTextColor, fontWeight = FontWeight.SemiBold)
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
-                                val canEdit = com.example.data.auth.AuthorizationManager.canEditEntry(
-                                    job = job,
-                                    isOwner = isOwner,
-                                    currentActorName = actorName
-                                )
-                                val canDelete = com.example.data.auth.AuthorizationManager.canDeleteEntry(
-                                    job = job,
-                                    isOwner = isOwner,
-                                    currentActorName = actorName
-                                )
+                                val canEdit = isOwner
+                                val role = workspaceMembers.firstOrNull { it.uid == actorUid && it.workspaceId == job.workspaceId && it.status.equals("active", true) }?.role.orEmpty()
+                                val canDelete = com.example.data.auth.AuthorizationManager.canDeleteEntry(job, isOwner, actorName, actorUid, role = role)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.End,
@@ -1737,6 +1746,7 @@ fun CustomerDetailSheet(
             settings = settings,
             expenses = expenses,
             isOwner = isOwner,
+            currentUid = actorUid,
             workspaceMembers = workspaceMembers,
             partners = partners,
             onDismiss = { selectedJobForDetail = null },
@@ -1782,13 +1792,16 @@ fun CustomerDetailSheet(
                 }
             },
             onDeleteRequest = {
-                jobToDelete = job
+                val role = workspaceMembers.firstOrNull { it.uid == actorUid && it.workspaceId == job.workspaceId && it.status.equals("active", true) }?.role.orEmpty()
+                if (com.example.data.auth.AuthorizationManager.canDeleteEntry(job, isOwner, actorName, actorUid, role = role)) {
+                    jobToDelete = job
+                }
             },
-            onEditJob = { editJob ->
+            onEditJob = if (isOwner) { editJob ->
                 selectedJobForDetail = null
                 onDismiss()
                 onEditJob?.invoke(editJob)
-            }
+            } else null
         )
     }
 
@@ -1849,9 +1862,9 @@ fun CustomerDetailSheet(
             text = {
                 Text(
                     text = if (isTamil)
-                        "இது இந்த வாடிக்கையாளரையும் அவர்களது அனைத்து தொடர்புடைய வேலை மற்றும் கணக்கு பதிவுகளையும் நிரந்தரமாக நீக்கும்."
+                        "தொடர்புடைய வேலை அல்லது வசூல் பதிவுகள் இருந்தால் வாடிக்கையாளரை நீக்க முடியாது. அந்த பதிவுகளும் வரலாறும் நீக்கப்படாது."
                     else
-                        "This will permanently delete this customer and their associated records.",
+                        "This deletes the customer only if no Entries or Collections still reference them. Linked records and collection history are preserved.",
                     fontSize = 13.5.sp
                 )
             },
@@ -1891,6 +1904,8 @@ fun RecordCustomerPaymentDialog(
     isOwner: Boolean = false,
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     partners: List<com.example.data.entity.PartnerEntity> = emptyList(),
+    actorUid: String = "",
+    sourceJobs: List<JobEntryEntity> = emptyList(),
     onDismiss: () -> Unit,
     onConfirm: (amount: Double, dateMillis: Long, method: String, note: String, collectorUid: String, collectorName: String, collectorRole: String) -> Unit
 ) {
@@ -1910,29 +1925,24 @@ fun RecordCustomerPaymentDialog(
     val isAmountInvalid = amountValue <= 0.0 || roundedAmountValue > roundedCustomerBalance
     val paymentMethods = listOf("Cash", "UPI / GPay", "Bank Transfer", "Cheque")
 
-    val collectorOptions = remember(isOwner, actorName, settings.ownerName, settings.activePartnerName, partners, workspaceMembers) {
-        if (isOwner) {
-            val list = mutableListOf<CollectorOption>()
-            val ownerOptionName = actorName.ifBlank { settings.ownerName.ifBlank { "Owner" } }
-            list.add(CollectorOption(uid = "", name = ownerOptionName, role = "Owner"))
-            partners.forEach { p ->
-                if (p.name.isNotBlank() && !p.name.equals(ownerOptionName, ignoreCase = true)) {
-                    list.add(CollectorOption(uid = p.phone, name = p.name, role = "Partner"))
-                }
-            }
-            workspaceMembers.forEach { m ->
-                val mName = m.displayName?.takeIf { it.isNotBlank() } ?: m.phoneNumber.orEmpty()
-                if (mName.isNotBlank() && list.none { it.name.equals(mName, ignoreCase = true) }) {
-                    list.add(CollectorOption(uid = m.uid, name = mName, role = m.role.ifBlank { "Partner" }))
-                }
-            }
-            list
-        } else {
-            val partnerOptionName = actorName.ifBlank { settings.activePartnerName.ifBlank { "Partner" } }
-            listOf(CollectorOption(uid = "", name = partnerOptionName, role = "Partner"))
-        }
+    val collectorOptions = remember(customer.workspaceId, actorUid, isOwner, workspaceMembers) {
+        com.example.data.auth.CollectionPolicy.eligibleCollectors(customer.workspaceId, actorUid, isOwner, workspaceMembers)
+            .map { CollectorOption(it.uid, it.displayName.orEmpty().ifBlank { "Unknown member" }, it.role) }
     }
-    var selectedCollector by remember { mutableStateOf(collectorOptions.first()) }
+    var selectedCollectorUid by remember(customer.workspaceId, customer.id, actorUid) { mutableStateOf(actorUid) }
+    val selectedCollector = collectorOptions.firstOrNull { it.uid == selectedCollectorUid }
+        ?: CollectorOption("", "Selected collector is not an active member", "")
+    val dateValidation = runCatching {
+        val allocated = com.example.data.auth.CollectionPolicy.allocatedJobs(sourceJobs, customer.workspaceId, customer.id, roundedAmountValue)
+        val earliest = com.example.data.auth.CollectionPolicy.earliestDate(allocated)
+        com.example.data.auth.CollectionPolicy.requireDate(paymentDateMillis, earliest)
+        earliest
+    }
+    val dateError = dateValidation.exceptionOrNull()?.message
+    val earliestDate = runCatching {
+        com.example.data.auth.CollectionPolicy.earliestDate(com.example.data.auth.CollectionPolicy.allocatedJobs(
+            sourceJobs, customer.workspaceId, customer.id, roundedAmountValue))
+    }.getOrNull()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2016,7 +2026,7 @@ fun RecordCustomerPaymentDialog(
                             items(collectorOptions) { option ->
                                 FilterChip(
                                     selected = selectedCollector == option,
-                                    onClick = { selectedCollector = option },
+                                    onClick = { selectedCollectorUid = option.uid },
                                     label = {
                                         Text(
                                             "${option.name} (${if (option.role.equals("Owner", ignoreCase = true)) (if (isTamil) "உரிமையாளர்" else "Owner") else (if (isTamil) "பங்குதாரர்" else "Partner")})",
@@ -2088,38 +2098,30 @@ fun RecordCustomerPaymentDialog(
                         .testTag("input_payment_amount"),
                     shape = RoundedCornerShape(10.dp)
                 )
-    // 2. Date Selection (Defaults to Today, Editable)
-                val cal = Calendar.getInstance().apply { timeInMillis = paymentDateMillis }
+                // 2. Date Selection (Defaults to Today, Editable)
+                val cal = com.example.data.auth.CollectionPolicy.calendar(paymentDateMillis)
                 OutlinedButton(
                     onClick = {
                         DatePickerDialog(
                             context,
                             { _, year, month, dayOfMonth ->
-                                val now = Calendar.getInstance()
-                                val newCal = Calendar.getInstance().apply {
-                                    set(year, month, dayOfMonth)
-                                    // If historical date, set to 12:00 PM to avoid "end of day" edge cases and ensure consistency
-                                    if (year < now.get(Calendar.YEAR) || 
-                                        (year == now.get(Calendar.YEAR) && month < now.get(Calendar.MONTH)) ||
-                                        (year == now.get(Calendar.YEAR) && month == now.get(Calendar.MONTH) && dayOfMonth < now.get(Calendar.DAY_OF_MONTH))) {
-                                        set(Calendar.HOUR_OF_DAY, 12)
-                                        set(Calendar.MINUTE, 0)
-                                        set(Calendar.SECOND, 0)
-                                        set(Calendar.MILLISECOND, 0)
-                                    } else {
-                                        // If today, preserve current time
-                                        set(Calendar.HOUR_OF_DAY, now.get(Calendar.HOUR_OF_DAY))
-                                        set(Calendar.MINUTE, now.get(Calendar.MINUTE))
-                                        set(Calendar.SECOND, now.get(Calendar.SECOND))
-                                        set(Calendar.MILLISECOND, now.get(Calendar.MILLISECOND))
-                                    }
+                                val newCal = Calendar.getInstance(com.example.data.auth.CollectionPolicy.timeZone).apply {
+                                    clear(); set(year, month, dayOfMonth)
                                 }
                                 paymentDateMillis = newCal.timeInMillis
                             },
                             cal.get(Calendar.YEAR),
                             cal.get(Calendar.MONTH),
                             cal.get(Calendar.DAY_OF_MONTH)
-                        ).show()
+                        ).apply {
+                            earliestDate?.let { bound ->
+                                val india = com.example.data.auth.CollectionPolicy.calendar(bound)
+                                // Android DatePicker interprets its bounds in the device timezone.
+                                datePicker.minDate = Calendar.getInstance().apply {
+                                    clear(); set(india.get(Calendar.YEAR), india.get(Calendar.MONTH), india.get(Calendar.DAY_OF_MONTH))
+                                }.timeInMillis
+                            }
+                        }.show()
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2139,13 +2141,15 @@ fun RecordCustomerPaymentDialog(
                             Text(if (isTamil) "கட்டணம் செலுத்திய தேதி:" else "Payment Date:", fontSize = 12.sp, color = TextSecondaryDark)
                         }
                         Text(
-                            formatDate(paymentDateMillis),
+                            java.text.SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).apply { timeZone = com.example.data.auth.CollectionPolicy.timeZone }.format(java.util.Date(paymentDateMillis)),
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
                             color = ForestGreenHeader
                         )
                     }
                 }
+                if (dateError != null) Text(dateError, color = Color.Red, fontSize = 12.sp, modifier = Modifier.testTag("payment_date_error"))
+                if (selectedCollector.uid.isBlank()) Text("Active workspace membership is required to select a collector", color = Color.Red, fontSize = 12.sp)
                 // 3. Payment Method (Optional)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
@@ -2207,7 +2211,7 @@ fun RecordCustomerPaymentDialog(
             Button(
                 onClick = {
                     hasAttemptedSubmit = true
-                    if (!isAmountInvalid) {
+                    if (!isAmountInvalid && dateError == null && selectedCollector.uid.isNotBlank()) {
                         onConfirm(
                             roundedAmountValue,
                             paymentDateMillis,
@@ -2221,6 +2225,7 @@ fun RecordCustomerPaymentDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = SuccessPaidGreen),
                 shape = RoundedCornerShape(10.dp),
+                enabled = !isAmountInvalid && dateError == null && selectedCollector.uid.isNotBlank(),
                 modifier = Modifier.testTag("btn_confirm_record_payment")
             ) {
                 Text(if (isTamil) "கட்டணத்தைச் சேமி" else "Save Payment", fontWeight = FontWeight.Bold)

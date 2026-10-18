@@ -1,0 +1,386 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasPhone() {
+      return signedIn() &&
+        request.auth.token.phone_number != null;
+    }
+
+    function isWorkspaceOwner(wsId) {
+      return signedIn() && (
+        (
+          exists(/databases/$(database)/documents/workspaces/$(wsId)) &&
+          get(/databases/$(database)/documents/workspaces/$(wsId)).data.ownerUid
+            == request.auth.uid
+        ) ||
+        (
+          exists(/databases/$(database)/documents/collaborationGroups/$(wsId)) &&
+          get(/databases/$(database)/documents/collaborationGroups/$(wsId)).data.ownerUid
+            == request.auth.uid
+        )
+      );
+    }
+
+    function isWorkspaceMember(wsId) {
+      return signedIn() && (
+        isWorkspaceOwner(wsId) ||
+        exists(
+          /databases/$(database)/documents/workspaces/$(wsId)/members/$(request.auth.uid)
+        ) ||
+        exists(
+          /databases/$(database)/documents/collaborationGroups/$(wsId)/members/$(request.auth.uid)
+        )
+      );
+    }
+
+    function isCallerPhone(phone, normalizedPhone) {
+      return hasPhone() &&
+        (
+          phone == request.auth.token.phone_number ||
+          normalizedPhone == request.auth.token.phone_number
+        );
+    }
+
+    function hasPendingInvitation(grpId) {
+      return hasPhone() &&
+        exists(
+          /databases/$(database)/documents/collaborationGroups/$(grpId)/pendingPhones/$(request.auth.token.phone_number)
+        );
+    }
+
+
+    // =====================================================
+    // USER PROFILE
+    // =====================================================
+
+    match /users/{uid} {
+      allow read, write:
+        if signedIn() &&
+        request.auth.uid == uid;
+    }
+
+
+    // =====================================================
+    // PHONE DIRECTORY
+    // =====================================================
+
+    match /phoneDirectory/{phone} {
+
+      // Needed for exact partner phone lookup.
+      allow get: if signedIn();
+
+      // Never enumerate phone numbers.
+      allow list: if false;
+
+      // Phone-authenticated account registers only its own phone.
+      allow create, update:
+        if hasPhone() &&
+        request.auth.token.phone_number == phone &&
+        request.resource.data.uid == request.auth.uid;
+
+      allow delete:
+        if hasPhone() &&
+        request.auth.token.phone_number == phone &&
+        resource.data.uid == request.auth.uid;
+    }
+
+
+    // =====================================================
+    // USER WORKSPACE DISCOVERY INDEX
+    // =====================================================
+
+    match /userWorkspaceMemberships/{uid}/workspaces/{wsId} {
+
+      allow read:
+        if signedIn() &&
+        (
+          request.auth.uid == uid ||
+          isWorkspaceMember(wsId)
+        );
+
+      // Owner normally creates the index.
+      // Pending partner may create only their own index during claim.
+      allow create:
+        if signedIn() &&
+        (
+          isWorkspaceOwner(wsId) ||
+          (
+            request.auth.uid == uid &&
+            hasPendingInvitation(wsId)
+          )
+        );
+
+      // Established indexes are owner-managed.
+      allow update, delete:
+        if isWorkspaceOwner(wsId);
+    }
+
+
+    // =====================================================
+    // USER COLLABORATION DISCOVERY INDEX
+    // =====================================================
+
+    match /userCollaborationGroups/{uid}/groups/{grpId} {
+
+      allow read:
+        if signedIn() &&
+        (
+          request.auth.uid == uid ||
+          isWorkspaceMember(grpId)
+        );
+
+      // Owner direct-add or secure pending self-claim.
+      allow create:
+        if signedIn() &&
+        (
+          isWorkspaceOwner(grpId) ||
+          (
+            request.auth.uid == uid &&
+            hasPendingInvitation(grpId)
+          )
+        );
+
+      // Partner must not remove/change their own discovery state.
+      allow update, delete:
+        if isWorkspaceOwner(grpId);
+    }
+
+
+    // =====================================================
+    // COLLECTION-GROUP PENDING PHONE DISCOVERY
+    // =====================================================
+    //
+    // Current auto-connect query must be constrained to the
+    // authenticated Firebase phone number.
+
+    match /{path=**}/pendingPhones/{phone} {
+
+      allow read:
+        if signedIn() &&
+        isCallerPhone(
+          phone,
+          resource.data.normalizedPhone
+        );
+
+      // Matching phone may consume their own pending record.
+      allow delete:
+        if signedIn() &&
+        isCallerPhone(
+          phone,
+          resource.data.normalizedPhone
+        );
+    }
+
+
+    // =====================================================
+    // COLLABORATION GROUP
+    // =====================================================
+
+    match /collaborationGroups/{grpId} {
+
+      // Exact known-document GET may be needed during bootstrap
+      // and partner verification.
+      allow get:
+        if signedIn();
+
+      // No global collaboration-group enumeration.
+      allow list:
+        if false;
+
+      allow create:
+        if signedIn() &&
+        request.resource.data.ownerUid == request.auth.uid;
+
+      allow update, delete:
+        if isWorkspaceOwner(grpId);
+
+
+      // -----------------------------------------------------
+      // MEMBERS
+      // -----------------------------------------------------
+
+      match /members/{targetUid} {
+
+        allow read:
+          if isWorkspaceMember(grpId) ||
+          (
+            signedIn() &&
+            request.auth.uid == targetUid
+          );
+
+        // Owner adds registered partner.
+        // Pending partner can create ONLY their own member document.
+        allow create:
+          if signedIn() &&
+          (
+            isWorkspaceOwner(grpId) ||
+            (
+              request.auth.uid == targetUid &&
+              request.resource.data.uid == request.auth.uid &&
+              hasPendingInvitation(grpId)
+            )
+          );
+
+        // Established membership controlled by owner.
+        allow update, delete:
+          if isWorkspaceOwner(grpId);
+      }
+
+
+      // -----------------------------------------------------
+      // PENDING PHONES
+      // -----------------------------------------------------
+
+      match /pendingPhones/{phone} {
+
+        allow get:
+          if isWorkspaceMember(grpId) ||
+          (
+            signedIn() &&
+            isCallerPhone(
+              phone,
+              resource.data.normalizedPhone
+            )
+          );
+
+        // Owner/member UI may query its own group's pending list.
+        allow list:
+          if isWorkspaceMember(grpId);
+
+        // ONLY owner creates or changes pending invitations.
+        allow create, update:
+          if isWorkspaceOwner(grpId);
+
+        // Owner may cancel.
+        // Matching Firebase phone may consume their own invite.
+        allow delete:
+          if isWorkspaceOwner(grpId) ||
+          (
+            signedIn() &&
+            isCallerPhone(
+              phone,
+              resource.data.normalizedPhone
+            )
+          );
+      }
+    }
+
+
+    // =====================================================
+    // WORKSPACE
+    // =====================================================
+
+    match /workspaces/{wsId} {
+
+      // Allow owner/member.
+      // Pending claimant may need to read the known workspace
+      // while completing the membership claim.
+      allow get:
+        if signedIn() &&
+        (
+          resource == null ||
+          isWorkspaceMember(wsId) ||
+          hasPendingInvitation(wsId)
+        );
+
+      allow list:
+        if false;
+
+      allow create:
+        if signedIn() &&
+        request.resource.data.ownerUid == request.auth.uid;
+
+      // Workspace metadata belongs to the owner.
+      allow update, delete:
+        if isWorkspaceOwner(wsId);
+
+
+      // -----------------------------------------------------
+      // WORKSPACE MEMBERS
+      // -----------------------------------------------------
+
+      match /members/{targetUid} {
+
+        allow read:
+          if isWorkspaceMember(wsId) ||
+          (
+            signedIn() &&
+            request.auth.uid == targetUid
+          );
+
+        // Owner adds authorization mirror.
+        // Pending partner may create only their own mirror.
+        allow create:
+          if signedIn() &&
+          (
+            isWorkspaceOwner(wsId) ||
+            (
+              request.auth.uid == targetUid &&
+              request.resource.data.uid == request.auth.uid &&
+              hasPendingInvitation(wsId)
+            )
+          );
+
+        allow update, delete:
+          if isWorkspaceOwner(wsId);
+      }
+
+
+      // -----------------------------------------------------
+      // ATTENDEES / BUSINESS PARTNERS
+      // -----------------------------------------------------
+
+      match /attendees/{attendeeId} {
+
+        // Normal business access.
+        // Pending claimant may need to locate/update their own
+        // existing attendee during auto-connect.
+        allow read:
+          if isWorkspaceMember(wsId) ||
+          hasPendingInvitation(wsId);
+
+        allow create:
+          if isWorkspaceOwner(wsId) ||
+          (
+            hasPendingInvitation(wsId) &&
+            request.resource.data.partnerUid == request.auth.uid
+          );
+
+        allow update:
+          if isWorkspaceMember(wsId) ||
+          (
+            hasPendingInvitation(wsId) &&
+            request.resource.data.partnerUid == request.auth.uid
+          );
+
+        allow delete:
+          if isWorkspaceOwner(wsId);
+      }
+
+
+      // -----------------------------------------------------
+      // BUSINESS DATA
+      // -----------------------------------------------------
+
+      match /{subcollection}/{docId} {
+
+        allow read, write:
+          if isWorkspaceMember(wsId) &&
+          subcollection in [
+            'entries',
+            'expenses',
+            'customers',
+            'tractors',
+            'withdrawals',
+            'settings'
+          ];
+      }
+    }
+  }
+}

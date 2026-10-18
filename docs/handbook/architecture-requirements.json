@@ -1,0 +1,1969 @@
+{
+  "requirements": [
+    {
+      "id": "I-01",
+      "reference": "v1.6 \u00a72",
+      "requirement": "One immutable Firebase UID per person, independent of viewer.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "I-02",
+      "reference": "v1.6 \u00a72",
+      "requirement": "Role is (memberUid,workspaceId), not global.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "I-03",
+      "reference": "v1.6 \u00a72",
+      "requirement": "Exactly OWNER/PARTNER/OPERATOR; no CO-OWNER.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "I-04",
+      "reference": "v1.6 \u00a72",
+      "requirement": "Membership authorizes Partner/Operator; root ownerUid identifies Owner.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "I-05",
+      "reference": "v1.6 \u00a72",
+      "requirement": "Every business record stays in one authorized workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "I-06",
+      "reference": "v1.6 \u00a72",
+      "requirement": "Viewer never rewrites stored membership role assignments.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "I-07",
+      "reference": "v1.6 \u00a72",
+      "requirement": "Viewing never grants edit/delete/reverse authority.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "I-08",
+      "reference": "v1.6 \u00a72",
+      "requirement": "Creator/beneficiary/collector/financial attribution stay distinct.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "I-09",
+      "reference": "v1.6 \u00a72",
+      "requirement": "Original createdAt controls 24h; updatedAt never extends it.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "I-10",
+      "reference": "v1.6 \u00a72",
+      "requirement": "UI hiding is not security; Rules reject forged requests.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "I-11",
+      "reference": "v1.6 \u00a72",
+      "requirement": "Queue retains original workspace/actor; never re-homes.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "I-12",
+      "reference": "v1.6 \u00a72",
+      "requirement": "Financial engine uses only authorized workspace data.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-01",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Fresh phone/OTP sign-in requires connectivity; no bypass.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-02",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Fresh independent UID creates own workspace and becomes its one OWNER.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-03",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Existing invitee joins without changing other workspaces.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-04",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Brand-new invitee can later create their own Owner workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-05",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Closing/reopening app preserves real Firebase authenticated session.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-06",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Device reboot does not unnecessarily require OTP.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-07",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Network loss alone never logs authenticated user out.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-08",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Explicit logout signs Firebase out and returns to login.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-09",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Genuine invalid/revoked/signed-out session handled honestly; cache is not Auth.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-10",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Restore verified workspace/role only for matching authenticated UID.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-11",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Missing identity/role/workspace never invents OWNER or workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-12",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "Fence delayed auth/profile callbacks after logout/account switch.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-OWNER",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "OWNER persists login through app/device restarts until explicit logout, subject to genuine invalidation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-PARTNER",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "PARTNER persists login through app/device restarts until explicit logout, subject to genuine invalidation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "A-OPERATOR",
+      "reference": "v1.6 \u00a73 / 10",
+      "requirement": "OPERATOR persists login through app/device restarts until explicit logout, subject to genuine invalidation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "B-01",
+      "reference": "v1.6 \u00a73 / 4 / 17",
+      "requirement": "Owner one target-phone OTP; shared code is consent.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "B-02",
+      "reference": "v1.6 \u00a73 / 4 / 17",
+      "requirement": "Trusted phone proof binds immutable target UID.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "B-03",
+      "reference": "v1.6 \u00a73 / 4 / 17",
+      "requirement": "Requested invitation role restricted to Partner/Operator.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "B-04",
+      "reference": "v1.6 \u00a73 / 4 / 17",
+      "requirement": "Normal OTP expires after 5 minutes.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "B-05",
+      "reference": "v1.6 \u00a73 / 4 / 17",
+      "requirement": "Normal OTP single-use across repeated redemption.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "B-06",
+      "reference": "v1.6 \u00a73 / 4 / 17",
+      "requirement": "Current test-number OTP flow has no expiry.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "B-07",
+      "reference": "v1.6 \u00a73 / 4 / 17",
+      "requirement": "Secondary Auth verification preserves Owner session.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "B-08",
+      "reference": "v1.6 \u00a73 / 4 / 17",
+      "requirement": "Exactly one Owner; no Partner\u2194Operator changes.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "B-09",
+      "reference": "v1.6 \u00a73 / 4 / 17",
+      "requirement": "No suspend/reactivate/ownership-transfer ability.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "B-10",
+      "reference": "v1.6 \u00a73 / 4 / 17",
+      "requirement": "Partner/Operator cannot manage members; Partner can view permitted membership data.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-OWNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: OWNER \u2014 view all ordinary.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-OWNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: OWNER \u2014 create self/eligible member.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-OWNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: OWNER \u2014 edit any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-OWNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: OWNER \u2014 delete any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-PARTNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: PARTNER \u2014 view all ordinary.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-PARTNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: PARTNER \u2014 create self only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-PARTNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: PARTNER \u2014 edit own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-PARTNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: PARTNER \u2014 delete own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-OPERATOR-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: OPERATOR \u2014 view all ordinary.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-OPERATOR-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: OPERATOR \u2014 create self only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-OPERATOR-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: OPERATOR \u2014 edit own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-ENTRY-OPERATOR-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "ENTRY: OPERATOR \u2014 delete own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-OWNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: OWNER \u2014 view.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-OWNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: OWNER \u2014 create dedicated workflow.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-OWNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: OWNER \u2014 edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-OWNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: OWNER \u2014 delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-PARTNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: PARTNER \u2014 view through Business Overview only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-PARTNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: PARTNER \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-PARTNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: PARTNER \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-PARTNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: PARTNER \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-OPERATOR-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: OPERATOR \u2014 deny read.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-OPERATOR-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-OPERATOR-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-HISTORICAL-OPERATOR-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "HISTORICAL: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-OWNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: OWNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-OWNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: OWNER \u2014 create self/eligible target.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-OWNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: OWNER \u2014 edit any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-OWNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: OWNER \u2014 delete any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-PARTNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: PARTNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-PARTNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: PARTNER \u2014 create self only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-PARTNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: PARTNER \u2014 edit own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-PARTNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: PARTNER \u2014 delete own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-OPERATOR-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: OPERATOR \u2014 deny read.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-OPERATOR-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-OPERATOR-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXPENSE-OPERATOR-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXPENSE: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OWNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: OWNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OWNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: OWNER \u2014 create self/eligible Partner.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OWNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: OWNER \u2014 deny ordinary edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OWNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: OWNER \u2014 delete any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-PARTNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: PARTNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-PARTNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: PARTNER \u2014 create self only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-PARTNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: PARTNER \u2014 deny ordinary edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-PARTNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: PARTNER \u2014 delete own-created <24h.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OPERATOR-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: OPERATOR \u2014 deny read.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OPERATOR-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OPERATOR-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-WITHDRAWAL-OPERATOR-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "WITHDRAWAL: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-OWNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: OWNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-OWNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: OWNER \u2014 collect for self against permitted due.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-OWNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: OWNER \u2014 reverse any retaining history.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-OWNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: OWNER \u2014 deny normal physical deletion.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-PARTNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: PARTNER \u2014 view all.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-PARTNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: PARTNER \u2014 collect for self including Owner-created due.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-PARTNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: PARTNER \u2014 reverse own <24h retaining history.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-PARTNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: PARTNER \u2014 deny normal physical deletion.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-OPERATOR-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: OPERATOR \u2014 deny read.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-OPERATOR-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-OPERATOR-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: OPERATOR \u2014 deny reversal.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-COLLECTION-OPERATOR-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "COLLECTION: OPERATOR \u2014 deny physical deletion.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-OWNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: OWNER \u2014 view.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-OWNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: OWNER \u2014 create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-OWNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: OWNER \u2014 edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-OWNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: OWNER \u2014 delete with dependency protection.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-PARTNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: PARTNER \u2014 view.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-PARTNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: PARTNER \u2014 create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-PARTNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: PARTNER \u2014 edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-PARTNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: PARTNER \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-OPERATOR-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: OPERATOR \u2014 deny read.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-OPERATOR-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-OPERATOR-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-CUSTOMER-OPERATOR-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "CUSTOMER: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-OWNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: OWNER \u2014 view/use.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-OWNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: OWNER \u2014 create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-OWNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: OWNER \u2014 edit any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-OWNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: OWNER \u2014 delete any with references protected.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-PARTNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: PARTNER \u2014 view/use shared.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-PARTNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: PARTNER \u2014 create own.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-PARTNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: PARTNER \u2014 edit own anytime.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-PARTNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: PARTNER \u2014 delete own anytime.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-OPERATOR-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: OPERATOR \u2014 view/use shared.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-OPERATOR-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-OPERATOR-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-TRACTOR-OPERATOR-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "TRACTOR: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-OWNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: OWNER \u2014 view/use.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-OWNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: OWNER \u2014 create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-OWNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: OWNER \u2014 edit any.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-OWNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: OWNER \u2014 delete any with references protected.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-PARTNER-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: PARTNER \u2014 view/use shared.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-PARTNER-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: PARTNER \u2014 create own.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-PARTNER-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: PARTNER \u2014 edit own anytime.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-PARTNER-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: PARTNER \u2014 delete own anytime.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-OPERATOR-1",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: OPERATOR \u2014 view/use shared.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-OPERATOR-2",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: OPERATOR \u2014 deny create.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-OPERATOR-3",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: OPERATOR \u2014 deny edit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "RB-EXTENSION-OPERATOR-4",
+      "reference": "v1.6 \u00a76 / 14",
+      "requirement": "EXTENSION: OPERATOR \u2014 deny delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "F-01",
+      "reference": "v1.6 \u00a77 / 8",
+      "requirement": "Dedicated Historical Entry marker/workflow; ordinary age never reclassifies it.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "F-02",
+      "reference": "v1.6 \u00a77 / 8",
+      "requirement": "Owner Entry for Partner + I Paid attributes investment to Partner.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "F-03",
+      "reference": "v1.6 \u00a77 / 8",
+      "requirement": "Expense attribution follows target participant separately from creator.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "F-04",
+      "reference": "v1.6 \u00a77 / 8",
+      "requirement": "Split collections share original customer and Job/credit identity.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "F-05",
+      "reference": "v1.6 \u00a77 / 8",
+      "requirement": "Owner 20k stays unchanged when Partner reverses 30k; due restored 30k.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "F-06",
+      "reference": "v1.6 \u00a77 / 8",
+      "requirement": "Reversal keeps status=REVERSED history; no physical deletion.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "F-07",
+      "reference": "v1.6 \u00a77 / 8",
+      "requirement": "Delete Due hard-deletes source Entry subject to collection/reference reconciliation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "F-08",
+      "reference": "v1.6 \u00a77 / 8",
+      "requirement": "Authorized normal entity delete retains queued tombstone until acknowledged physical deletion.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "F-09",
+      "reference": "v1.6 \u00a77 / 8",
+      "requirement": "Shared Customers/historical asset references protected on delete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "F-10",
+      "reference": "v1.6 \u00a77 / 8",
+      "requirement": "Unmapped legacy beneficiary never guessed; totals preserved for migration.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "F-11",
+      "reference": "v1.6 \u00a77 / 8",
+      "requirement": "Pending/synced/deleted/reversed records produce consistent financial summaries.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-01",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Owner-only Stage1 removal immediately revokes workspace access.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-02",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Stage1 archives in Owner-only Deleted Users, keeps business data.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-03",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Retained records greyed/read-only with original attribution.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-04",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Retained dues remain collectible by Owner/Partner.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-05",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "No new record attribution to removed UID.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-06",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Stage2 later explicit permanent-delete confirmation from Deleted Users.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-07",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Purge creator OR beneficiary/target UID in current workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-08",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Include member-created assets and linked collection/source dependencies.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-09",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Reconcile dues/collection effects before physical purge.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-10",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Protect shared Customers referenced by retained records.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-11",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Protect historical asset snapshots/references for survivors.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-12",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Never delete global Firebase Auth UID or affect other workspaces.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-13",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Invalidate actor/entity pending operations to prevent resurrection.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-14",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Keep PURGE_PENDING until both cloud and local cleanup complete.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-15",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Idempotent recovery under retry/partial failure/concurrent collection.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-16",
+      "reference": "v1.6 \u00a74.2 / 10 / 17",
+      "requirement": "Verify actual data restorable backup before destructive migration/purge testing.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "D-CONFLICT",
+      "reference": "v1.6 \u00a74.2 vs audit request",
+      "requirement": "Resolve requested immediate KEEP RECORDS/DELETE RECORDS TOO choice against locked two-stage lifecycle.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-01",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Cached role authorization before every local mutation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-02",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Room business mutation and queue insert atomic.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-03",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Stable operationId survives retry/process recreation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-04",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Command retains originating workspace/actor.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-05",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Persist type/entity/order/actionTime/dependency references.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-06",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Before-deadline offline action syncs later; after deadline denies.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-07",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Accepted practical local clock; no attestation added.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-08",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Local hard delete retains durable command until cloud ack.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-09",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Bounded sync around 10\u201320 commands.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-10",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Prerequisites/dependencies ordered across retries.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-11",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Individual cloud acknowledgement precedes synced mark.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-12",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Transient failures pending with bounded backoff.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-13",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Permanent rejection visible, never shown synced.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-14",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Continue independent work after unrelated rejection.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-15",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Process genuinely PENDING, not REJECTED commands.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-16",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Stable retries never duplicate financial effects.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-17",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Account/workspace changes during batch cannot leak/reassign.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-18",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Responsive background sync survives process death.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-19",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Measure hundreds-of-commands memory/locks/convergence.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-20",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Role-permitted workflows after authenticated offline cold start.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-21",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Pending/recoverable errors visible in existing UI.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "O-22",
+      "reference": "v1.6 \u00a79 / 10",
+      "requirement": "Pending local results immediate; other devices only after sync.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "W-01",
+      "reference": "v1.6 \u00a72 / 10 / 12",
+      "requirement": "Composite (workspaceId,id) keys isolate same-numbered records.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "W-02",
+      "reference": "v1.6 \u00a72 / 10 / 12",
+      "requirement": "Every local query/search/filter uses authorized active workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "W-03",
+      "reference": "v1.6 \u00a72 / 10 / 12",
+      "requirement": "Firestore queries/listeners/references bind explicit workspace.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "W-04",
+      "reference": "v1.6 \u00a72 / 10 / 12",
+      "requirement": "Stale callbacks cannot expose old account/workspace data.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "W-05",
+      "reference": "v1.6 \u00a72 / 10 / 12",
+      "requirement": "Reports/calculations/PDF never combine workspaces.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "W-06",
+      "reference": "v1.6 \u00a72 / 10 / 12",
+      "requirement": "Bidirectional forged cross-workspace requests/references deny.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OWNER-BusinessOverview",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OWNER: allow Business Overview.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OWNER-CustomerCreditDue",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OWNER: allow Customer Credit Due.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OWNER-CollectionHistory",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OWNER: allow Collection History.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OWNER-Expenses",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OWNER: allow Expenses.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OWNER-BalanceSheet",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OWNER: allow Balance Sheet.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OWNER-Withdrawal",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OWNER: allow Withdrawal.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OWNER-OldEntryCreation",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OWNER: allow Old Entry Creation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-PARTNER-BusinessOverview",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "PARTNER: allow Business Overview.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-PARTNER-CustomerCreditDue",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "PARTNER: allow Customer Credit Due.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-PARTNER-CollectionHistory",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "PARTNER: allow Collection History.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-PARTNER-Expenses",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "PARTNER: allow Expenses.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-PARTNER-BalanceSheet",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "PARTNER: allow Balance Sheet.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-PARTNER-Withdrawal",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "PARTNER: allow Withdrawal.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-PARTNER-OldEntryCreation",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "PARTNER: deny Old Entry Creation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OPERATOR-BusinessOverview",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OPERATOR: deny Business Overview.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OPERATOR-CustomerCreditDue",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OPERATOR: deny Customer Credit Due.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OPERATOR-CollectionHistory",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OPERATOR: deny Collection History.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OPERATOR-Expenses",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OPERATOR: deny Expenses.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OPERATOR-BalanceSheet",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OPERATOR: deny Balance Sheet.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OPERATOR-Withdrawal",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OPERATOR: deny Withdrawal.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-OPERATOR-OldEntryCreation",
+      "reference": "v1.6 \u00a76.7 / 11 / 14",
+      "requirement": "OPERATOR: deny Old Entry Creation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-X-01",
+      "reference": "v1.6 \u00a76 / 11",
+      "requirement": "Operator PDF export denied from every surface.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-X-02",
+      "reference": "v1.6 \u00a76 / 11",
+      "requirement": "Owner/Partner PDF contains only authorized workspace data.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-X-03",
+      "reference": "v1.6 \u00a76 / 11",
+      "requirement": "Partner Expense For selector hidden; target self.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-X-04",
+      "reference": "v1.6 \u00a76 / 11",
+      "requirement": "Partner Withdrawal member dropdown hidden; self target.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-X-05",
+      "reference": "v1.6 \u00a76 / 11",
+      "requirement": "Edit/delete/reverse controls mirror UID/time policy.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-X-06",
+      "reference": "v1.6 \u00a76 / 11",
+      "requirement": "Operator asset controls view/use only.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-X-07",
+      "reference": "v1.6 \u00a76 / 11",
+      "requirement": "Business name/settings Owner-only mutation.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-X-08",
+      "reference": "v1.6 \u00a76 / 11",
+      "requirement": "Existing theme/spacing/typography/navigation preserved.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "UI-X-09",
+      "reference": "v1.6 \u00a76 / 11",
+      "requirement": "Deleted Users confirmation follows existing visual conventions.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Workspace-workspaceId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Workspace: canonical workspaceId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Workspace-ownerUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Workspace: canonical ownerUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Workspace-name",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Workspace: canonical name preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Workspace-timestamps",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Workspace: canonical timestamps preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Member-uid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Member: canonical uid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Member-workspaceId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Member: canonical workspaceId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Member-role",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Member: canonical role preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Member-status",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Member: canonical status preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Member-createdAt",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Member: canonical createdAt preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Pendinginvitation-workspaceId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Pending invitation: canonical workspaceId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Pendinginvitation-targetPhoneE164",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Pending invitation: canonical targetPhoneE164 preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Pendinginvitation-inviterUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Pending invitation: canonical inviterUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Pendinginvitation-requestedRole",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Pending invitation: canonical requestedRole preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Pendinginvitation-status",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Pending invitation: canonical status preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Pendinginvitation-expiresAt",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Pending invitation: canonical expiresAt preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Pendinginvitation-trusted_verification_binding",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Pending invitation: canonical trusted verification binding preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Entry-workspaceId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Entry: canonical workspaceId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Entry-createdByUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Entry: canonical createdByUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Entry-createdAt",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Entry: canonical createdAt preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Entry-entryForUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Entry: canonical entryForUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Entry-financialAttributionUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Entry: canonical financialAttributionUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Expense-workspaceId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Expense: canonical workspaceId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Expense-createdByUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Expense: canonical createdByUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Expense-createdAt",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Expense: canonical createdAt preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Expense-expenseForUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Expense: canonical expenseForUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Expense-financialAttributionUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Expense: canonical financialAttributionUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Tractor-workspaceId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Tractor: canonical workspaceId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Tractor-createdByUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Tractor: canonical createdByUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Tractor-createdAt",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Tractor: canonical createdAt preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Extension-workspaceId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Extension: canonical workspaceId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Extension-createdByUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Extension: canonical createdByUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Extension-createdAt",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Extension: canonical createdAt preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Withdrawal-workspaceId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Withdrawal: canonical workspaceId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Withdrawal-createdByUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Withdrawal: canonical createdByUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Withdrawal-createdAt",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Withdrawal: canonical createdAt preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Withdrawal-withdrawalForUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Withdrawal: canonical withdrawalForUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Collection-workspaceId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Collection: canonical workspaceId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Collection-customerId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Collection: canonical customerId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Collection-jobId_creditId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Collection: canonical jobId/creditId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Collection-amount",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Collection: canonical amount preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Collection-collectedByUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Collection: canonical collectedByUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Collection-status",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Collection: canonical status preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Collection-createdAt",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Collection: canonical createdAt preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Customer-workspaceId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Customer: canonical workspaceId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Customer-createdByUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Customer: canonical createdByUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-Customer-createdAt",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Customer: canonical createdAt preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-DeletedUserarchive-workspaceId",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Deleted User archive: canonical workspaceId preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-DeletedUserarchive-memberUid",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Deleted User archive: canonical memberUid preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-DeletedUserarchive-originalRole",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Deleted User archive: canonical originalRole preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-DeletedUserarchive-removedAt",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Deleted User archive: canonical removedAt preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "C-DeletedUserarchive-purgeStatus",
+      "reference": "v1.6 \u00a713",
+      "requirement": "Deleted User archive: canonical purgeStatus preserves specified meaning.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "S-01",
+      "reference": "v1.6 \u00a79 / 13 / 18",
+      "requirement": "No subscription/account-validity gate.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "S-02",
+      "reference": "v1.6 \u00a79 / 13 / 18",
+      "requirement": "No plan-expiry/member-count restriction.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "S-03",
+      "reference": "v1.6 \u00a79 / 13 / 18",
+      "requirement": "No workspace/invitation/record-creation quota.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "S-04",
+      "reference": "v1.6 \u00a79 / 13 / 18",
+      "requirement": "No personal-plan fallback/FREE downgrade.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "S-05",
+      "reference": "v1.6 \u00a79 / 13 / 18",
+      "requirement": "Future subscription schema has no current access effect.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-01",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "Authenticated UID required.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-02",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "Exact workspace membership required.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-03",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "ACTIVE status required.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-04",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "Only recognized workspace role grants access.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-05",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "Collection-specific role permission required.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-06",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "Record workspace matches path.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-07",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "Creator ownership enforced.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-08",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "Original creation/action window enforced.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-09",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "Target/collector attribution enforced.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-10",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "Identity/workspace/createdAt immutable.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-11",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "Unmatched paths default deny.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "SEC-12",
+      "reference": "v1.6 \u00a712.1 / 12.3",
+      "requirement": "Legacy collaborationGroups/alternate path denied.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-01",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Partner cannot edit Owner Entry",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-02",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Partner own Entry after24h denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-03",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Operator own Entry delete <24h allows",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-04",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Partner withdrawal for other denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-05",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Partner withdrawal target dropdown absent",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-06",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Partner edit other Expense denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-07",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Partner delete other Tractor denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-08",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Partner reverse Owner collection denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-09",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Owner Entry for Partner + I Paid attribution",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-10",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Same UID workspace A/B isolated",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-11",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Phone/name impersonation denies",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-12",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Plan/expiry/quota must not block",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-13",
+      "reference": "v1.6 \u00a715",
+      "requirement": "A records from B context deny",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-14",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Stage1 archive/read-only/collectible dues",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-15",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Purge creator OR target current-workspace only",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "T-16",
+      "reference": "v1.6 \u00a715",
+      "requirement": "Queued action cannot resurrect purged entity",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "J-01",
+      "reference": "v1.6 \u00a712.2 / 16",
+      "requirement": "Preserve release database through correct data-preserving migrations.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "J-02",
+      "reference": "v1.6 \u00a712.2 / 16",
+      "requirement": "Inspect actual Firebase data and verify restorable export before destructive migration/purge.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "J-03",
+      "reference": "v1.6 \u00a712.2 / 16",
+      "requirement": "Incremental legacy mapping never guesses UID/history/time or loses financial totals.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "J-04",
+      "reference": "v1.6 \u00a712.2 / 16",
+      "requirement": "Preserve existing release Android CI build/lint/unit/Robolectric/artifacts/scorecard.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "J-05",
+      "reference": "v1.6 \u00a712.2 / 16",
+      "requirement": "Every role/operation positive+negative creator/workspace/24h/immutable tests before exit.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "J-06",
+      "reference": "v1.6 \u00a712.2 / 16",
+      "requirement": "Signing/config material reviewed without exposing values or accidental publication.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M1",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Identity/membership: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M2",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Invitation: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M3",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Workspace isolation: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M4",
+      "reference": "v1.6 \u00a716",
+      "requirement": "RBAC: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M5",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Entries: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M6",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Expenses: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M7",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Assets: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M8",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Withdrawals: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M9",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Collections: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M10",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Financial attribution: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M11",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Room/offline/sync: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M12",
+      "reference": "v1.6 \u00a716",
+      "requirement": "No subscription enforcement: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M13",
+      "reference": "v1.6 \u00a716",
+      "requirement": "UI capabilities: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M14",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Security verification: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "M15",
+      "reference": "v1.6 \u00a716",
+      "requirement": "Deleted Users/purge: all positive and negative exit gates before moving on.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "HOME-OWNER",
+      "reference": "v1.6 \u00a76",
+      "requirement": "OWNER can view Home and create permitted ordinary Entry.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "HOME-PARTNER",
+      "reference": "v1.6 \u00a76",
+      "requirement": "PARTNER can view Home and create permitted ordinary Entry.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    },
+    {
+      "id": "HOME-OPERATOR",
+      "reference": "v1.6 \u00a76",
+      "requirement": "OPERATOR can view Home and create permitted ordinary Entry.",
+      "verification": "NOT VERIFIED in this publication; map exact executed assertions"
+    }
+  ],
+  "count": 327,
+  "sourceSha256": "39fcc8ab02b1e0f37ab62db77cb28e32cd9e6fafe9d61fb570c77ff17360f9f4",
+  "completionPercentage": null
+}
