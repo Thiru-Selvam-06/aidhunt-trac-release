@@ -101,7 +101,8 @@ service cloud.firestore {
     function validCollectionCollector(ws, data) {
       let uid = data.get('collectorUid', data.collectedByUid);
       let target = get(memberPath(ws, uid)).data;
-      return uid is string && active(ws, uid) && target.workspaceId == ws && target.role in ['OWNER', 'Owner', 'owner', 'PARTNER', 'Partner', 'partner'] &&
+      // The membership path is authoritative; older valid members have no redundant workspaceId.
+      return uid is string && active(ws, uid) && target.get('workspaceId', ws) == ws && target.role in ['OWNER', 'Owner', 'owner', 'PARTNER', 'Partner', 'partner'] &&
         (owner(ws) || uid == request.auth.uid) &&
         (!data.keys().hasAny(['collectorUid', 'collectorName', 'collectorRole']) ||
           (data.collectorUid == uid && data.collectorName == (target.get('displayName', null) == null ? '' : target.displayName) && data.collectorRole == target.role));

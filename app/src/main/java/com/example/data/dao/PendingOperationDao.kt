@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface PendingOperationDao {
+    @Query("SELECT * FROM pending_operations WHERE state = 'PENDING' ORDER BY sequence")
+    fun observePending(): Flow<List<PendingOperationEntity>>
     @Insert suspend fun insert(operation: PendingOperationEntity)
     @Query("SELECT * FROM pending_operations WHERE operationId = :id LIMIT 1")
     suspend fun getOperation(id: String): PendingOperationEntity?

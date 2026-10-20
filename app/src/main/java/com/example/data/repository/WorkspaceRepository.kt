@@ -115,6 +115,9 @@ class WorkspaceRepository(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
 ) {
     private val TAG = "WorkspaceRepository"
+    private val replicaUpdates = com.example.data.sync.ReplicaDispatcher(scope) { failure ->
+        Log.e(TAG, "Confirmed snapshot application failed; retained local actions are unchanged", failure)
+    }
 
     private val partnerDao = database.partnerDao()
     private val tractorDao = database.tractorDao()
@@ -1032,17 +1035,17 @@ class WorkspaceRepository(
                 }
             },
             onJobsUpdated = { remoteJobs, listenerWsId ->
-                scope.launch {
+                replicaUpdates.submit {
                     syncRemoteJobsToLocal(remoteJobs, listenerWsId)
                 }
             },
             onExpensesUpdated = { remoteExpenses, listenerWsId ->
-                scope.launch {
+                replicaUpdates.submit {
                     syncRemoteExpensesToLocal(remoteExpenses, listenerWsId)
                 }
             },
             onCustomersUpdated = { remoteCustomers, listenerWsId ->
-                scope.launch {
+                replicaUpdates.submit {
                     syncRemoteCustomersToLocal(remoteCustomers, listenerWsId)
                 }
             },
@@ -1057,7 +1060,7 @@ class WorkspaceRepository(
                 }
             },
             onWithdrawalsUpdated = { remoteWithdrawals, listenerWsId ->
-                scope.launch {
+                replicaUpdates.submit {
                     syncRemoteWithdrawalsToLocal(remoteWithdrawals, listenerWsId)
                 }
             },
@@ -1152,7 +1155,7 @@ class WorkspaceRepository(
                 }
             },
             onPaymentsUpdated = { remotePayments, listenerWsId ->
-                scope.launch {
+                replicaUpdates.submit {
                     syncRemotePaymentsToLocal(remotePayments, listenerWsId)
                 }
             },
@@ -1329,6 +1332,9 @@ class WorkspaceRepository(
             return
         }
         try {
+            database.withTransaction {
+                if (currentUid.isNullOrBlank() || getEffectiveActorUid() != currentUid || activeUid != currentUid ||
+                    !_visibleWorkspaceIds.value.contains(listenerWsId)) return@withTransaction
             val compoundPendingIds = operations.outstandingOperations(listenerWsId)
                 .filter { it.entityType == "JOB" && it.mutationType == "DELETE" && it.state == "PENDING" }
                 .flatMap { op ->
@@ -1356,6 +1362,8 @@ class WorkspaceRepository(
             } else {
                 expenseDao.deleteAllSyncedForWorkspace(listenerWsId)
             }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error syncing remote expenses to local: ${e.message}")
         }
@@ -1453,6 +1461,9 @@ class WorkspaceRepository(
             return
         }
         try {
+            database.withTransaction {
+                if (currentUid.isNullOrBlank() || getEffectiveActorUid() != currentUid || activeUid != currentUid ||
+                    !_visibleWorkspaceIds.value.contains(listenerWsId)) return@withTransaction
             val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("WITHDRAWAL", listenerWsId)
             val unsyncedLocalWithdrawals = withdrawalDao.getUnsyncedWithdrawalsForWorkspace(listenerWsId).associateBy { it.id }
             val outstandingIds = operations.outstandingOperations(listenerWsId).filter { it.entityType == "WITHDRAWAL" }.map { it.entityId }.toSet()
@@ -1474,6 +1485,8 @@ class WorkspaceRepository(
             } else {
                 withdrawalDao.deleteAllSyncedForWorkspace(listenerWsId)
             }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error syncing remote withdrawals to local: ${e.message}")
         }
@@ -1564,6 +1577,17 @@ class WorkspaceRepository(
                 ?: throw SecurityException("Workspace access has been removed; action retained")
             com.example.data.sync.OperationPolicy.requireAuthorized(op, role,
                 firestoreRepository.getWorkspaceMembers(op.workspaceId))
+            val json = org.json.JSONObject(op.payloadJson)
+            val source = firestoreRepository.getEntryFromServer(op.workspaceId, json.getLong("jobEntryId"))
+                ?: throw IllegalStateException("Source job is not confirmed; original collection retained")
+            require(kotlin.math.abs(source.amountReceived - json.getDouble("baseAmountReceived")) < 0.001 &&
+                kotlin.math.abs(source.pendingAmount - json.getDouble("basePendingAmount")) < 0.001) {
+                "Source balances changed; inspect the original collection before authorizing recovery"
+            }
+            require(operations.outstandingOperations(op.workspaceId).none { it.operationId != op.operationId &&
+                it.state == "REJECTED" && it.entityType == "JOB" && it.entityId == source.id }) {
+                "Resolve the rejected source job first; original collection retained"
+            }
             val cloud = try { firestoreRepository.getOperationRecordFromServer(op) }
                 catch (e: com.google.firebase.firestore.FirebaseFirestoreException) {
                     if (e.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED)
@@ -1577,7 +1601,7 @@ class WorkspaceRepository(
         }
     }
 
-    private suspend fun enqueue(type: String, id: Long, payload: Map<String, Any?>, mutation: String = "UPSERT", expectedActorUid: String? = null, actionTime: Long = System.currentTimeMillis()) {
+    private suspend fun enqueue(type: String, id: Long, payload: Map<String, Any?>, mutation: String = "UPSERT", expectedActorUid: String? = null, actionTime: Long = System.currentTimeMillis(), baseSnapshot: Map<String, Any?>? = null) {
         val wsId = payload["workspaceId"] as? String ?: throw SecurityException("Missing operation workspace")
         requireWorkspaceActor(wsId)
         val operationActor = getEffectiveActorUid().orEmpty()
@@ -1585,7 +1609,10 @@ class WorkspaceRepository(
         operations.supersedeReconciledRejections(wsId, operationActor, type, id)
         operations.insert(PendingOperationEntity(java.util.UUID.randomUUID().toString(), wsId,
             operationActor, type, id, mutation, operations.nextSequence(), actionTime,
-            org.json.JSONObject(payload).put("operationProtocolVersion", 2).toString()))
+            org.json.JSONObject(payload).put("operationProtocolVersion", 2).apply {
+                if (type in setOf("JOB", "EXPENSE") && mutation == "UPSERT")
+                    put("expectedBaseJson", baseSnapshot?.let { org.json.JSONObject(it).toString() } ?: "null")
+            }.toString()))
     }
 
     private suspend fun reconcileRejectedOperation(op: PendingOperationEntity): Boolean {
@@ -1675,7 +1702,9 @@ class WorkspaceRepository(
             }
             if (operations.outstanding(op.workspaceId, op.entityType, op.entityId) == 0 && op.mutationType != "DELETE") {
                 when (op.entityType) {
-                    "JOB" -> jobEntryDao.markJobsSynced(op.workspaceId, listOf(op.entityId))
+                    "JOB" -> if (operations.outstandingOperations(op.workspaceId).none {
+                        com.example.data.sync.OperationDependencies.blocksEntryAcknowledgement(it, op.entityId)
+                    }) jobEntryDao.markJobsSynced(op.workspaceId, listOf(op.entityId))
                     "EXPENSE" -> expenseDao.markExpensesSynced(op.workspaceId, listOf(op.entityId))
                     "CUSTOMER" -> customerDao.markCustomersSynced(op.workspaceId, listOf(op.entityId))
                     "WITHDRAWAL" -> withdrawalDao.markWithdrawalsSynced(op.workspaceId, listOf(op.entityId))
@@ -1882,7 +1911,7 @@ class WorkspaceRepository(
         jobEntryDao.insertJob(localJob)
         com.example.data.auth.EntryFinancialMutationPolicy.requireAuthorized(verifiedActorRole, existingJob?.amountReceived, localJob.amountReceived)
         val entrySnapshot = if (existingJob == null && localJob.amountReceived > 0) localJob.copy(amountReceived = 0.0, pendingAmount = localJob.totalAmount) else localJob
-        enqueue("JOB", localJob.id, entrySnapshot.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid)
+        enqueue("JOB", localJob.id, entrySnapshot.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid, baseSnapshot = existingJob?.toFirestoreMap())
         if (existingJob == null && localJob.amountReceived > 0) {
             val collection = PaymentEntity(id = IdGenerator.generateId(), workspaceId = wsId, jobEntryId = localJob.id,
                 customerId = customerId, customerName = localJob.customerName, tractorId = localJob.tractorId, tractorLabel = localJob.tractorLabel,
@@ -1959,7 +1988,7 @@ class WorkspaceRepository(
                 isSynced = false
             )
             expenseDao.insertExpense(localExp)
-            enqueue("EXPENSE", localExp.id, localExp.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+            enqueue("EXPENSE", localExp.id, localExp.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime, baseSnapshot = originalExpense?.toFirestoreMap())
             savedExpensesList.add(localExp)
         }
 
@@ -2060,7 +2089,7 @@ class WorkspaceRepository(
                 it.entityType == "EXPENSE" && it.mutationType == "DELETE" && expenses.any { expense -> expense.id == it.entityId }
             }
             require(dependencies.none { it.state == "REJECTED" && it !in supersededExpenseDeletes }) {
-                "Resolve the rejected linked operation before deleting this Entry"
+                "Deletion is protected: resolve the rejected linked Payment or Expense in Account > SQLite & Cloud Sync first. Original actions are retained."
             }
             require(_activeWorkspaceId.value == wsId && getEffectiveActorUid() == actorUid) { "Workspace or account changed; retry in the original workspace" }
             val payload = stored.toFirestoreMap().toMutableMap()
@@ -2222,7 +2251,7 @@ class WorkspaceRepository(
             isSynced = false
         )
         expenseDao.updateExpense(updated)
-        enqueue("EXPENSE", updated.id, updated.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid)
+        enqueue("EXPENSE", updated.id, updated.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid, baseSnapshot = original?.toFirestoreMap())
 
 
 
@@ -3400,6 +3429,7 @@ class WorkspaceRepository(
                 for (op in batch) {
                     cursor = op.sequence
                     if (getEffectiveActorUid() != uid || _activeWorkspaceId.value != wsId) return@withLock SyncResult(false, count, "Session or workspace changed; remaining actions retained")
+                    var syncStage = "SERVER_MEMBERSHIP"
                     try {
                         val freshRole = firestoreRepository.resolveAuthoritativeRole(uid, wsId) ?: throw SecurityException("Workspace access removed")
                         val freshMembers = firestoreRepository.getWorkspaceMembers(wsId)
@@ -3426,7 +3456,9 @@ class WorkspaceRepository(
                         val localLinkedJob = if (linkedJobId > 0) jobEntryDao.getJobById(wsId, linkedJobId) else null
                         val linkedJob = if (op.entityType == "EXPENSE") com.example.data.sync.resolveExpenseAuthorizationJob(
                             op, localLinkedJob, firestoreRepository::getOperationRecordFromServer) else null
+                        syncStage = "LOCAL_POLICY"
                         com.example.data.sync.OperationPolicy.requireAuthorized(op, freshRole, freshMembers, linkedJob)
+                        syncStage = "FIRESTORE_COMMIT"
                         var attempt = 0
                         while (true) {
                             try {
@@ -3445,18 +3477,10 @@ class WorkspaceRepository(
                         if (e is com.example.data.firebase.WorkspaceAuthenticationRequiredException || e is com.example.data.firebase.WorkspaceSessionChangedException) authenticationMessage = e.message
                         if (e is com.example.data.firebase.WorkspaceBackendUnavailableException) backendMessage = e.message
                         val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code
-                        val permanent = e is SecurityException ||
-                            e is IllegalArgumentException ||
-                            e is org.json.JSONException ||
-                            e is com.example.data.firebase.WorkspaceBackendUnavailableException ||
-                            op.attempts >= 3 ||
-                            code in setOf(
-                                com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,
-                                com.google.firebase.firestore.FirebaseFirestoreException.Code.INVALID_ARGUMENT,
-                                com.google.firebase.firestore.FirebaseFirestoreException.Code.FAILED_PRECONDITION,
-                                com.google.firebase.firestore.FirebaseFirestoreException.Code.NOT_FOUND
-                            )
-                        operations.failed(op.operationId, if (permanent) "REJECTED" else "PENDING", e.message ?: "Sync failed")
+                        val permanent = com.example.data.sync.SyncFailurePolicy.permanent(e)
+                        val failure = (e.message ?: "Sync failed") + "; " + com.example.data.sync.SyncAuthorizationDiagnostic.describe(
+                            op, getEffectiveActorUid(), syncStage)
+                        operations.failed(op.operationId, if (permanent) "REJECTED" else "PENDING", failure)
                         if (permanent && op.entityType in setOf("JOB", "CUSTOMER", "EXPENSE", "WITHDRAWAL", "PAYMENT") && e !is com.example.data.firebase.WorkspaceUpgradeRequiredException) {
                             var recovered = false
                             try { recovered = reconcileRejectedOperation(op) }
@@ -3464,9 +3488,9 @@ class WorkspaceRepository(
                             catch (_: Exception) { }
                             if (recovered) {
                                 clearCompoundDeleteMarkers(op)
-                                operations.waitingRecovery(op.operationId, "Confirmed state restored; " + (e.message ?: "Action rejected"))
+                                operations.waitingRecovery(op.operationId, "Confirmed state restored; " + failure)
                             }
-                            if (!recovered) operations.waitingRecovery(op.operationId, (e.message ?: "Action rejected") + "; Local reconciliation pending — reconnect to restore shared state")
+                            if (!recovered) operations.waitingRecovery(op.operationId, failure + "; Local reconciliation pending — reconnect to restore shared state")
                         }
                         failed = true
                     }

@@ -47,10 +47,10 @@ class DeviceEmulatorIntegrationTest {
  }
  @Test(timeout = 90000) fun bOfflineHour18SurvivesHour26AndDuplicateRetries()=runBlocking {
   login("partner");val repo=FirestoreRepository(context);val db=AppDatabase.getInstance(context);val initial=cloud.document("workspaces/$ws/entries/10").get(Source.SERVER).await().data!!;val origin=(initial["createdAt"] as Number).toLong();
-  val a=PendingOperationEntity("device-A-"+java.util.UUID.randomUUID(),ws,"device-partner","JOB",10,"UPSERT",db.pendingOperationDao().nextSequence(),origin+18*3600000,JSONObject(initial).put("operationProtocolVersion",2).put("totalAmount",200.0).put("pendingAmount",200.0).toString());
+  val a=PendingOperationEntity("device-A-"+java.util.UUID.randomUUID(),ws,"device-partner","JOB",10,"UPSERT",db.pendingOperationDao().nextSequence(),origin+18*3600000,JSONObject(initial).put("operationProtocolVersion",2).put("expectedBaseJson",JSONObject(jobEntryFromFirestoreMap(initial).toFirestoreMap()).toString()).put("totalAmount",200.0).put("pendingAmount",200.0).toString());
   android.util.Log.i("DEVICE_TEST_STAGE","B offline Room enqueue");cloud.disableNetwork().await();db.pendingOperationDao().insert(a);db.jobEntryDao().insertJob(jobEntryFromFirestoreMap(JSONObject(a.payloadJson).let { j->j.keys().asSequence().associateWith { j.get(it) } }));assertEquals(a.actionTime,db.pendingOperationDao().nextBatch(ws,"device-partner").first{it.operationId==a.operationId}.actionTime);cloud.enableNetwork().await();android.util.Log.i("DEVICE_TEST_STAGE","B replay");repo.applyPendingOperation(a);repo.applyPendingOperation(a);db.pendingOperationDao().acknowledge(a.operationId);
   val confirmed=cloud.document("workspaces/$ws/entries/10").get(Source.SERVER).await().data!!;assertEquals(200.0,(confirmed["totalAmount"] as Number).toDouble(),0.0);assertEquals(a.operationId,confirmed["operationId"]);assertEquals(a.actionTime,(confirmed["actionTime"] as Number).toLong());
-  val b=a.copy(operationId="device-B-"+java.util.UUID.randomUUID(),sequence=db.pendingOperationDao().nextSequence(),actionTime=origin+26*3600000,payloadJson=JSONObject(a.payloadJson).put("totalAmount",300.0).put("pendingAmount",300.0).toString());db.pendingOperationDao().insert(b);try{repo.applyPendingOperation(b);fail("Expired edit accepted")}catch(e:com.google.firebase.firestore.FirebaseFirestoreException){assertEquals(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,e.code);db.pendingOperationDao().failed(b.operationId,"REJECTED","Expired edit: original action exceeds 24 hours; local action retained")};android.util.Log.i("DEVICE_TEST_STAGE","B recovery");assertTrue(OfflineEntryRecovery.restore(db,b,confirmed,{true},{}));assertEquals(200.0,db.jobEntryDao().getJobById(ws,10)!!.totalAmount,0.0);assertEquals(200.0,(cloud.document("workspaces/$ws/entries/10").get(Source.SERVER).await().get("totalAmount") as Number).toDouble(),0.0);assertEquals(b.payloadJson,db.pendingOperationDao().observeActor(ws,"device-partner").first().first{it.operationId==b.operationId}.payloadJson);
+  val b=a.copy(operationId="device-B-"+java.util.UUID.randomUUID(),sequence=db.pendingOperationDao().nextSequence(),actionTime=origin+26*3600000,payloadJson=JSONObject(a.payloadJson).put("expectedBaseJson",JSONObject(jobEntryFromFirestoreMap(confirmed).toFirestoreMap()).toString()).put("totalAmount",300.0).put("pendingAmount",300.0).toString());db.pendingOperationDao().insert(b);try{repo.applyPendingOperation(b);fail("Expired edit accepted")}catch(e:com.google.firebase.firestore.FirebaseFirestoreException){assertEquals(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,e.code);db.pendingOperationDao().failed(b.operationId,"REJECTED","Expired edit: original action exceeds 24 hours; local action retained")};android.util.Log.i("DEVICE_TEST_STAGE","B recovery");assertTrue(OfflineEntryRecovery.restore(db,b,confirmed,{true},{}));assertEquals(200.0,db.jobEntryDao().getJobById(ws,10)!!.totalAmount,0.0);assertEquals(200.0,(cloud.document("workspaces/$ws/entries/10").get(Source.SERVER).await().get("totalAmount") as Number).toDouble(),0.0);assertEquals(b.payloadJson,db.pendingOperationDao().observeActor(ws,"device-partner").first().first{it.operationId==b.operationId}.payloadJson);
   android.util.Log.i("DEVICE_TEST_STAGE","B account switch");login("owner");try{repo.applyPendingOperation(a);fail("Wrong actor uploaded")}catch(_:SecurityException){};login("partner");android.util.Log.i("DEVICE_TEST_STAGE","B done");Unit
  }
  @Test(timeout = 90000) fun cLegacyQueueAndCallableUpgradeRequired()=runBlocking {
@@ -162,4 +162,68 @@ class DeviceEmulatorIntegrationTest {
   workspace.syncRemoteJobsToLocal(retained+jobEntryFromFirestoreMap(data),ws)
   assertNull("Delayed Entry snapshot cannot resurrect a confirmed deleted source",db.jobEntryDao().getJobById(ws,id))
   val afterEntrySnapshot=db.customerDao().getCustomerById(ws,id)!!;assertEquals(0.0,afterEntrySnapshot.totalBilled,0.001);assertEquals(0.0,afterEntrySnapshot.balanceDue,0.001)
- }}
+ }
+ @Test(timeout=120000) fun lOfflineNewJobCollectionExpenseAndIndependentPartnerReplica()=runBlocking {
+  login("owner")
+  val db=AppDatabase.getInstance(context)
+  val authRepo=com.example.data.repository.AuthRepository.getInstance(context);authRepo.startListening()
+  val profile=kotlinx.coroutines.withTimeout(15000){authRepo.currentUserProfile.first{it?.uid=="device-owner"}}!!
+  val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db)
+  assertTrue(workspace.initializeForUser(profile).isSuccess)
+  val now=System.currentTimeMillis()
+  cloud.disableNetwork().await()
+  val id:Long
+  val original:List<PendingOperationEntity>
+  try {
+   val draft=com.example.data.entity.JobEntryEntity(workspaceId=ws,customerName="Offline synthetic "+now,
+    operatorName="Device PARTNER",tractorId=3,tractorLabel="Disposable Tractor",workType="Rotavator",
+    startTimeMillis=now-60000,endTimeMillis=now,durationMinutes=1,totalAmount=10358.0,amountReceived=1250.0,
+    pendingAmount=9108.0,addedByPartner="Device OWNER",createdAt=now,entryForUid="device-partner")
+   val expense=com.example.data.entity.ExpenseEntity(expenseType="Diesel",amount=900.0,
+    tractorLabel="Disposable Tractor",addedByPartner="Device OWNER",paidBy="Business Paid")
+   id=workspace.saveJobEntry(draft,linkedExpenses=listOf(expense))
+   original=db.pendingOperationDao().observeActor(ws,"device-owner").first().filter {
+    it.entityType=="JOB" && it.entityId==id || it.entityType=="PAYMENT" && JSONObject(it.payloadJson).optLong("jobEntryId")==id ||
+     it.entityType=="EXPENSE" && JSONObject(it.payloadJson).optLong("relatedJobId")==id }
+   assertEquals(setOf("JOB","PAYMENT","EXPENSE"),original.map{it.entityType}.toSet())
+   assertEquals(1250.0,db.jobEntryDao().getJobById(ws,id)!!.amountReceived,0.0)
+   assertTrue(original.all{it.state=="PENDING" && it.actorUid=="device-owner"})
+  } finally {cloud.enableNetwork().await()}
+  workspace.pushUnsyncedToCloud(ws)
+  val history=db.pendingOperationDao().observe(ws).first().filter{it.actorUid=="device-owner"}
+  for(op in original) {
+   val ack=history.first{it.operationId==op.operationId};assertEquals(ack.failureReason,"ACKNOWLEDGED",ack.state)
+   assertEquals(op.payloadJson,ack.payloadJson);assertEquals(op.actionTime,ack.actionTime)
+  }
+  val confirmed=cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await()
+  assertEquals(1250.0,confirmed.getDouble("amountReceived")!!,0.0);assertEquals(9108.0,confirmed.getDouble("pendingAmount")!!,0.0)
+  val payment=original.single{it.entityType=="PAYMENT"};val expense=original.single{it.entityType=="EXPENSE"}
+  val receipts=cloud.collection("workspaces/$ws/collections").whereEqualTo("jobEntryId",id).get(Source.SERVER).await()
+  assertEquals(1,receipts.size());assertEquals(payment.operationId,receipts.documents.single().getString("operationId"))
+  assertEquals(900.0,cloud.document("workspaces/$ws/expenses/${expense.entityId}").get(Source.SERVER).await().getDouble("amount")!!,0.0)
+  // Lost acknowledgement retries use original commands and must not apply financial deltas twice.
+  val repo=FirestoreRepository(context);repo.applyPendingOperation(payment);repo.applyPendingOperation(expense)
+  assertEquals(1250.0,cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().getDouble("amountReceived")!!,0.0)
+  val app=com.google.firebase.FirebaseApp.initializeApp(context,com.google.firebase.FirebaseApp.getInstance().options,"partner-replica-"+now)!!
+  val otherAuth=FirebaseAuth.getInstance(app).also{it.useEmulator("127.0.0.1",19099)}
+  val otherCloud=FirebaseFirestore.getInstance(app).also{it.useEmulator("127.0.0.1",18180)}
+  try {
+   otherAuth.signInWithEmailAndPassword("partner@device.invalid","EmulatorOnly123!").await()
+   val partnerCopy=otherCloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await()
+   assertEquals(confirmed.data,partnerCopy.data)
+   assertEquals(receipts.documents.single().data,otherCloud.document("workspaces/$ws/collections/${payment.entityId}").get(Source.SERVER).await().data)
+   val secondId=now+1
+   val second=confirmed.data!!.toMutableMap().apply {
+    put("id",secondId);put("createdByUid","device-partner");put("createdByRole","PARTNER");put("actorUid","device-partner");put("createdByName","Device PARTNER");put("addedByPartner","Device PARTNER")
+    put("createdAt",now);put("actionTime",now);put("operationId","independent-partner-"+now)
+    put("authorizationCreatedAt",com.google.firebase.Timestamp(java.util.Date(now)))
+    put("serverReceivedAt",com.google.firebase.firestore.FieldValue.serverTimestamp())
+    put("totalAmount",500.0);put("amountReceived",0.0);put("pendingAmount",500.0);remove("collectionId")
+   }
+   otherCloud.document("workspaces/$ws/entries/$secondId").set(second).await()
+   kotlinx.coroutines.withTimeout(15000){db.jobEntryDao().getJobsForWorkspace(ws).first{jobs->jobs.any{it.id==secondId}}}
+   assertEquals("device-partner",db.jobEntryDao().getJobById(ws,secondId)!!.createdByUid)
+   assertEquals(confirmed.data,otherCloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().data)
+  } finally {otherCloud.terminate().await();app.delete()}
+ }
+}

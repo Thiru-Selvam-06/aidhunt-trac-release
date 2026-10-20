@@ -10,6 +10,7 @@ class TracApplication : Application() {
         if (BuildConfig.DEVICE_TEST || BuildConfig.LIVE_TEST || BuildConfig.PHYSICAL_TEST) {
             val demoApp = FirebaseApp.getInstance()
             com.example.data.firebase.FirebaseEnvironment.initialize(demoApp)
+            com.example.data.sync.WorkspaceSyncScheduler.start(this)
             return
         }
         try {
@@ -26,6 +27,7 @@ class TracApplication : Application() {
             Log.i("TRAC_FIREBASE_VERIFY", "Firebase GCM Sender ID (Project Number): ${opts?.gcmSenderId}")
             Log.i("TRAC_FIREBASE_VERIFY", "Firebase Storage Bucket: ${opts?.storageBucket}")
             Log.i("TRAC_FIREBASE_VERIFY", "========================================")
+            com.example.data.sync.WorkspaceSyncScheduler.start(this)
         } catch (e: Exception) {
             Log.e("TRAC_FIREBASE_VERIFY", "Error initializing/verifying FirebaseApp: ${e.message}", e)
         }

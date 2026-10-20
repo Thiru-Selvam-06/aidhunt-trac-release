@@ -61,9 +61,12 @@ class BusinessOverviewChartMembersTest {
     @Test fun zeroParticipantsDoNotAbsorbUnattributedFinancialRecords() {
         val unknown = PartnerFinancialBreakdown(partnerUid = "", partnerName = "Attribution unavailable", recorded = 90.0, due = 90.0)
         val result = businessOverviewChartMembers(listOf(unknown), listOf(owner, partner, partner), "owner", "test")
-        assertSame(unknown, result.first { it.partnerUid.isEmpty() })
-        assertEquals(3, result.size)
-        assertEquals(90.0, result.sumOf { it.recorded }, 0.0)
+        // Approved chart policy: only known members, with no invented attribution or source mutation.
+        assertEquals(listOf("owner", "partner"), result.map { it.partnerUid })
+        assertTrue(result.none { it.partnerUid.isBlank() })
+        assertEquals(0.0, result.sumOf { it.recorded }, 0.0)
+        assertEquals(90.0, unknown.recorded, 0.0)
+        assertEquals(90.0, unknown.due, 0.0)
         assertEquals(0.0, result.first { it.partnerUid == "partner" }.due, 0.0)
     }
 

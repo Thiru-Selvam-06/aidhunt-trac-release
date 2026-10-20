@@ -4412,6 +4412,7 @@ fun SqliteSyncStatusPage(
                         } else if (isTamil) "ஒத்திசைவுக்காக காத்திருக்கிறது" else "Waiting to sync"
                     })
                     val diagnostic = com.example.ui.util.OperationDiagnostic.guidance(action)
+                    Text(com.example.ui.util.RetainedActionDetails.text(action))
                     Text("Operation: ${action.operationId}")
                     Text("Workspace: ${action.workspaceId} · Attempts: ${action.attempts}")
                     Text("Original action time: ${action.actionTime}")
