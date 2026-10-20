@@ -1375,7 +1375,7 @@ class WorkspaceRepository(
         try {
             // ACK can finish before a previously delivered customer snapshot is applied.
             // Check actual server proof, since deleting one job may leave other customer jobs intact.
-            val sourceCustomerIds = operations.observe(listenerWsId).first().filter {
+            val sourceCustomerIds = operations.observe(listenerWsId).firstOrNull().orEmpty().filter {
                 it.entityType == "JOB" && it.mutationType == "DELETE" && it.state == "ACKNOWLEDGED"
             }.map { org.json.JSONObject(it.payloadJson).optLong("customerId") }.toSet()
             val confirmedDeletedIds = mutableSetOf<Long>()
