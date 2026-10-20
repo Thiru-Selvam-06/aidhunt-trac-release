@@ -139,6 +139,7 @@ fun HomeScreen(
     availableBalance: Double = 0.0,
     recentJobs: List<JobEntryEntity>,
     recordedJobCount: Int = recentJobs.size,
+    recordedCustomerCount: Int = 0,
     isOnline: Boolean = true,
     isSyncing: Boolean = false,
     unsyncedCount: Int = 0,
@@ -310,7 +311,7 @@ fun HomeScreen(
                     MetricCard(
                         title = if (isTamil) "மொத்த பதிவு" else "Total Recorded",
                         amount = effectiveTotalRecorded,
-                        subtitle = if (isTamil) "${recordedJobCount} பதிவு செய்யப்பட்டவை" else "${recordedJobCount} Recorded Jobs (all time)",
+                        subtitle = if (isTamil) "$recordedCustomerCount வாடிக்கையாளர்கள் · $recordedJobCount வேலைப் பதிவுகள்" else "$recordedCustomerCount Customers · $recordedJobCount Job entries (all time)",
                         icon = Icons.Default.CheckCircle,
                         containerColor = SuccessPaidGreenBg,
                         contentColor = SuccessPaidGreen,
@@ -522,7 +523,7 @@ fun HomeScreen(
     }
 
     // Customer Summary Popup Dialog
-    selectedJob?.let { job ->
+    selectedJob?.let { selected -> recentJobs.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { job ->
         CustomerSummaryPopup(
             job = job,
             settings = settings,

@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -101,7 +102,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _phoneVerificationId = MutableStateFlow<String?>(null)
     val phoneVerificationId: StateFlow<String?> = _phoneVerificationId.asStateFlow()
 
-    val cloudConnectionState = workspaceRepository.cloudConnectionState
+    val cloudConnectionState by lazy {
+        combine(workspaceRepository.cloudConnectionState, localSyncStatus) { cloud, local ->
+            if (cloud == com.example.data.firebase.CloudConnectionState.CONNECTED && !local.loaded)
+                com.example.data.firebase.CloudConnectionState.CONNECTING else cloud
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.data.firebase.CloudConnectionState.CONNECTING)
+    }
     fun retryCloudListeners() = workspaceRepository.retryCloudListeners()
 
     // Sync State
@@ -372,50 +378,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Unsynced entity counters scoped by active workspace
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val unsyncedJobsCount: StateFlow<Int> = authorizedWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId
-        if (target.isNullOrBlank()) MutableStateFlow(0)
-        else database.jobEntryDao().getUnsyncedCountForWorkspace(target)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val unsyncedExpensesCount: StateFlow<Int> = authorizedWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId
-        if (target.isNullOrBlank()) MutableStateFlow(0)
-        else database.expenseDao().getUnsyncedCountForWorkspace(target)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val unsyncedWithdrawalsCount: StateFlow<Int> = authorizedWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId
-        if (target.isNullOrBlank()) MutableStateFlow(0)
-        else database.withdrawalDao().getUnsyncedCountForWorkspace(target)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val unsyncedCustomersCount: StateFlow<Int> = authorizedWorkspaceId.flatMapLatest { wsId ->
-        val target = wsId
-        if (target.isNullOrBlank()) MutableStateFlow(0)
-        else database.customerDao().getUnsyncedCountForWorkspace(target)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
-
     @OptIn(ExperimentalCoroutinesApi::class)
     val actorOperations = combine(authorizedWorkspaceId, currentUserProfile) { ws, profile -> ws to profile?.uid }.flatMapLatest { (ws, uid) ->
         if (ws.isNullOrBlank() || uid.isNullOrBlank()) MutableStateFlow(emptyList<com.example.data.entity.PendingOperationEntity>())
         else database.pendingOperationDao().observeActor(ws, uid)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val totalUnsyncedCount: StateFlow<Int> = actorOperations.map { rows -> rows.count { it.state == "PENDING" } }
+    private val localUnsyncedRecords = authorizedWorkspaceId.flatMapLatest { ws ->
+        if (ws.isNullOrBlank()) flowOf(com.example.ui.util.LocalUnsyncedRecords())
+        else combine(database.jobEntryDao().observeUnsyncedIdsForWorkspace(ws),
+            database.expenseDao().observeUnsyncedIdsForWorkspace(ws),
+            database.withdrawalDao().observeUnsyncedIdsForWorkspace(ws),
+            database.customerDao().observeUnsyncedIdsForWorkspace(ws),
+            database.paymentDao().observeUnsyncedIdsForWorkspace(ws)) { jobs, expenses, withdrawals, customers, payments ->
+            fun keys(type: String, ids: List<Long>) = ids.map { com.example.ui.util.SyncRecordKey(type, it) }
+            com.example.ui.util.LocalUnsyncedRecords(ws, (keys("JOB", jobs) + keys("EXPENSE", expenses) +
+                keys("WITHDRAWAL", withdrawals) + keys("CUSTOMER", customers) + keys("PAYMENT", payments)).toSet())
+        }
+    }
+    private val localSyncStatus = combine(authorizedWorkspaceId, currentUserProfile) { ws, profile -> ws to profile?.uid }
+        .flatMapLatest { (ws, uid) ->
+            if (ws.isNullOrBlank() || uid.isNullOrBlank()) flowOf(com.example.ui.util.LocalRecordSyncStatus())
+            else combine(localUnsyncedRecords, database.pendingOperationDao().observeActor(ws, uid)) { local, actions ->
+                com.example.ui.util.LocalRecordSyncStatus.from(ws, local, actions)
+            }.onStart { emit(com.example.ui.util.LocalRecordSyncStatus()) }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, com.example.ui.util.LocalRecordSyncStatus())
+    private fun unsyncedCount(type: String) = localSyncStatus.map { it.count(type) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
-    val rejectedOperationCount = actorOperations.map { rows -> rows.count { it.state == "REJECTED" } }
+    val unsyncedJobsCount = unsyncedCount("JOB")
+    val unsyncedExpensesCount = unsyncedCount("EXPENSE")
+    val unsyncedWithdrawalsCount = unsyncedCount("WITHDRAWAL")
+    val unsyncedCustomersCount = unsyncedCount("CUSTOMER")
+    val unsyncedPaymentsCount = unsyncedCount("PAYMENT")
+    val totalUnsyncedCount: StateFlow<Int> = localSyncStatus.map { it.pendingRecords.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    val rejectedOperationCount = localSyncStatus.map { it.reviewCount }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
     val blockedOperationCount = actorOperations.map { rows -> rows.count {
         it.state == "REJECTED" && it.entityType == "PAYMENT" &&
             it.failureReason.contains("PERMISSION_DENIED", ignoreCase = true)
     } }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
-    val retainedOperationWarning = combine(actorOperations, currentUserRole) { rows, role ->
-        com.example.ui.util.RetainedOperationWarning.from(rows, role)
+    val retainedOperationWarning = combine(actorOperations, currentUserRole, localSyncStatus) { rows, role, status ->
+        listOf(com.example.ui.util.RetainedOperationWarning.from(rows, role),
+            if (status.untrackedRecords.isNotEmpty()) "${status.untrackedRecords.size} local records need sync verification; their data has been retained." else "")
+            .filter { it.isNotBlank() }.joinToString("\n")
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
 
     // 1. Settings & Profile scoped to active workspace
@@ -511,12 +516,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else database.customerDao().getCustomersForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val customersWithDue: StateFlow<List<CustomerEntity>> = combine(activeWorkspaceId, currentUserRole, authState) { wsId, role, state -> Triple(wsId, role, state) }.flatMapLatest { (target, role, state) ->
-        if (target.isNullOrBlank() || state !is AuthState.Authenticated || !(role in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER))) MutableStateFlow(emptyList())
-        else database.customerDao().getCustomersWithDueForWorkspace(target)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
     // 5. Jobs scoped to active workspace
     @OptIn(ExperimentalCoroutinesApi::class)
     val jobs: StateFlow<List<JobEntryEntity>> = combine(activeWorkspaceId, currentUserRole, authState) { wsId, role, state -> Triple(wsId, role, state) }.flatMapLatest { (target, role, state) ->
@@ -539,30 +538,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Aggregates & Financial calculations scoped to active workspace (derived directly from jobs as single source of truth)
-    val totalReceived: StateFlow<Double> = jobs.map { jobList ->
-        jobList.sumOf { it.amountReceived }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+    private val ledgerSummary = jobs.map { rows ->
+        com.example.ui.util.FinancialCalculationEngine.calculateSummary(
+            rows, emptyList(), emptyList(), com.example.ui.util.FinancialScope())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.ui.util.FinancialSummary())
 
-    val totalRecorded: StateFlow<Double> = jobs.map { jobList ->
-        jobList.sumOf { job ->
-            if (job.totalAmount > 0.0) job.totalAmount else (job.amountReceived + job.pendingAmount)
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+    val customersWithDue: StateFlow<List<CustomerEntity>> = combine(customers, jobs) { customerRows, jobRows ->
+        com.example.ui.util.FinancialCalculationEngine.synchronizeCustomers(customerRows, jobRows).filter { it.balanceDue > 0 }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val totalPending: StateFlow<Double> = jobs.map { jobList ->
-        jobList.sumOf { job ->
-            if (job.pendingAmount > 0.0) job.pendingAmount else maxOf(0.0, job.totalAmount - job.amountReceived)
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+    val totalReceived: StateFlow<Double> = ledgerSummary.map { it.totalReceived }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+    val totalRecorded: StateFlow<Double> = ledgerSummary.map { it.totalRecorded }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+    val totalPending: StateFlow<Double> = ledgerSummary.map { it.totalDue }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     val totalCustomerDue: StateFlow<Double> = totalPending
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val totalExpenses: StateFlow<Double> = expenses.map { records -> records.sumOf { it.amount } }
+    val totalExpenses: StateFlow<Double> = expenses.map { records -> com.example.ui.util.FinancialCalculationEngine.roundMoney(records.sumOf { it.amount }) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val totalWithdrawn: StateFlow<Double> = withdrawals.map { records -> records.sumOf { it.amount } }
+    val totalWithdrawn: StateFlow<Double> = withdrawals.map { records -> com.example.ui.util.FinancialCalculationEngine.roundMoney(records.sumOf { it.amount }) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -573,96 +572,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Cash Collections are the receipt source. Entry amountReceived includes non-cash methods.
     val availableAmount: StateFlow<Double> = combine(
-        cashPayments, expenses, withdrawals, activeWorkspaceId
-    ) { payments, expenseRows, withdrawalRows, wsId ->
+        cashPayments, expenses, withdrawals, activeWorkspaceId, jobs
+    ) { payments, expenseRows, withdrawalRows, wsId, jobRows ->
         if (wsId.isNullOrBlank()) 0.0 else com.example.ui.util.FinancialCalculationEngine.cashAvailable(
             payments, expenseRows, withdrawalRows,
-            com.example.ui.util.FinancialScope(mode = com.example.ui.util.FinancialScopeMode.OVERALL, workspaceId = wsId))
+            com.example.ui.util.FinancialScope(mode = com.example.ui.util.FinancialScopeMode.OVERALL, workspaceId = wsId), jobRows)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     // Today-specific operational metrics for Home Dashboard
-    val todayTotalRecorded: StateFlow<Double> = jobs.map { jobList ->
-        val now = System.currentTimeMillis()
-        val cal = java.util.Calendar.getInstance().apply {
-            timeInMillis = now
-            set(java.util.Calendar.HOUR_OF_DAY, 0)
-            set(java.util.Calendar.MINUTE, 0)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }
-        val startOfDay = cal.timeInMillis
-        cal.apply {
-            set(java.util.Calendar.HOUR_OF_DAY, 23)
-            set(java.util.Calendar.MINUTE, 59)
-            set(java.util.Calendar.SECOND, 59)
-            set(java.util.Calendar.MILLISECOND, 999)
-        }
-        val endOfDay = cal.timeInMillis
-
-        jobList.filter { job ->
-            val ts = if (job.startTimeMillis > 0) job.startTimeMillis else job.createdAt
-            ts in startOfDay..endOfDay
-        }.sumOf { job ->
-            if (job.totalAmount > 0.0) job.totalAmount else (job.amountReceived + job.pendingAmount)
-        }
+    val todayTotalRecorded: StateFlow<Double> = jobs.map { rows ->
+        com.example.ui.util.FinancialCalculationEngine.calculateSummary(rows, emptyList(), emptyList(),
+            com.example.ui.util.FinancialScope(mode = com.example.ui.util.FinancialScopeMode.DAILY)).totalRecorded
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     val todayJobs: StateFlow<List<JobEntryEntity>> = jobs.map { jobList ->
         val now = System.currentTimeMillis()
-        jobList.filter { com.example.ui.util.isRecentJobToday(it, now) }
+        jobList.filter { !com.example.ui.util.FinancialCalculationEngine.isSyntheticPayment(it) &&
+            com.example.ui.util.isRecentJobToday(it, now) }
             .sortedWith(com.example.ui.util.RecentJobOrder)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val todayTotalDue: StateFlow<Double> = jobs.map { jobList ->
-        val now = System.currentTimeMillis()
-        val cal = java.util.Calendar.getInstance().apply {
-            timeInMillis = now
-            set(java.util.Calendar.HOUR_OF_DAY, 0)
-            set(java.util.Calendar.MINUTE, 0)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }
-        val startOfDay = cal.timeInMillis
-        cal.apply {
-            set(java.util.Calendar.HOUR_OF_DAY, 23)
-            set(java.util.Calendar.MINUTE, 59)
-            set(java.util.Calendar.SECOND, 59)
-            set(java.util.Calendar.MILLISECOND, 999)
-        }
-        val endOfDay = cal.timeInMillis
-
-        jobList.filter { job ->
-            val ts = if (job.startTimeMillis > 0) job.startTimeMillis else job.createdAt
-            ts in startOfDay..endOfDay
-        }.sumOf { job ->
-            if (job.pendingAmount > 0.0) job.pendingAmount else 0.0
-        }
+    val todayTotalDue: StateFlow<Double> = jobs.map { rows ->
+        com.example.ui.util.FinancialCalculationEngine.calculateSummary(rows, emptyList(), emptyList(),
+            com.example.ui.util.FinancialScope(mode = com.example.ui.util.FinancialScopeMode.DAILY)).totalDue
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
-    val todayTotalReceived: StateFlow<Double> = jobs.map { jobList ->
-        val now = System.currentTimeMillis()
-        val cal = java.util.Calendar.getInstance().apply {
-            timeInMillis = now
-            set(java.util.Calendar.HOUR_OF_DAY, 0)
-            set(java.util.Calendar.MINUTE, 0)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }
-        val startOfDay = cal.timeInMillis
-        cal.apply {
-            set(java.util.Calendar.HOUR_OF_DAY, 23)
-            set(java.util.Calendar.MINUTE, 59)
-            set(java.util.Calendar.SECOND, 59)
-            set(java.util.Calendar.MILLISECOND, 999)
-        }
-        val endOfDay = cal.timeInMillis
-
-        jobList.filter { job ->
-            val ts = if (job.startTimeMillis > 0) job.startTimeMillis else job.createdAt
-            ts in startOfDay..endOfDay
-        }.sumOf { job ->
-            job.amountReceived
-        }
+    val todayTotalReceived: StateFlow<Double> = jobs.map { rows ->
+        com.example.ui.util.FinancialCalculationEngine.calculateSummary(rows, emptyList(), emptyList(),
+            com.example.ui.util.FinancialScope(mode = com.example.ui.util.FinancialScopeMode.DAILY)).totalReceived
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     val todayTotalExpenses: StateFlow<Double> = expenses.map { expList ->
@@ -866,15 +803,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val ownerName = set.ownerName.ifBlank { set.activePartnerName.ifBlank { "Owner" } }
 
         var resolvedUid = currentOwnerUid
-        var resolvedName = ownerName
+        var resolvedName = workspaceMembers.value.firstOrNull { it.uid == currentOwnerUid && it.workspaceId == wsId }
+            ?.displayName.orEmpty().ifBlank { if (isOwner) ownerName else set.activePartnerName.ifBlank { "Partner" } }
         var isPersonLocked = false
 
-        if (isOwner) {
+        if (isOwner || currentUserRole.value == com.example.data.auth.RoleUtils.ROLE_PARTNER) {
             val lockedUid = getOwnerLockedPersonUid(currentOwnerUid, wsId)
             if (lockedUid.isNotBlank()) {
                 if (lockedUid == currentOwnerUid) {
                     resolvedUid = currentOwnerUid
-                    resolvedName = ownerName
+                    resolvedName = workspaceMembers.value.firstOrNull { it.uid == currentOwnerUid && it.workspaceId == wsId }
+                        ?.displayName.orEmpty().ifBlank { resolvedName }
                     isPersonLocked = true
                 } else {
                     val partner = workspaceMembers.value.firstOrNull { it.status.equals("active", ignoreCase = true) && it.uid == lockedUid }

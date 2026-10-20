@@ -240,7 +240,11 @@ export async function deleteWorkspaceEntry(db, uid, data) {
         if (other.get('workspaceId') !== ws) throw Error('Customer Entry workspace mismatch');
         return other.data;
       })); } catch (error) { fail('FAILED_PRECONDITION', error.message); }
-    tx.update(path(ws, 'customers', customerId), totals);
+    const customerPlan = deletionPolicy.customerAfterEntryDeletion(customerId,
+      customerEntries.filter(other => other.id !== id).map(other => other.data),
+      collections.filter(item => !collectionDeleteIds.has(item.id)).map(item => item.data), id);
+    if (customerPlan.deleteCustomer && owner) tx.delete(path(ws, 'customers', customerId));
+    else tx.update(path(ws, 'customers', customerId), totals);
     for (const collection of collections.filter(item => collectionDeleteIds.has(item.id)))
       tx.delete(path(ws, 'collections', collection.id));
     for (const expense of linkedExpenses) tx.delete(path(ws, 'expenses', expense.id));
@@ -252,6 +256,8 @@ export async function deleteWorkspaceEntry(db, uid, data) {
         id: item.id, amount: item.get('amount') ?? null, customerId: item.get('customerId') ?? null,
         jobEntryId: item.get('jobEntryId') ?? null, collectedByUid: item.get('collectedByUid') ?? null,
         createdAt: item.get('createdAt') ?? null, allocationsJson: item.get('allocationsJson') ?? null })),
+      sourceFinancialAudit: { totalAmount: entry.totalAmount, amountReceived: entry.amountReceived,
+        pendingAmount: entry.pendingAmount, customerId: entry.customerId },
       createdAt: entry.createdAt ?? null, deletedAt: SERVER_TIMESTAMP });
     return acknowledgement;
   });

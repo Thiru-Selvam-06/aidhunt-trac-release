@@ -3,6 +3,7 @@ package com.example.data.sync
 import com.example.data.auth.AuthorizationManager
 import com.example.data.auth.RoleUtils
 import com.example.data.entity.PendingOperationEntity
+import com.example.data.entity.JobEntryEntity
 import com.example.data.firebase.WorkspaceMember
 import org.json.JSONObject
 
@@ -10,7 +11,7 @@ import org.json.JSONObject
 class ExpiredOperationException(message: String) : SecurityException(message)
 
 object OperationPolicy {
-    fun requireAuthorized(op: PendingOperationEntity, role: String, members: List<WorkspaceMember>) {
+    fun requireAuthorized(op: PendingOperationEntity, role: String, members: List<WorkspaceMember>, linkedJob: JobEntryEntity? = null) {
         val data = JSONObject(op.payloadJson)
         if (data.optInt("operationProtocolVersion") != 2 || op.operationId.isBlank() || op.actionTime <= 0 || op.actorUid.isBlank()) throw com.example.data.firebase.WorkspaceUpgradeRequiredException()
         val member = members.firstOrNull { it.uid == op.actorUid && it.workspaceId == op.workspaceId && it.status.equals("active", true) }
@@ -35,9 +36,13 @@ object OperationPolicy {
         if (op.entityType in setOf("JOB", "EXPENSE", "WITHDRAWAL", "TRACTOR", "EXTENSION") &&
             members.none { it.uid == creator && it.workspaceId == op.workspaceId && it.status.equals("active", true) })
             throw SecurityException("Record creator membership removed")
+        val matchingOwnJob = op.entityType == "EXPENSE" && linkedJob != null &&
+            data.optLong("relatedJobId") > 0 && linkedJob.id == data.optLong("relatedJobId") &&
+            linkedJob.workspaceId == op.workspaceId && linkedJob.createdByUid == op.actorUid &&
+            linkedJob.entryForUid == target && !linkedJob.isHistorical
         val permitted = when (op.entityType) {
-            "JOB" -> owner || (!data.optBoolean("isHistorical") && (partner || operator) && creator == op.actorUid && target == op.actorUid && timely)
-            "EXPENSE" -> owner || (partner && creator == op.actorUid && target == op.actorUid && timely)
+            "JOB" -> owner || (!data.optBoolean("isHistorical") && (partner || operator) && creator == op.actorUid && (partner || target == op.actorUid) && timely)
+            "EXPENSE" -> owner || (partner && creator == op.actorUid && (target == op.actorUid || matchingOwnJob) && timely)
             "WITHDRAWAL" -> owner || (partner && creator == op.actorUid && target == op.actorUid && timely)
             "TRACTOR", "EXTENSION" -> owner || (partner && creator == op.actorUid)
             "CUSTOMER" -> owner || (partner && op.mutationType != "DELETE")
@@ -46,7 +51,7 @@ object OperationPolicy {
             else -> false
         }
         if (!permitted) {
-            val ownTimed = !owner && ((op.entityType in setOf("JOB", "EXPENSE", "WITHDRAWAL") && creator == op.actorUid && target == op.actorUid && (partner || (operator && op.entityType == "JOB")) && !data.optBoolean("isHistorical")) ||
+            val ownTimed = !owner && ((op.entityType in setOf("JOB", "EXPENSE", "WITHDRAWAL") && creator == op.actorUid && (target == op.actorUid || (partner && op.entityType in setOf("JOB", "EXPENSE"))) && (partner || (operator && op.entityType == "JOB")) && !data.optBoolean("isHistorical")) ||
                 (op.entityType == "PAYMENT" && partner && data.optString("collectedByUid") == op.actorUid && data.optString("status") == "REVERSED"))
             if (ownTimed && !timely) throw ExpiredOperationException("${op.entityType} #${op.entityId}, operation ${op.operationId}: action outside original 24-hour window; rejected change retained for review")
             throw SecurityException("Action is no longer authorized")

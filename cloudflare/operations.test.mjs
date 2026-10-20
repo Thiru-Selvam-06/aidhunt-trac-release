@@ -225,7 +225,37 @@ test('Owner deletion removes an active payment and source in one transaction wit
   assert.deepEqual(receipt.deletedCollectionIds, ['payment']);
   assert.equal(receipt.deletedCollectionAudit[0].amount, 100);
   assert.deepEqual(await deleteWorkspaceEntry(db, owner, command), first);
+  assert.equal(db.records.has(customerPath), false);
+});
+test('last-entry deletion preserves a Customer referenced by reversed collection audit', async () => {
+  const now = Date.now(), entryId = '991', customerId = '992';
+  const customerPath = `workspaces/${ws}/customers/${customerId}`;
+  const entryPath = `workspaces/${ws}/entries/${entryId}`;
+  const collectionPath = `workspaces/${ws}/collections/993`;
+  const db = new MemoryStore({ ...base(), [customerPath]: { workspaceId: ws, totalBilled: 100, balanceDue: 100 },
+    [entryPath]: { workspaceId: ws, customerId, createdAt: now - 1000, createdByUid: owner,
+      entryForUid: owner, isHistorical: false, totalAmount: 100, amountReceived: 0, pendingAmount: 100 },
+    [collectionPath]: { workspaceId: ws, customerId, jobEntryId: entryId, status: 'REVERSED', amount: 40 } });
+  await deleteWorkspaceEntry(db, owner, protocol('DELETE_ENTRY', { entryId, actionTime: now }));
+  assert.equal(db.records.has(entryPath), false);
   assert.equal(db.records.get(customerPath).balanceDue, 0);
+  assert.equal(db.records.get(customerPath).totalBilled, 0);
+  assert.equal(db.records.get(collectionPath).status, 'REVERSED');
+});
+test('deleting one of two Entries recalculates the shared Customer and isolates another workspace', async () => {
+  const now = Date.now(), entryId = '994', customerId = '995';
+  const customerPath = `workspaces/${ws}/customers/${customerId}`;
+  const entry = { workspaceId: ws, customerId, createdAt: now - 1000, createdByUid: owner,
+    entryForUid: owner, isHistorical: false, totalAmount: 100, amountReceived: 0, pendingAmount: 100 };
+  const foreignPath = `workspaces/foreign/customers/${customerId}`;
+  const db = new MemoryStore({ ...base(), [customerPath]: { workspaceId: ws, totalBilled: 200, balanceDue: 200 },
+    [`workspaces/${ws}/entries/${entryId}`]: entry, [`workspaces/${ws}/entries/996`]: { ...entry, createdByUid: 'partner' },
+    [foreignPath]: { workspaceId: 'foreign', totalBilled: 123, balanceDue: 123 } });
+  await deleteWorkspaceEntry(db, owner, protocol('DELETE_ENTRY', { entryId, actionTime: now }));
+  assert.equal(db.records.get(customerPath).totalBilled, 100);
+  assert.equal(db.records.get(customerPath).balanceDue, 100);
+  assert.equal(db.records.get(foreignPath).balanceDue, 123);
+  assert.equal(db.records.has(`workspaces/${ws}/entries/996`), true);
 });
 test('Deleting a shared or foreign Collection never partially deletes an Entry', async () => {
   const now = Date.now(), entryId = '91', customerId = '90';

@@ -57,11 +57,10 @@ sealed interface SettingsSyncState {
 }
 
 /**
- * Normalizes the existing Entry-For storage for non-Owners. JobEntryEntity
- * currently stores Entry-For as operatorName; UID identity remains createdByUid.
- * The repository calls this only after validating the active workspace member.
+ * Preserves a Partner's selected beneficiary and always records the real creator.
+ * Operators remain self-only. Call only after validating target membership.
  */
-internal fun enforceSelfOnlyEntryIdentity(
+internal fun enforceEntryIdentity(
     job: JobEntryEntity,
     actorUid: String,
     actorRole: String,
@@ -76,10 +75,11 @@ internal fun enforceSelfOnlyEntryIdentity(
     return job.copy(
         createdByUid = actorUid,
         createdByRole = normalizedRole,
-        operatorName = actorDisplayName.trim(),
+        operatorName = if (normalizedRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR)
+            actorDisplayName.trim() else job.operatorName.ifBlank { actorDisplayName.trim() },
         addedByPartner = actorDisplayName.trim(),
-        entryForUid = actorUid,
-        financialAttributionUid = actorUid
+        entryForUid = if (normalizedRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) actorUid else job.entryForUid.ifBlank { actorUid },
+        financialAttributionUid = if (normalizedRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) actorUid else job.entryForUid.ifBlank { actorUid }
     )
 }
 
@@ -1229,8 +1229,13 @@ class WorkspaceRepository(
                 val ids = org.json.JSONObject(op.payloadJson).optJSONArray("linkedCollectionIds")
                 if (ids == null) emptyList() else (0 until ids.length()).map { ids.getString(it).toLong() }
             }.toSet()
-            val unsyncedIds = paymentDao.getPaymentsForWorkspace(listenerWsId).firstOrNull().orEmpty().filter { !it.isSynced }.map { it.id }.toSet()
-            paymentDao.insertPayments(remotePayments.filter { it.id !in pendingIds && it.id !in unsyncedIds && it.id !in confirmedDeletedIds }.map { it.copy(workspaceId = listenerWsId, isSynced = true) })
+            // Repair old clients' provisional reversal rows once the compound
+            // deletion is confirmed. They must not remain permanently unsynced.
+            confirmedDeletedIds.filterNot { it in pendingIds }.forEach { paymentDao.deletePayment(listenerWsId, it) }
+            val unsynced = paymentDao.getUnsyncedPaymentsForWorkspace(listenerWsId).associateBy { it.id }
+            paymentDao.insertPayments(remotePayments.filter { payment -> payment.id !in pendingIds && payment.id !in confirmedDeletedIds &&
+                unsynced[payment.id]?.let { com.example.data.sync.ConfirmedReplica.payment(it, payment, false) } != false
+            }.map { it.copy(workspaceId = listenerWsId, isSynced = true) })
             // A successful full listener snapshot is authoritative for confirmed Collections.
             // Preserve pending/rejected and unsynced local actions; remove only synced cloud rows
             // absent from this workspace's snapshot (including legacy phantom ACTIVE rows).
@@ -1292,11 +1297,14 @@ class WorkspaceRepository(
                     deletes.filter { it.state == "PENDING" }.map { it.entityId }
                 val confirmed = deletes.filter { it.state == "ACKNOWLEDGED" }
                 val deletedCustomers = confirmed.mapNotNull { org.json.JSONObject(it.payloadJson).optLong("customerId").takeIf { id -> id > 0 } }.toSet()
-                val unsyncedIds = jobEntryDao.getUnsyncedJobsForWorkspace(listenerWsId).map { it.id }.toSet()
+                val unsyncedRows = jobEntryDao.getUnsyncedJobsForWorkspace(listenerWsId).associateBy { it.id }
+                val outstandingIds = history.filter { it.entityType == "JOB" && it.state in setOf("PENDING", "REJECTED") }.map { it.entityId }.toSet()
                 val retained = remoteJobs.filterNot { job -> job.id in pendingIds || confirmed.any { deletion ->
                     deletion.entityId == job.id && org.json.JSONObject(deletion.payloadJson).optLong("createdAt") == job.createdAt
                 } }
-                for (job in retained) if (job.id !in unsyncedIds)
+                for (job in retained) if (unsyncedRows[job.id]?.let {
+                        com.example.data.sync.ConfirmedReplica.job(it, job, job.id in outstandingIds)
+                    } != false)
                     jobEntryDao.insertJob(job.copy(workspaceId = listenerWsId, isSynced = true))
                 val ids = retained.map { it.id }
                 if (ids.isEmpty()) jobEntryDao.deleteAllSyncedForWorkspace(listenerWsId)
@@ -1328,11 +1336,14 @@ class WorkspaceRepository(
                     if (ids == null) emptyList() else (0 until ids.length()).map { ids.getLong(it) }
                 }.toSet()
             val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("EXPENSE", listenerWsId) + compoundPendingIds
-            val unsyncedLocalExpIds = expenseDao.getUnsyncedExpensesForWorkspace(listenerWsId).map { it.id }.toSet()
+            val unsyncedLocalExpenses = expenseDao.getUnsyncedExpensesForWorkspace(listenerWsId).associateBy { it.id }
+            val outstandingIds = operations.outstandingOperations(listenerWsId).filter { it.entityType == "EXPENSE" }.map { it.entityId }.toSet()
             val validRemoteExpenses = remoteExpenses.filterNot { pendingDeleteIds.contains(it.id) }
 
             for (expense in validRemoteExpenses) {
-                if (unsyncedLocalExpIds.contains(expense.id)) {
+                if (unsyncedLocalExpenses[expense.id]?.let {
+                        com.example.data.sync.ConfirmedReplica.expense(it, expense, expense.id in outstandingIds)
+                    } == false) {
                     // Do not overwrite pending local edits
                     continue
                 }
@@ -1443,11 +1454,14 @@ class WorkspaceRepository(
         }
         try {
             val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("WITHDRAWAL", listenerWsId)
-            val unsyncedLocalWthIds = withdrawalDao.getUnsyncedWithdrawalsForWorkspace(listenerWsId).map { it.id }.toSet()
+            val unsyncedLocalWithdrawals = withdrawalDao.getUnsyncedWithdrawalsForWorkspace(listenerWsId).associateBy { it.id }
+            val outstandingIds = operations.outstandingOperations(listenerWsId).filter { it.entityType == "WITHDRAWAL" }.map { it.entityId }.toSet()
             val validRemoteWithdrawals = remoteWithdrawals.filterNot { pendingDeleteIds.contains(it.id) }
 
             for (withdrawal in validRemoteWithdrawals) {
-                if (unsyncedLocalWthIds.contains(withdrawal.id)) {
+                if (unsyncedLocalWithdrawals[withdrawal.id]?.let {
+                        com.example.data.sync.ConfirmedReplica.withdrawal(it, withdrawal, withdrawal.id in outstandingIds)
+                    } == false) {
                     // Do not overwrite pending local edits
                     continue
                 }
@@ -1648,15 +1662,7 @@ class WorkspaceRepository(
                     pendingDeleteManager.removePendingDelete("EXPENSE", expenseId, op.workspaceId)
                     operations.supersedeExpenseDeleteAfterEntryDelete(op.workspaceId, expenseId)
                 }
-                val deletedCollectionIds = deletedSource.optJSONArray("linkedCollectionIds")
-                if (deletedCollectionIds != null) for (index in 0 until deletedCollectionIds.length()) {
-                    val collId = deletedCollectionIds.getString(index).toLong()
-                    paymentDao.getPaymentById(op.workspaceId, collId)?.let { coll ->
-                        if (coll.status != "REVERSED") {
-                            paymentDao.insertPayment(coll.copy(status = "REVERSED", reversedByUid = op.actorUid, reversedAt = op.actionTime, isSynced = false))
-                        }
-                    }
-                }
+                com.example.data.sync.ConfirmedEntryDeletion.apply(database, op, allowCustomerCleanup = isOwnerOfWorkspace(op.workspaceId))
                 val relatedPending = remainingOperations.any { remaining ->
                     com.example.data.sync.OperationDependencies.blocksCustomerAcknowledgement(remaining, customerId)
                 }
@@ -1712,7 +1718,7 @@ class WorkspaceRepository(
         if (job.workspaceId.isNotBlank() && job.workspaceId != wsId) throw SecurityException("Entry workspace mismatch")
         val authenticatedUid = getEffectiveActorUid().orEmpty()
         val entryTarget = existingJob?.entryForUid ?: job.entryForUid.ifBlank { authenticatedUid }
-        if (!com.example.data.auth.AuthorizationManager.canCreateEntryFor(isOwnerOfWorkspace(wsId), authenticatedUid, entryTarget)) {
+        if (!com.example.data.auth.AuthorizationManager.canCreateEntryFor(isOwnerOfWorkspace(wsId), authenticatedUid, entryTarget, verifiedActorRole)) {
             throw SecurityException("Entry target must be the authenticated member")
         }
         if (existingJob == null && entryTarget != authenticatedUid && _activeWorkspaceMembers.value.none {
@@ -1810,7 +1816,10 @@ class WorkspaceRepository(
             verifiedActorRole
         }
         val finalCreatedByRole = if (!isOwner && com.example.data.auth.RoleUtils.isOwner(candidateRole)) "Partner" else candidateRole
-        val finalOperator = if (!isOwner) {
+        val finalOperator = if (existingJob == null) {
+            _activeWorkspaceMembers.value.firstOrNull { it.uid == entryTarget && it.workspaceId == wsId }
+                ?.displayName.orEmpty().ifBlank { job.operatorName.ifBlank { currentActorName } }
+        } else if (verifiedActorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) {
             currentActorName
         } else if (job.operatorName.isNotBlank()) {
             job.operatorName
@@ -1839,7 +1848,7 @@ class WorkspaceRepository(
         val finalUpdatedAt = if (existingJob != null) System.currentTimeMillis() else 0L
 
         val identitySafeJob = if (!isOwner && existingJob == null) {
-            enforceSelfOnlyEntryIdentity(
+            enforceEntryIdentity(
                 job = job,
                 actorUid = actorUid,
                 actorRole = activeActorMember?.role ?: "",
@@ -1927,7 +1936,7 @@ class WorkspaceRepository(
             // Personal funding refers to the authorized selected Entry member, not its creator.
             // Existing Expenses retain their recorded payer when edited.
             val effectivePaidByUid = com.example.ui.viewmodel.linkedExpensePayerUid(
-                exp.paidBy, originalExpense?.paidByUid.orEmpty(), if (isOwner) entryTarget else actorUid)
+                exp.paidBy, originalExpense?.paidByUid.orEmpty(), entryTarget)
             val effectivePartner = if (exp.paidBy == "I Paid") {
                 originalExpense?.paidByPartner?.takeIf { it.isNotBlank() }
                     ?: _activeWorkspaceMembers.value.firstOrNull { it.uid == effectivePaidByUid }?.displayName
@@ -1943,8 +1952,8 @@ class WorkspaceRepository(
                 paidByUid = effectivePaidByUid,
                 createdByUid = existingLinkedExpenses.firstOrNull { it.id == safeExpId }?.createdByUid ?: actorUid,
                 createdByRole = existingLinkedExpenses.firstOrNull { it.id == safeExpId }?.createdByRole ?: verifiedActorRole,
-                expenseForUid = if (isOwner) exp.expenseForUid.ifBlank { entryTarget } else actorUid,
-                financialAttributionUid = if (isOwner) exp.expenseForUid.ifBlank { entryTarget } else actorUid,
+                expenseForUid = originalExpense?.expenseForUid ?: entryTarget,
+                financialAttributionUid = originalExpense?.financialAttributionUid ?: entryTarget,
                 createdAt = originalExpense?.createdAt ?: operationTime,
                 relatedJobId = safeJobId,
                 isSynced = false
@@ -1955,6 +1964,9 @@ class WorkspaceRepository(
         }
 
         recalculateCustomerStats(customerId)
+        if (existingJob != null && existingJob.customerId != customerId) {
+            recalculateCustomerStats(existingJob.customerId, wsId, clearDeletedSourceBalance = true)
+        }
 
         // Push to Cloud Workspace asynchronously so local write returns immediately
         Log.d("TRAC_WORKSPACE", "workspaceId=$wsId isCloudReady=$isReady")
@@ -2005,6 +2017,19 @@ class WorkspaceRepository(
         val wsId = _activeWorkspaceId.value.orEmpty()
         val actorUid = getEffectiveActorUid().orEmpty()
         require(wsId.isNotBlank() && job.workspaceId == wsId) { "Entry workspace mismatch" }
+        // Older Room rows may lack identities already present on the same cloud record.
+        // Refresh only matching business content with no retained local action.
+        val before = jobEntryDao.getJobById(wsId, job.id)
+        if (before != null && (before.createdByUid.isBlank() || before.entryForUid.isBlank())) {
+            val remote = firestoreRepository.getEntryFromServer(wsId, job.id)
+            if (remote != null) database.withTransaction {
+                require(getEffectiveActorUid() == actorUid && _activeWorkspaceId.value == wsId) { "Workspace or account changed" }
+                val current = jobEntryDao.getJobById(wsId, job.id)
+                val outstanding = operations.outstandingOperations(wsId).any { it.entityType == "JOB" && it.entityId == job.id }
+                if (current != null && com.example.data.sync.ConfirmedReplica.job(current, remote, outstanding))
+                    jobEntryDao.insertJob(remote.copy(isSynced = true))
+            }
+        }
         database.withTransaction {
             val role = requireWorkspaceActor(wsId)
             val stored = jobEntryDao.getJobById(wsId, job.id)
@@ -2024,7 +2049,7 @@ class WorkspaceRepository(
             val collectionDeletes = com.example.data.sync.EntryDeletionPolicy.plannedCollectionDeletes(
                 stored, linked, owner, actorUid, role, operationTime)
             val expenses = expenseDao.getExpensesForJob(wsId, stored.id)
-            com.example.data.sync.EntryDeletionPolicy.requireNoLinkedExpenses(stored, expenses, owner, actorUid, role)
+            com.example.data.sync.EntryDeletionPolicy.requireNoLinkedExpenses(stored, expenses, owner, actorUid, role, operationTime)
             val dependencies = operations.outstandingOperations(wsId).filter {
                 (it.entityType == "PAYMENT" && com.example.data.sync.OperationDependencies.references(it).contains("JOB" to stored.id)) ||
                     (it.entityType == "EXPENSE" && org.json.JSONObject(it.payloadJson).optLong("relatedJobId") == stored.id)
@@ -2190,6 +2215,7 @@ class WorkspaceRepository(
             paidByUid = if (!isUpdateBusinessPaid) expense.paidByUid else "",
             expenseForUid = expenseToCheck.expenseForUid,
             financialAttributionUid = expenseToCheck.financialAttributionUid,
+            relatedJobId = expenseToCheck.relatedJobId,
             createdAt = original?.createdAt ?: expense.createdAt,
             createdByUid = if (original != null && original.createdByUid.isNotBlank()) original.createdByUid else (expense.createdByUid.ifBlank { actorUid }),
             createdByRole = if (original != null && original.createdByRole.isNotBlank()) original.createdByRole else (expense.createdByRole.ifBlank { actorRole }),
@@ -2260,7 +2286,8 @@ class WorkspaceRepository(
             paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty(),
             expenseDao.getExpensesForWorkspaceOnce(wsId),
             withdrawalDao.getWithdrawalsForWorkspaceOnce(wsId),
-            com.example.ui.util.FinancialScope(workspaceId = wsId)
+            com.example.ui.util.FinancialScope(workspaceId = wsId),
+            jobEntryDao.getJobsForWorkspaceOnce(wsId)
         )
     }
 
@@ -3375,7 +3402,7 @@ class WorkspaceRepository(
                     if (getEffectiveActorUid() != uid || _activeWorkspaceId.value != wsId) return@withLock SyncResult(false, count, "Session or workspace changed; remaining actions retained")
                     try {
                         val freshRole = firestoreRepository.resolveAuthoritativeRole(uid, wsId) ?: throw SecurityException("Workspace access removed")
-                        com.example.data.sync.OperationPolicy.requireAuthorized(op, freshRole, firestoreRepository.getWorkspaceMembers(wsId))
+                        val freshMembers = firestoreRepository.getWorkspaceMembers(wsId)
                     val refs = com.example.data.sync.OperationDependencies.references(op)
                     var waiting = false
                     var rejectedPredecessor = false
@@ -3395,6 +3422,11 @@ class WorkspaceRepository(
                         failed = true
                         continue
                     }
+                        val linkedJobId = if (op.entityType == "EXPENSE") org.json.JSONObject(op.payloadJson).optLong("relatedJobId") else 0L
+                        val localLinkedJob = if (linkedJobId > 0) jobEntryDao.getJobById(wsId, linkedJobId) else null
+                        val linkedJob = if (op.entityType == "EXPENSE") com.example.data.sync.resolveExpenseAuthorizationJob(
+                            op, localLinkedJob, firestoreRepository::getOperationRecordFromServer) else null
+                        com.example.data.sync.OperationPolicy.requireAuthorized(op, freshRole, freshMembers, linkedJob)
                         var attempt = 0
                         while (true) {
                             try {
@@ -3441,7 +3473,16 @@ class WorkspaceRepository(
                 }
                 kotlinx.coroutines.yield()
             }
-            SyncResult(!failed, count, if (failed) authenticationMessage ?: backendMessage ?: blockingMessage ?: "An action could not sync; check pending actions" else "Synced $count actions")
+            val retainedLocalCount = jobEntryDao.getUnsyncedJobsForWorkspace(wsId).size +
+                expenseDao.getUnsyncedExpensesForWorkspace(wsId).size +
+                withdrawalDao.getUnsyncedWithdrawalsForWorkspace(wsId).size +
+                customerDao.getUnsyncedCustomersForWorkspace(wsId).size +
+                paymentDao.getUnsyncedPaymentsForWorkspace(wsId).size
+            val needsReview = operations.outstandingOperations(wsId).any { it.actorUid == uid && it.state == "REJECTED" }
+            SyncResult(!failed && retainedLocalCount == 0 && !needsReview, count,
+                if (failed) authenticationMessage ?: backendMessage ?: blockingMessage ?: "An action could not sync; check pending actions"
+                else if (retainedLocalCount > 0 || needsReview) "Uploaded $count actions; remaining local records need sync verification. Original data retained."
+                else "Synced $count actions")
         } }
     }
 

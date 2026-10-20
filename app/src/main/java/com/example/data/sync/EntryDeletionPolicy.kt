@@ -14,9 +14,10 @@ object EntryDeletionPolicy {
         return (0 until allocations.length()).any { allocations.getJSONObject(it).getLong("jobId") == entryId }
     }
 
-    fun requireNoLinkedExpenses(entry: JobEntryEntity, expenses: List<ExpenseEntity>, owner: Boolean, uid: String, role: String) {
+    fun requireNoLinkedExpenses(entry: JobEntryEntity, expenses: List<ExpenseEntity>, owner: Boolean, uid: String, role: String,
+        actionTime: Long = System.currentTimeMillis()) {
         require(expenses.all { it.workspaceId == entry.workspaceId && it.relatedJobId == entry.id &&
-            AuthorizationManager.canDeleteExpense(it, owner, currentUid = uid, role = role) }) {
+            AuthorizationManager.canDeleteExpense(it, owner, currentUid = uid, role = role, currentTimeMillis = actionTime) }) {
             "A linked Expense must first be deleted by its authorized member"
         }
         // Eligible linked Expenses are deleted by the trusted Entry transaction.
@@ -56,8 +57,11 @@ object EntryDeletionPolicy {
             }
         }
         val paid = active.sumOf { it.amount }
+        // The backend independently requires pre-collection provenance for this case.
+        val ownerEmbeddedReceipt = owner && linked.isEmpty() && entry.amountReceived >= 0 &&
+            entry.amountReceived <= entry.totalAmount
         require(entry.totalAmount.isFinite() && entry.amountReceived.isFinite() && entry.pendingAmount.isFinite() &&
-            entry.totalAmount >= 0 && kotlin.math.abs(entry.amountReceived - paid) < 0.01 &&
+            entry.totalAmount >= 0 && (ownerEmbeddedReceipt || kotlin.math.abs(entry.amountReceived - paid) < 0.01) &&
             kotlin.math.abs(entry.totalAmount - entry.amountReceived - entry.pendingAmount) < 0.01) {
             "Entry and Collection balances need reconciliation before deletion"
         }

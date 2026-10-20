@@ -5,6 +5,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CloudListenerHealthTest {
+    @Test fun onlyConfirmedServerSnapshotsCanReconcileTheLedger() {
+        assertFalse(authoritativeLedgerSnapshot(fromCache = true, pendingWrites = false))
+        assertFalse(authoritativeLedgerSnapshot(fromCache = false, pendingWrites = true))
+        assertFalse(authoritativeLedgerSnapshot(fromCache = true, pendingWrites = true))
+        assertTrue(authoritativeLedgerSnapshot(fromCache = false, pendingWrites = false))
+    }
     @Test fun emptyQueueCannotMaskListenerFailure() {
         val health = CloudListenerHealth()
         health.begin("a", setOf("extensions", "payments"))

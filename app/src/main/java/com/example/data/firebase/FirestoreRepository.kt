@@ -388,7 +388,7 @@ class FirestoreRepository(
                         return@addSnapshotListener
                     }
                     if (snapshot != null) listenerHealth.snapshot(workspaceId, "entries", snapshot.metadata.isFromCache)
-                    if (snapshot != null) {
+                    if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                         Log.d("TRAC_FIRESTORE", "SNAPSHOT workspace=$workspaceId collection=entries count=${snapshot.documents.size}")
                         val jobs = snapshot.documents.mapNotNull { doc ->
                             doc.data?.takeUnless { it["isDeleted"] == true }?.let { jobEntryFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
@@ -409,7 +409,7 @@ class FirestoreRepository(
                             return@addSnapshotListener
                         }
                         if (snapshot != null) listenerHealth.snapshot(workspaceId, "expenses", snapshot.metadata.isFromCache)
-                        if (snapshot != null) {
+                        if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                             Log.d("TRAC_FIRESTORE", "SNAPSHOT workspace=$workspaceId collection=expenses count=${snapshot.documents.size}")
                             val expenses = snapshot.documents.mapNotNull { doc ->
                                 doc.data?.takeUnless { it["isDeleted"] == true }?.let { expenseFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
@@ -431,7 +431,7 @@ class FirestoreRepository(
                         return@addSnapshotListener
                     }
                     if (snapshot != null) listenerHealth.snapshot(workspaceId, "customers", snapshot.metadata.isFromCache)
-                    if (snapshot != null) {
+                    if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                         Log.d("TRAC_FIRESTORE", "SNAPSHOT workspace=$workspaceId collection=customers count=${snapshot.documents.size}")
                         val customers = snapshot.documents.mapNotNull { doc ->
                             doc.data?.takeUnless { it["isDeleted"] == true }?.let { customerFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
@@ -493,7 +493,7 @@ class FirestoreRepository(
                             return@addSnapshotListener
                         }
                         if (snapshot != null) listenerHealth.snapshot(workspaceId, "withdrawals", snapshot.metadata.isFromCache)
-                        if (snapshot != null) {
+                        if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                             Log.d("TRAC_FIRESTORE", "SNAPSHOT workspace=$workspaceId collection=withdrawals count=${snapshot.documents.size}")
                             val withdrawals = snapshot.documents.mapNotNull { doc ->
                                 doc.data?.takeUnless { it["isDeleted"] == true }?.let { withdrawalFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
@@ -534,7 +534,7 @@ class FirestoreRepository(
                         if (snapshot != null) listenerHealth.snapshot(workspaceId, "payments", snapshot.metadata.isFromCache)
                         // Room pruning requires an authoritative server snapshot. A cached
                         // Firestore view can be incomplete during offline startup or reconnect.
-                        if (snapshot != null && !snapshot.metadata.isFromCache) {
+                        if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                             Log.d("TRAC_FIRESTORE", "SNAPSHOT workspace=$workspaceId collection=payments count=${snapshot.documents.size}")
                             val payments = snapshot.documents.mapNotNull { doc ->
                                 // Collection commands address the document by exact int64 ID. A
@@ -872,11 +872,11 @@ class FirestoreRepository(
         val ref = firestore.collection("workspaces").document(op.workspaceId).collection(collection).document(op.entityId.toString())
         if (op.mutationType == "DELETE") {
             if (op.entityType == "JOB") {
-                WorkspaceCommandService.deleteEntry(op.workspaceId, op.entityId.toString(), op.operationId, op.actorUid, op.actionTime, dependencies)
+                FirebaseLedgerDeletion.delete(op)
                 return
             }
             if (op.entityType == "CUSTOMER") {
-                WorkspaceCommandService.deleteCustomer(op.workspaceId, op.entityId.toString(), op.actorUid, op.operationId, op.actionTime, dependencies)
+                FirebaseLedgerDeletion.delete(op)
                 return
             }
             val existing = ref.get(com.google.firebase.firestore.Source.SERVER).await()

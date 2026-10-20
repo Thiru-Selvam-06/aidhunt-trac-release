@@ -35,7 +35,10 @@ test.beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRules
 });});
 for(const role of ['owner','partner','operator']) test(`${role} creates own ordinary entry`,async()=>assertSucceeds(setDoc(doc(db(role),path('entries')),entry(role))));
 for(const role of ['partner','operator']) {
- test(`${role} cannot create entry for another member`,async()=>assertFails(setDoc(doc(db(role),path('entries')),entry(role,{entryForUid:uid.other,financialAttributionUid:uid.other}))));
+ test(`${role} entry-for permission follows role`,async()=>{
+   const result=setDoc(doc(db(role),path('entries')),entry(role,{entryForUid:uid.other,financialAttributionUid:uid.other}));
+   await (role==='partner'?assertSucceeds(result):assertFails(result));
+ });
  test(`${role} edits own ordinary entry before deadline`,async()=>{await seed('entries',entry(role));await assertSucceeds(updateDoc(doc(db(role),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
  test(`${role} cannot bypass checked Entry deletion with a direct tombstone`,async()=>{await seed('entries',entry(role));await assertFails(updateDoc(doc(db(role),path('entries')),{isDeleted:true,authorizationDeletedAt:serverTimestamp()}));});
  test(`${role} cannot mutate historical entry`,async()=>{await seed('entries',entry(role,{isHistorical:true}));await assertFails(updateDoc(doc(db(role),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
@@ -44,6 +47,37 @@ for(const role of ['partner','operator']) {
  test(`${role} cannot edit another creator's entry`,async()=>{await seed('entries',entry('other'));await assertFails(updateDoc(doc(db(role),path('entries')),{...envelope(role),totalAmount:60000,pendingAmount:60000}));});
 }
 test('Owner creates eligible member historical entry',async()=>assertSucceeds(setDoc(doc(db('owner'),path('entries')),entry('owner',{isHistorical:true,entryForUid:uid.partner,financialAttributionUid:uid.partner}))));
+
+for(const target of ['owner','other']) test('Partner creates Entry and linked Expense for '+target,async()=>{
+ const database=db('partner'), batch=writeBatch(database);
+ batch.set(doc(database,path('entries')),entry('partner',{entryForUid:uid[target],financialAttributionUid:uid[target]}));
+ batch.set(doc(database,path('expenses')), {...envelope(),id:1,createdByUid:uid.partner,createdByRole:'PARTNER',
+   createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),
+   expenseForUid:uid[target],financialAttributionUid:uid[target],relatedJobId:1,paidBy:'I Paid',paidByUid:uid[target],amount:100});
+ await assertSucceeds(batch.commit());
+});
+test('Partner cannot use another creator job to add expense for others',async()=>{
+ await seed('entries',entry('owner'));
+ await assertFails(setDoc(doc(db('partner'),path('expenses')),{...envelope(),id:1,createdByUid:uid.partner,
+   createdByRole:'PARTNER',createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),
+   expenseForUid:uid.owner,financialAttributionUid:uid.owner,relatedJobId:1,amount:100}));
+});
+test('Partner cannot select an inactive or foreign workspace beneficiary',async()=>{
+ await env.withSecurityRulesDisabled(async c=>updateDoc(doc(c.firestore(),path('members',uid.other)),{status:'REMOVED'}));
+ await assertFails(setDoc(doc(db('partner'),path('entries')),entry('partner',{entryForUid:uid.other,financialAttributionUid:uid.other})));
+ await assertFails(setDoc(doc(db('partner'),path('entries')),entry('partner',{entryForUid:'foreign',financialAttributionUid:'foreign'})));
+});
+test('Partner cannot create standalone expense for another member',async()=>{
+ await assertFails(setDoc(doc(db('partner'),path('expenses')),{...envelope(),id:1,createdByUid:uid.partner,
+   createdByRole:'PARTNER',createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),
+   expenseForUid:uid.owner,financialAttributionUid:uid.owner,amount:100}));
+});
+test('Partner cannot add another member expense through a historical job',async()=>{
+ await seed('entries',entry('partner',{entryForUid:uid.owner,financialAttributionUid:uid.owner,isHistorical:true}));
+ await assertFails(setDoc(doc(db('partner'),path('expenses')),{...envelope(),id:1,createdByUid:uid.partner,
+   createdByRole:'PARTNER',createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),
+   expenseForUid:uid.owner,financialAttributionUid:uid.owner,relatedJobId:1,amount:100}));
+});
 test('accepted limitation: backdated offline action can arrive after deadline',async()=>{let record=entry('partner',{createdAt:now-53*3600000,authorizationCreatedAt:Timestamp.fromMillis(now-53*3600000),actionTime:now-48*3600000});await seed('entries',record);await assertSucceeds(updateDoc(doc(db('partner'),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
 test('offline action after deadline rejected',async()=>{let record=entry('partner',{createdAt:now-53*3600000,authorizationCreatedAt:Timestamp.fromMillis(now-53*3600000),actionTime:now-27*3600000});await seed('entries',record);await assertFails(updateDoc(doc(db('partner'),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
 test('future action timestamp rejected',async()=>assertFails(setDoc(doc(db('partner'),path('entries')),entry('partner',{actionTime:now+3600000}))));

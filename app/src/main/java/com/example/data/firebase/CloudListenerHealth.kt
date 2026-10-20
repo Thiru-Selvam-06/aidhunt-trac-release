@@ -5,6 +5,10 @@ import kotlinx.coroutines.flow.asStateFlow
 
 enum class CloudConnectionState { IDLE, CONNECTING, CONNECTED, ERROR }
 
+/** A partial cache view or local write echo cannot authorize Room reconciliation. */
+internal fun authoritativeLedgerSnapshot(fromCache: Boolean, pendingWrites: Boolean): Boolean =
+    !fromCache && !pendingWrites
+
 /** Server snapshots, not cached snapshots or an empty upload queue, prove listener health. */
 class CloudListenerHealth {
     private val listeners = mutableMapOf<String, MutableMap<String, CloudConnectionState>>()

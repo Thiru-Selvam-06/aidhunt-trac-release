@@ -24,6 +24,14 @@ service cloud.firestore {
     function partner(ws) { return role(ws, ['PARTNER', 'Partner', 'partner']); }
     function operator(ws) { return role(ws, ['OPERATOR', 'Operator', 'operator']); }
     function finance(ws) { return owner(ws) || partner(ws); }
+    // Partner companion expenses follow the selected beneficiary of their own job.
+    function linkedExpenseTarget(ws, data) {
+      let job = getAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(data.get('relatedJobId', 0))));
+      return partner(ws) && data.get('relatedJobId', 0) is int && data.relatedJobId > 0 &&
+        job.data.workspaceId == ws && job.data.createdByUid == request.auth.uid &&
+        job.data.entryForUid == data.expenseForUid && job.data.isHistorical == false &&
+        job.data.get('isDeleted', false) == false;
+    }
     function envelope(ws) {
       return request.resource.data.protocolVersion == 2 && request.resource.data.operationType in ['UPSERT', 'DELETE'] && request.resource.data.dependencies is list && request.resource.data.dependencies.size() <= 100 &&
         request.resource.data.workspaceId == ws && request.resource.data.actorUid == request.auth.uid &&
@@ -123,11 +131,130 @@ service cloud.firestore {
       let before = get(path).data;
       let after = getAfter(path).data;
       let delta = reversal ? -request.resource.data.amount : request.resource.data.amount;
-      return before.workspaceId == ws && before.customerId == request.resource.data.customerId &&
+      return unlockedEntry(ws, before) && before.workspaceId == ws && before.customerId == request.resource.data.customerId &&
         before.get('isDeleted', false) == false && !memberPurging(ws, before.createdByUid) && !memberPurging(ws, before.entryForUid) &&
         after.collectionId == id && after.operationId == request.resource.data.operationId &&
         after.amountReceived == before.amountReceived + delta && after.pendingAmount == before.pendingAmount - delta &&
         validEntryAmounts(after);
+    }
+    // Spark-compatible deletion: per-Entry/Customer guards stabilize dependency reads.
+    // One version-checked commit removes the records, guards and creates the source audit.
+    function entryProofPath(ws, id) { return /databases/$(database)/documents/workspaces/$(ws)/entryDeletionProofs/$(id); }
+    function deletionLockPath(ws, kind, id) { return /databases/$(database)/documents/workspaces/$(ws)/ledgerDeletionLocks/$(kind + '_' + string(id)); }
+    function entryLocked(ws, id) { return exists(deletionLockPath(ws, 'ENTRY', id)); }
+    function customerLocked(ws, id) { return exists(deletionLockPath(ws, 'CUSTOMER', id)); }
+    function unlockedEntry(ws, data) {
+      return !entryLocked(ws, data.id) && !customerLocked(ws, data.customerId);
+    }
+    function unlockedExpenseDelete(ws, data) {
+      let jobId = data.get('relatedJobId', 0);
+      let path = /databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId));
+      return jobId == 0 || (!entryLocked(ws, jobId) && (!exists(path) || !customerLocked(ws, get(path).data.customerId)));
+    }
+    function lockMatchesProof(ws, kind, id, proof) {
+      let path = deletionLockPath(ws, kind, id);
+      return !exists(path) || (get(path).data.actorUid == request.auth.uid && get(path).data.operationId == proof.operationId);
+    }
+    function lockableJob(ws, data) {
+      let source = get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(data.jobId)).data;
+      return source.workspaceId == ws && (owner(ws) || (partner(ws) && source.createdByUid == request.auth.uid &&
+        source.get('isHistorical', false) == false && source.get('authorizationTimeStatus', '') in ['CLIENT_ORIGINAL_V2', 'VERIFIED'] &&
+        data.actionTime >= source.createdAt && data.actionTime - source.createdAt < 86400000));
+    }
+    function validDeletionLock(ws, id) {
+      let data = request.resource.data;
+      return finance(ws) && data.workspaceId == ws && data.actorUid == request.auth.uid &&
+        data.kind in ['ENTRY', 'CUSTOMER'] && data.recordId is string && data.recordId.matches('^[1-9][0-9]{0,18}$') &&
+        id == data.kind + '_' + data.recordId && data.jobId is string &&
+        data.operationId is string && data.operationId.matches('^[A-Za-z0-9-]{1,128}$') &&
+        data.actionTime is int && data.actionTime > 0 && data.actionTime <= request.time.toMillis() &&
+        data.keys().hasOnly(['workspaceId','recordId','kind','actorUid','operationId','actionTime','jobId','sourceCreatedAt']) &&
+        (data.kind == 'ENTRY'
+          ? (data.jobId == data.recordId && lockableJob(ws, data) &&
+             data.sourceCreatedAt == get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(data.recordId)).data.createdAt)
+          : (get(/databases/$(database)/documents/workspaces/$(ws)/customers/$(data.recordId)).data.workspaceId == ws &&
+             data.sourceCreatedAt == get(/databases/$(database)/documents/workspaces/$(ws)/customers/$(data.recordId)).data.get('createdAt', null) &&
+             ((data.jobId == '' && owner(ws)) || (data.jobId.matches('^[1-9][0-9]{0,18}$') && lockableJob(ws, data) &&
+               string(get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(data.jobId)).data.customerId) == data.recordId &&
+               getAfter(deletionLockPath(ws, 'ENTRY', data.jobId)).data.operationId == data.operationId))));
+    }
+    function deletionCustomerUpdate(ws, id) {
+      let lock = get(deletionLockPath(ws, 'CUSTOMER', id)).data;
+      return lock.actorUid == request.auth.uid && lock.operationId == request.resource.data.operationId && lock.jobId != '' &&
+        !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(lock.jobId)) &&
+        getAfter(entryProofPath(ws, lock.jobId)).data.operationId == lock.operationId;
+    }
+    function validOwnedDeletionReceipt(ws, source, receipt) {
+      return receipt.workspaceId == ws && receipt.collectedByUid == request.auth.uid && receipt.status == 'ACTIVE' &&
+        receipt.jobEntryId == source.id && receipt.customerId == source.customerId && receipt.amount is number && receipt.amount > 0;
+    }
+    function ownedReceiptAmount(ws, source, ids, index) {
+      return ids.size() <= index ? 0 : checkedReceiptAmount(ws, source,
+        get(/databases/$(database)/documents/workspaces/$(ws)/collections/$(ids[index])).data);
+    }
+    function checkedReceiptAmount(ws, source, receipt) {
+      return validOwnedDeletionReceipt(ws, source, receipt) ? receipt.amount : -1;
+    }
+    function partnerDeletionReceipts(ws, source, proof) {
+      let ids = proof.collectionIds;
+      let a = ownedReceiptAmount(ws, source, ids, 0);
+      let b = ownedReceiptAmount(ws, source, ids, 1);
+      let c = ownedReceiptAmount(ws, source, ids, 2);
+      let d = ownedReceiptAmount(ws, source, ids, 3);
+      let e = ownedReceiptAmount(ws, source, ids, 4);
+      return ids.size() <= 5 && a >= 0 && b >= 0 && c >= 0 && d >= 0 && e >= 0 &&
+        source.amountReceived == a + b + c + d + e;
+    }
+    function validDeletionProof(ws, id, source) {
+      let proof = request.resource.data;
+      return source.id is int && string(source.id) == id && proof.workspaceId == ws && proof.recordId == id && proof.actorUid == request.auth.uid &&
+        proof.protocolVersion == 2 && proof.operationId is string && proof.operationId.matches('^[A-Za-z0-9-]{1,128}$') &&
+        proof.actionTime is int && proof.actionTime > 0 && proof.actionTime <= request.time.toMillis() &&
+        proof.sourceCreatedAt == source.createdAt && proof.customerId == source.customerId &&
+        proof.sourceCreatorUid == source.get('createdByUid', '') && proof.sourceBeneficiaryUid == source.get('entryForUid', '') &&
+        proof.totalAmount == source.totalAmount && proof.amountReceived == source.amountReceived && proof.pendingAmount == source.pendingAmount &&
+        proof.get('deletedCollectionAuditJson', '[]') is string && proof.get('deletedCollectionAuditJson', '[]').size() <= 131072 &&
+        proof.get('deletedExpenseAuditJson', '[]') is string && proof.get('deletedExpenseAuditJson', '[]').size() <= 131072 &&
+        proof.collectionIds is list && proof.collectionIds.size() <= 450 && proof.collectionIds.toSet().size() == proof.collectionIds.size() &&
+        (owner(ws) || (partner(ws) && source.get('isHistorical', false) == false &&
+          source.get('authorizationTimeStatus', '') in ['CLIENT_ORIGINAL_V2', 'VERIFIED'] &&
+          source.createdByUid == request.auth.uid &&
+          get(memberPath(ws, source.entryForUid)).data.status in ['ACTIVE', 'active'] &&
+          proof.actionTime >= source.createdAt && proof.actionTime - source.createdAt < 86400000 && partnerDeletionReceipts(ws, source, proof)));
+    }
+    // The proof create rule performs the full source/receipt validation once.
+    // Every related delete must reference that newly created, immutable proof.
+    function newDeletionProof(ws, id) {
+      let path = entryProofPath(ws, id);
+      let proof = getAfter(path).data;
+      return !exists(path) && proof.workspaceId == ws && proof.recordId == id &&
+        proof.actorUid == request.auth.uid && lockMatchesProof(ws, 'ENTRY', id, proof) &&
+        lockMatchesProof(ws, 'CUSTOMER', proof.customerId, proof);
+    }
+    function compoundChildDelete(ws, jobId, creatorUid, createdAt) {
+      let proof = getAfter(entryProofPath(ws, string(jobId))).data;
+      return resource.data.workspaceId == ws && !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))) &&
+        newDeletionProof(ws, string(jobId)) &&
+        (owner(ws) || (partner(ws) && creatorUid == request.auth.uid &&
+          resource.data.get('authorizationTimeStatus', '') in ['CLIENT_ORIGINAL_V2', 'VERIFIED'] && createdAt is int && createdAt > 0 &&
+          proof.actionTime >= createdAt && proof.actionTime - createdAt < 86400000));
+    }
+    function singleSourceCollection() {
+      return singleSourceCollectionData(resource.data);
+    }
+    function singleSourceCollectionData(data) {
+      return data.allocationsJson is string && data.amount is number && data.amount > 0 &&
+        data.allocationsJson.matches('^\\s*\\[\\s*\\{\\s*"jobId"\\s*:\\s*"?' + string(data.jobEntryId) +
+          '"?\\s*,\\s*"amount"\\s*:\\s*[0-9]+(\\.[0-9]+)?\\s*\\}\\s*\\]\\s*$');
+    }
+    function retainedExpenseSource(ws, data) {
+      let jobId = data.get('relatedJobId', 0);
+      return jobId == 0 || (jobId is int && jobId > 0 &&
+        existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))) &&
+        getAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))).data.workspaceId == ws &&
+        getAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))).data.get('isDeleted', false) == false &&
+        unlockedEntry(ws, getAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))).data) &&
+        !existsAfter(entryProofPath(ws, string(jobId))));
     }
     match /users/{uid} { allow read, write: if signed() && request.auth.uid == uid; }
     // Directory is a server-maintained discovery aid, never authorization or OTP proof.
@@ -162,14 +289,15 @@ service cloud.firestore {
       match /entries/{id} {
         allow get: if finance(ws) || (operator(ws) && (!exists(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)) || resource.data.isHistorical == false));
         allow list: if finance(ws) || (operator(ws) && resource.data.isHistorical == false);
-        allow create: if envelope(ws) && member(ws) && request.resource.data.createdByUid == request.auth.uid &&
+        allow create: if !customerLocked(ws, request.resource.data.customerId) && !exists(entryProofPath(ws, id)) && envelope(ws) && member(ws) && request.resource.data.createdByUid == request.auth.uid &&
           timedCreationTime() && reference(ws, 'customers', request.resource.data.customerId) &&
           (request.resource.data.get('tractorId', 0) == 0 || reference(ws, 'tractors', request.resource.data.tractorId)) &&
           request.resource.data.isDeleted == false && request.resource.data.isHistorical is bool &&
           active(ws, request.resource.data.entryForUid) && request.resource.data.financialAttributionUid == request.resource.data.entryForUid &&
           validEntryAmounts(request.resource.data) && request.resource.data.amountReceived == 0 &&
-          (owner(ws) || ((partner(ws) || operator(ws)) && !request.resource.data.isHistorical && request.resource.data.entryForUid == request.auth.uid));
-        allow update: if envelope(ws) && !request.resource.data.isDeleted && notDeleted() && original() && same(['isHistorical', 'entryForUid', 'financialAttributionUid']) &&
+          (owner(ws) || (!request.resource.data.isHistorical &&
+            (partner(ws) || (operator(ws) && request.resource.data.entryForUid == request.auth.uid))));
+        allow update: if unlockedEntry(ws, resource.data) && !customerLocked(ws, request.resource.data.customerId) && envelope(ws) && !request.resource.data.isDeleted && notDeleted() && original() && same(['isHistorical', 'entryForUid', 'financialAttributionUid']) &&
           (request.resource.data.customerId == resource.data.customerId || reference(ws, 'customers', request.resource.data.customerId)) &&
           (request.resource.data.amountReceived != resource.data.amountReceived
             ? (request.resource.data.get('purgeUid', '') != ''
@@ -181,19 +309,20 @@ service cloud.firestore {
                (!request.resource.data.isDeleted || request.resource.data.amountReceived == 0) &&
                (request.resource.data.get('tractorId', 0) == resource.data.get('tractorId', 0) || reference(ws, 'tractors', request.resource.data.tractorId)) &&
                (owner(ws) || ((partner(ws) || operator(ws)) && !resource.data.isHistorical && ownTimely()))));
-        // Normal Entry deletion requires the trusted dependency transaction.
-        allow delete: if purge(ws, resource.data.createdByUid) || purge(ws, resource.data.entryForUid) || purge(ws, resource.data.financialAttributionUid);
+        allow delete: if (resource.data.workspaceId == ws && newDeletionProof(ws, id)) ||
+          purge(ws, resource.data.createdByUid) || purge(ws, resource.data.entryForUid) || purge(ws, resource.data.financialAttributionUid);
       }
       match /expenses/{id} {
         allow read: if finance(ws);
-        allow create: if envelope(ws) && finance(ws) && request.resource.data.createdByUid == request.auth.uid &&
+        allow create: if retainedExpenseSource(ws, request.resource.data) && envelope(ws) && finance(ws) && request.resource.data.createdByUid == request.auth.uid &&
           timedCreationTime() && request.resource.data.amount is number && request.resource.data.amount > 0 && request.resource.data.isDeleted == false &&
           active(ws, request.resource.data.expenseForUid) && request.resource.data.financialAttributionUid == request.resource.data.expenseForUid &&
-          (owner(ws) || request.resource.data.expenseForUid == request.auth.uid);
-        allow update: if envelope(ws) && original() && notDeleted() && activeRecord(ws, 'expenseForUid') &&
+          (owner(ws) || request.resource.data.expenseForUid == request.auth.uid || linkedExpenseTarget(ws, request.resource.data));
+        allow update: if retainedExpenseSource(ws, request.resource.data) && envelope(ws) && original() && notDeleted() && activeRecord(ws, 'expenseForUid') &&
           request.resource.data.amount is number && request.resource.data.amount > 0 &&
           same(['expenseForUid', 'financialAttributionUid']) && (owner(ws) || (partner(ws) && ownTimely()));
-        allow delete: if (deleteEnvelope() && activeRecord(ws, 'expenseForUid') && (owner(ws) || (partner(ws) && deleteTimely()))) ||
+        allow delete: if (unlockedExpenseDelete(ws, resource.data) && deleteEnvelope() && activeRecord(ws, 'expenseForUid') && (owner(ws) || (partner(ws) && deleteTimely()))) ||
+          compoundChildDelete(ws, resource.data.get('relatedJobId', 0), resource.data.get('createdByUid', ''), resource.data.get('createdAt', 0)) ||
           purge(ws, resource.data.createdByUid) || purge(ws, resource.data.expenseForUid) || purge(ws, resource.data.financialAttributionUid);
       }
       match /withdrawals/{id} {
@@ -222,17 +351,44 @@ service cloud.firestore {
           same(['workspaceId', 'collectorUid', 'collectorName', 'collectorRole', 'collectedByUid', 'collectedByName', 'collectedByRole', 'collectedAt', 'createdAt', 'authorizationCreatedAt', 'serverReceivedAt', 'authorizationTimeStatus', 'amount', 'jobEntryId', 'customerId', 'allocationsJson', 'id']) &&
           (owner(ws) || (partner(ws) && resource.data.collectedByUid == request.auth.uid && timely(resource.data.get('createdAt', 0)))) &&
           collectionMatchesEntry(ws, id, true);
-        allow delete: if purge(ws, resource.data.collectedByUid) ||
+        allow delete: if (singleSourceCollection() && compoundChildDelete(ws, resource.data.jobEntryId, resource.data.collectedByUid, resource.data.createdAt)) || purge(ws, resource.data.collectedByUid) ||
           purge(ws, get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(resource.data.jobEntryId))).data.createdByUid) ||
           purge(ws, get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(resource.data.jobEntryId))).data.entryForUid);
       }
       match /customers/{id} {
         allow read: if finance(ws);
-        allow create: if envelope(ws) && finance(ws) && creationTime() && request.resource.data.createdByUid == request.auth.uid && request.resource.data.isDeleted == false;
-        allow update: if envelope(ws) && original() && notDeleted() &&
+        allow create: if !exists(/databases/$(database)/documents/workspaces/$(ws)/customerDeletionProofs/$(id)) && envelope(ws) && finance(ws) && creationTime() && request.resource.data.createdByUid == request.auth.uid && request.resource.data.isDeleted == false;
+        allow update: if (!customerLocked(ws, id) || deletionCustomerUpdate(ws, id)) && envelope(ws) && original() && notDeleted() &&
           ((finance(ws) && request.resource.data.isDeleted == false) || (owner(ws) && request.resource.data.isDeleted == true));
-        // A trusted command scans retained Entries/Collections transactionally before deleting a Customer.
-        allow delete: if false;
+        allow delete: if owner(ws) && resource.data.workspaceId == ws &&
+          getAfter(/databases/$(database)/documents/workspaces/$(ws)/customerDeletionProofs/$(id)).data.actorUid == request.auth.uid &&
+          getAfter(/databases/$(database)/documents/workspaces/$(ws)/customerDeletionProofs/$(id)).data.sourceCreatedAt == resource.data.get('createdAt', null);
+      }
+      match /entryDeletionProofs/{id} {
+        allow read: if finance(ws);
+        allow create: if finance(ws) && !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)) &&
+          validDeletionProof(ws, id, get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)).data) &&
+          request.resource.data.keys().hasOnly(['workspaceId','recordId','actorUid','operationId','actionTime','protocolVersion',
+            'sourceCreatedAt','customerId','sourceCreatorUid','sourceBeneficiaryUid','totalAmount','amountReceived','pendingAmount',
+            'deletedCollectionAuditJson','deletedExpenseAuditJson','collectionIds']);
+        allow update, delete: if false;
+      }
+      match /ledgerDeletionLocks/{id} {
+        allow read: if finance(ws);
+        allow create: if validDeletionLock(ws, id);
+        allow update: if resource.data.actorUid == request.auth.uid && validDeletionLock(ws, id);
+        allow delete: if owner(ws) || (finance(ws) && resource.data.workspaceId == ws && resource.data.actorUid == request.auth.uid);
+      }
+      match /customerDeletionProofs/{id} {
+        allow read: if finance(ws);
+        allow create: if owner(ws) && request.resource.data.workspaceId == ws && request.resource.data.recordId == id &&
+          request.resource.data.actorUid == request.auth.uid && request.resource.data.protocolVersion == 2 &&
+          request.resource.data.operationId is string && request.resource.data.operationId.matches('^[A-Za-z0-9-]{1,128}$') &&
+          request.resource.data.actionTime is int && request.resource.data.actionTime > 0 && request.resource.data.actionTime <= request.time.toMillis() &&
+          request.resource.data.sourceCreatedAt == get(/databases/$(database)/documents/workspaces/$(ws)/customers/$(id)).data.get('createdAt', null) &&
+          !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/customers/$(id)) &&
+          request.resource.data.keys().hasOnly(['workspaceId','recordId','actorUid','operationId','actionTime','protocolVersion','sourceCreatedAt','entryId']);
+        allow update, delete: if false;
       }
       match /{asset}/{id} {
         allow read: if asset in ['tractors', 'extensions'] && member(ws);

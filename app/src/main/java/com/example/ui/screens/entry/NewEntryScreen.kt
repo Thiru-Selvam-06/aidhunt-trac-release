@@ -215,8 +215,18 @@ fun NewEntryScreen(
         }
     }
 
-    // 1. Partner / Person Identification & Owner Selection Logic
-    val ownerDisplayName = settings.ownerName.ifBlank { settings.activePartnerName.ifBlank { "Owner" } }
+    val canSelectEntryPerson = actorRole in setOf(
+        com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)
+    val ownerMember = workspaceMembers.firstOrNull {
+        it.workspaceId == settings.workspaceId && it.status.equals("active", true) &&
+            com.example.data.auth.RoleUtils.isOwner(it.role)
+    }
+    val ownerUid = ownerMember?.uid.orEmpty().ifBlank { if (isCollaborationOwner) currentUid else "" }
+
+    // Creator is the authenticated actor; Entry For is the selected active member.
+    val ownerDisplayName = ownerMember?.displayName.orEmpty().ifBlank {
+        settings.ownerName.ifBlank { "Owner" }
+    }
     val activeMemberName = workspaceMembers.firstOrNull {
         it.uid == currentUid && it.status.equals("active", ignoreCase = true)
     }?.displayName?.trim().orEmpty()
@@ -224,21 +234,27 @@ fun NewEntryScreen(
         settings.activePartnerName.ifBlank { settings.ownerName.ifBlank { "Partner" } }
     }
 
-    val activeRegisteredPartners = remember(workspaceMembers, currentUid) {
+    val activeRegisteredPartners = remember(workspaceMembers, ownerUid, settings.workspaceId) {
         workspaceMembers
             .filter { member ->
                 member.status.equals("active", ignoreCase = true) &&
                 member.uid.isNotBlank() &&
-                member.uid != currentUid
+                member.workspaceId == settings.workspaceId &&
+                member.uid != ownerUid
             }
             .distinctBy { it.uid }
     }
 
-    val effectivePersonName = if (isCollaborationOwner) {
-        if (draft.selectedPersonName.isNotBlank()) draft.selectedPersonName else ownerDisplayName
-    } else {
-        currentPartnerName
+    val selectedMember = workspaceMembers.firstOrNull {
+        it.uid == draft.selectedPersonUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true)
     }
+    val entryTargetUid = if (draft.isEditingExistingEntry) {
+        draft.selectedPersonUid.ifBlank { currentUid }
+    } else if (canSelectEntryPerson) selectedMember?.uid ?: currentUid else currentUid
+    val effectivePersonName = if (draft.isEditingExistingEntry) {
+        draft.selectedPersonName.ifBlank { currentPartnerName }
+    } else workspaceMembers.firstOrNull { it.uid == entryTargetUid && it.workspaceId == settings.workspaceId }
+        ?.displayName.orEmpty().ifBlank { if (entryTargetUid == ownerUid) ownerDisplayName else currentPartnerName }
 
     // 2. Tractor Selection & Lock State
     val ownTractors = remember(tractors, settings.workspaceId) {
@@ -645,8 +661,7 @@ fun NewEntryScreen(
                     notes
                 }
 
-                val resolvedOperatorName = if (isCollaborationOwner) effectivePersonName else activeCreatorName
-                val entryTargetUid = if (isCollaborationOwner) draft.selectedPersonUid.ifBlank { currentUid } else currentUid
+                val resolvedOperatorName = effectivePersonName
                 val job = JobEntryEntity(
                     id = entryId,
                     customerId = resolvedCustomerId,
@@ -732,6 +747,7 @@ fun NewEntryScreen(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .testTag("new_entry_form")
                 .background(Color.White),
             contentPadding = PaddingValues(
                 start = responsive.screenPaddingHorizontal,
@@ -912,7 +928,7 @@ fun NewEntryScreen(
 
             // 1. Entry For Section (No outer card)
             item {
-                if (isCollaborationOwner) {
+                if (canSelectEntryPerson && !draft.isEditingExistingEntry) {
                     var personDropdownExpanded by remember { mutableStateOf(false) }
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -1020,12 +1036,12 @@ fun NewEntryScreen(
                                                     color = AppTheme.colors.textPrimary
                                                 )
                                                 Text(
-                                                    text = if (isTamil) "உரிமையாளர் (நீங்கள்)" else "Owner (You)",
+                                                    text = if (isTamil) "உரிமையாளர்" else if (ownerUid == currentUid) "Owner (You)" else "Owner",
                                                     fontSize = 11.sp,
                                                     color = DeepSageGreen
                                                 )
                                             }
-                                            if (draft.selectedPersonUid == currentUid || (draft.selectedPersonUid.isBlank() && (draft.selectedPersonName.isBlank() || draft.selectedPersonName == ownerDisplayName))) {
+                                            if (entryTargetUid == ownerUid) {
                                                 Icon(
                                                     imageVector = Icons.Default.Check,
                                                     contentDescription = null,
@@ -1037,15 +1053,15 @@ fun NewEntryScreen(
                                     },
                                     onClick = {
                                         personDropdownExpanded = false
-                                        val personalRate = onResolvePersonalRate(currentUid)
+                                        val personalRate = onResolvePersonalRate(ownerUid)
                                         val newDraft = draft.copy(
-                                            selectedPersonUid = currentUid,
+                                            selectedPersonUid = ownerUid,
                                             selectedPersonName = ownerDisplayName,
                                             hourlyRateInput = if (personalRate > 0.0) personalRate.toInt().toString() else draft.hourlyRateInput
                                         )
                                         onUpdateDraft(newDraft)
                                         if (draft.isPersonLocked) {
-                                            onUpdateLockedPerson?.invoke(currentUid)
+                                            onUpdateLockedPerson?.invoke(ownerUid)
                                         }
                                     }
                                 )
@@ -1112,13 +1128,13 @@ fun NewEntryScreen(
                     ) {
                         PartnerAvatarImage(
                             photoUri = settings.profilePhotoUri,
-                            name = currentPartnerName,
+                            name = effectivePersonName,
                             size = 36.dp,
                             avatarColorHex = "#1E4D2B"
                         )
 
                         Column(modifier = Modifier.weight(1f)) {
-                            val currentMember = workspaceMembers.find { it.uid == currentUid }
+                            val currentMember = workspaceMembers.find { it.uid == entryTargetUid && it.workspaceId == settings.workspaceId }
                             val currentRole = currentMember?.role?.ifBlank { null } ?: "Partner"
                             val roleLabel = com.example.data.auth.RoleUtils.getRoleDisplayName(currentRole, isTamil)
                             Text(
@@ -1128,7 +1144,7 @@ fun NewEntryScreen(
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
-                                text = currentPartnerName,
+                                text = effectivePersonName,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = AppTheme.colors.textPrimary,
@@ -2008,6 +2024,7 @@ fun NewEntryScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Row(
+                                        modifier = Modifier.weight(1f),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
@@ -2030,9 +2047,11 @@ fun NewEntryScreen(
                                             )
                                         }
 
-                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                             Text(
                                                 text = exp.expenseType,
+                                                maxLines = 1,
+                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontSize = 13.5.sp,
                                                 color = AppTheme.colors.textPrimary
@@ -2049,6 +2068,9 @@ fun NewEntryScreen(
                                                 )
                                                 Text(
                                                     text = if (exp.paidBy == "I Paid" && exp.paidByPartner.isNotBlank()) exp.paidByPartner else exp.paidBy,
+                                                    modifier = Modifier.weight(1f),
+                                                    maxLines = 1,
+                                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                                     fontSize = 11.5.sp,
                                                     color = TextMutedDark
                                                 )
@@ -2085,7 +2107,7 @@ fun NewEntryScreen(
                                                 val updated = draft.expensesList.toMutableList().also { it.removeAt(index) }
                                                 onUpdateDraft(draft.copy(expensesList = updated))
                                             },
-                                            modifier = Modifier.size(32.dp)
+                                            modifier = Modifier.size(32.dp).testTag("delete_draft_expense_${exp.id}")
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Delete,

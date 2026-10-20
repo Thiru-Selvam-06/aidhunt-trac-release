@@ -237,6 +237,7 @@ fun AccountScreen(
     unsyncedExpensesCount: Int = 0,
     unsyncedWithdrawalsCount: Int = 0,
     unsyncedCustomersCount: Int = 0,
+    unsyncedPaymentsCount: Int = 0,
     totalUnsyncedCount: Int = 0,
     rejectedOperationCount: Int = 0,
     blockedOperationCount: Int = 0,
@@ -429,6 +430,7 @@ fun AccountScreen(
                     unsyncedExpensesCount = unsyncedExpensesCount,
                     unsyncedWithdrawalsCount = unsyncedWithdrawalsCount,
                     unsyncedCustomersCount = unsyncedCustomersCount,
+                    unsyncedPaymentsCount = unsyncedPaymentsCount,
                     isSimulatedOffline = isSimulatedOffline,
                     onToggleSimulatedOffline = onToggleSimulatedOffline,
                     onTriggerSync = onTriggerSync,
@@ -4385,6 +4387,7 @@ fun SqliteSyncStatusPage(
     unsyncedExpensesCount: Int,
     unsyncedWithdrawalsCount: Int,
     unsyncedCustomersCount: Int,
+    unsyncedPaymentsCount: Int = 0,
     isSimulatedOffline: Boolean,
     onToggleSimulatedOffline: ((Boolean) -> Unit)?,
     onTriggerSync: () -> Unit,
@@ -4508,7 +4511,7 @@ fun SqliteSyncStatusPage(
                                     )
                                     Text(
                                         text = if (rejectedOperationCount > 0) {
-                                            rejectedOperationCount.toString() + " actions need review; original data retained"
+                                            rejectedOperationCount.toString() + " sync items need review; original data retained"
                                         } else if (cloudConnectionState == com.example.data.firebase.CloudConnectionState.ERROR) {
                                             "Cloud access failed — check workspace permissions"
                                         } else if (!isOnline) {
@@ -4651,6 +4654,15 @@ fun SqliteSyncStatusPage(
                 tableName = "app_settings",
                 tableDesc = if (isTamil) "வணிக அமைப்புகள் மற்றும் பங்குதாரர் விவரங்கள்" else "Business Profile & Multi-Partner Sync Config",
                 unsyncedCount = 0,
+                isTamil = isTamil,
+                statusLabel = if (isTamil) "தனியாக நிர்வகிக்கப்படுகிறது" else "Managed separately"
+            )
+        }
+        item {
+            SqliteTableItemCard(
+                tableName = "payments",
+                tableDesc = if (isTamil) "வசூல்கள் மற்றும் திருப்பிய பதிவுகள்" else "Collections & Reversals",
+                unsyncedCount = unsyncedPaymentsCount,
                 isTamil = isTamil
             )
         }
@@ -4661,7 +4673,8 @@ fun SqliteTableItemCard(
     tableName: String,
     tableDesc: String,
     unsyncedCount: Int,
-    isTamil: Boolean
+    isTamil: Boolean,
+    statusLabel: String? = null
 ) {
     Card(
         shape = RoundedCornerShape(14.dp),
@@ -4714,7 +4727,7 @@ fun SqliteTableItemCard(
                 color = if (unsyncedCount > 0) AlertDueRedBg else SuccessPaidGreenBg
             ) {
                 Text(
-                    text = if (unsyncedCount > 0) "$unsyncedCount ${if (isTamil) "நிலுவை" else "Pending"}" else (if (isTamil) "✓ ஒத்திசைவு" else "✓ Synced"),
+                    text = statusLabel ?: if (unsyncedCount > 0) "$unsyncedCount ${if (isTamil) "ஒத்திசைக்கப்படவில்லை" else "Unsynced"}" else (if (isTamil) "உள்ளூர் மாற்றங்கள் இல்லை" else "No local changes"),
                     fontSize = 11.sp,
                     color = if (unsyncedCount > 0) AlertDueRed else SuccessPaidGreen,
                     fontWeight = FontWeight.Bold,

@@ -1,5 +1,6 @@
 package com.example.ui.util
 
+import com.example.data.auth.RoleUtils
 import com.example.data.entity.CustomerEntity
 import com.example.data.entity.ExpenseEntity
 import com.example.data.entity.JobEntryEntity
@@ -45,8 +46,11 @@ data class PartnerFinancialBreakdown(
     val received: Double = 0.0,
     val due: Double = 0.0,
     val expenses: Double = 0.0,
-    val withdrawals: Double = 0.0
-)
+    val withdrawals: Double = 0.0,
+    val businessExpenses: Double = 0.0
+) {
+    val totalExpenses: Double get() = expenses + businessExpenses
+}
 
 data class PartnerShareInvestmentStatus(
     val partnerName: String,
@@ -61,7 +65,7 @@ data class PartnerShareInvestmentStatus(
     val totalToGet: Double = 0.0,
     val partnerUid: String = "",
     val phone: String = "",
-    val percentage: Int = 0
+    val percentage: Double = 0.0
 )
 
 object FinancialCalculationEngine {
@@ -95,8 +99,8 @@ object FinancialCalculationEngine {
 
         // 1. Distributable Profit calculation:
         // Gross business amount (total received from jobs) - Total operating expenses
-        val totalReceived = roundToPositiveWholeRupee(scopedJobs.sumOf { it.amountReceived })
-        val totalExpenses = roundToPositiveWholeRupee(scopedExpenses.sumOf { it.amount })
+        val totalReceived = calculateSummary(scopedJobs, emptyList(), emptyList(), scope).totalReceived
+        val totalExpenses = roundMoney(scopedExpenses.sumOf { it.amount }).coerceAtLeast(0.0)
         val distributableAmount = maxOf(0.0, totalReceived - totalExpenses)
 
         // 2. Determine if a valid custom allocation exists (total sum must be 100)
@@ -155,7 +159,8 @@ object FinancialCalculationEngine {
         //   - Divide equally among all eligible participants with whole-rupee reconciliation
         val participantsWithShares = mutableListOf<ParticipantInfo>()
 
-        if (hasCustomAllocation) {
+        val equalAllocation = isEqualShareAllocation(eligibleParticipants.map { it.uid }.toSet(), profitShareAllocations)
+        if (hasCustomAllocation && !equalAllocation) {
             eligibleParticipants.forEach { info ->
                 val pct = maxOf(0, info.percentage)
                 val shareAmount = if (distributableAmount > 0 && pct > 0) {
@@ -163,7 +168,7 @@ object FinancialCalculationEngine {
                 } else {
                     0.0
                 }
-                participantsWithShares.add(info.copy(calculatedShare = shareAmount, effectivePercentage = pct))
+                participantsWithShares.add(info.copy(calculatedShare = shareAmount, effectivePercentage = pct.toDouble()))
             }
 
             // Monetary reconciliation for rounding differences
@@ -182,18 +187,11 @@ object FinancialCalculationEngine {
             }
         } else {
             val count = eligibleParticipants.size
-            val basePct = if (count > 0) 100 / count else 0
-            val remPct = if (count > 0) 100 % count else 0
-            val baseShare = if (count > 0 && distributableAmount > 0) roundToWholeRupee(distributableAmount / count) else 0.0
-            val rawShares = MutableList(count) { baseShare }
-            val diff = if (distributableAmount > 0) distributableAmount - rawShares.sum() else 0.0
-            if (diff != 0.0 && count > 0) {
-                rawShares[0] = maxOf(0.0, rawShares[0] + diff)
-            }
-
-            eligibleParticipants.forEachIndexed { index, info ->
-                val effectivePct = basePct + (if (index < remPct) 1 else 0)
-                participantsWithShares.add(info.copy(calculatedShare = rawShares[index], effectivePercentage = effectivePct))
+            val percentage = if (count > 0) 100.0 / count else 0.0
+            val amounts = equalMoneyShares(distributableAmount, eligibleParticipants.map { it.uid })
+            eligibleParticipants.forEach { info ->
+                participantsWithShares.add(info.copy(calculatedShare = amounts[info.uid] ?: 0.0,
+                    effectivePercentage = percentage))
             }
         }
 
@@ -211,7 +209,7 @@ object FinancialCalculationEngine {
             val pInvestments = scopedExpenses.filter { exp ->
                 exp.paidBy.equals("I Paid", ignoreCase = true) && exp.paidByUid == pUid
             }
-            val totalInvestment = roundToPositiveWholeRupee(pInvestments.sumOf { it.amount })
+            val totalInvestment = roundMoney(pInvestments.sumOf { it.amount }).coerceAtLeast(0.0)
             val pWithdrawals = scopedWithdrawals.filter { it.targetPartnerUid == pUid }
 
             // Strict category-based deductions:
@@ -248,9 +246,9 @@ object FinancialCalculationEngine {
                 }
             }
 
-            val takenShare = roundToPositiveWholeRupee(pTakenShare)
-            val takenInvestment = roundToPositiveWholeRupee(pTakenInvestment)
-            val takenPersonalUse = roundToPositiveWholeRupee(pTakenPersonalUse)
+            val takenShare = roundMoney(pTakenShare).coerceAtLeast(0.0)
+            val takenInvestment = roundMoney(pTakenInvestment).coerceAtLeast(0.0)
+            val takenPersonalUse = roundMoney(pTakenPersonalUse).coerceAtLeast(0.0)
 
             val remainingShare = maxOf(0.0, totalShare - takenShare)
             val remainingInvestment = maxOf(0.0, totalInvestment - takenInvestment)
@@ -283,11 +281,11 @@ object FinancialCalculationEngine {
         val phoneNumber: String?,
         val isActive: Boolean,
         val calculatedShare: Double = 0.0,
-        val effectivePercentage: Int = 0
+        val effectivePercentage: Double = 0.0
     ) {
         fun copy(
             calculatedShare: Double = this.calculatedShare,
-            effectivePercentage: Int = this.effectivePercentage
+            effectivePercentage: Double = this.effectivePercentage
         ) = ParticipantInfo(
             uid = this.uid,
             displayName = this.displayName,
@@ -335,6 +333,10 @@ object FinancialCalculationEngine {
         return if (rounded <= 0.0) 0.0 else rounded
     }
 
+    /** Partner shares and payouts retain paisa; invoice rounding remains its existing policy. */
+    fun roundMoney(value: Double): Double = if (!value.isFinite()) 0.0 else
+        java.math.BigDecimal.valueOf(value).setScale(2, java.math.RoundingMode.HALF_UP).toDouble()
+
     fun isSyntheticPayment(job: JobEntryEntity): Boolean {
         return job.tractorLabel.equals("Payment", ignoreCase = true) ||
                 job.workType.equals("Payment Received", ignoreCase = true)
@@ -342,13 +344,18 @@ object FinancialCalculationEngine {
 
     fun cashAvailable(
         payments: List<PaymentEntity>, expenses: List<ExpenseEntity>,
-        withdrawals: List<WithdrawalEntity>, scope: FinancialScope
+        withdrawals: List<WithdrawalEntity>, scope: FinancialScope,
+        jobs: List<JobEntryEntity> = emptyList()
     ): Double {
-        val ids = (payments.map { it.workspaceId } + expenses.map { it.workspaceId } +
+        val ids = (jobs.map { it.workspaceId } + payments.map { it.workspaceId } + expenses.map { it.workspaceId } +
             withdrawals.map { it.workspaceId }).filter { it.isNotBlank() }.distinct()
         if (scope.workspaceId.isBlank() && ids.size > 1) throw SecurityException("Cash balance requires one authorized workspace")
         val workspace = scope.workspaceId.ifBlank { ids.singleOrNull().orEmpty() }
-        val cash = payments.filter { (workspace.isBlank() || it.workspaceId == workspace) &&
+        val legacyCash = com.example.ui.screens.report.reconciledLegacyReceiptJobs(workspace, payments, jobs).filter {
+            com.example.ui.screens.report.recordedLegacyPaymentMethod(it.notes) == "Cash" &&
+                isTimestampInScope(if (it.startTimeMillis > 0) it.startTimeMillis else it.createdAt, scope)
+        }.sumOf { it.amountReceived }
+        val cash = legacyCash + payments.filter { (workspace.isBlank() || it.workspaceId == workspace) &&
             it.status.equals("ACTIVE", true) && it.paymentMethod.trim().equals("Cash", true) &&
             isTimestampInScope(it.collectedAt, scope) }.sumOf { it.amount }
         // Personally funded "I Paid" expenses are member investments, not
@@ -359,7 +366,7 @@ object FinancialCalculationEngine {
         val withdrawn = withdrawals.filter { (workspace.isBlank() || it.workspaceId == workspace) &&
             isTimestampInScope(if (it.timestamp > 0) it.timestamp else it.createdAt, scope) }.sumOf { it.amount }
         require(listOf(cash, spent, withdrawn).all { it.isFinite() }) { "Cash balance contains invalid amounts" }
-        return roundToWholeRupee(cash - spent - withdrawn)
+        return roundMoney(cash - spent - withdrawn)
     }
 
     fun calculateSummary(
@@ -387,34 +394,20 @@ object FinancialCalculationEngine {
             (authorizedWorkspace.isBlank() || w.workspaceId == authorizedWorkspace) && isTimestampInScope(ts, scope)
         }
 
-        val totalRecorded = roundToPositiveWholeRupee(scopedJobs.sumOf { job ->
-            if (isSyntheticPayment(job)) {
-                0.0
-            } else if (job.totalAmount > 0.0) {
-                job.totalAmount
-            } else {
-                job.amountReceived + job.pendingAmount
-            }
-        })
+        // Use the same per-customer ledger and rounding as Customer Dues.
+        // Legacy payment-only entries settle an obligation, never add sales.
+        val ledgers = scopedJobs.groupBy { Triple(it.workspaceId, it.customerId, if (it.customerId > 0) 0L else it.id) }
+            .values.map(::customerLedger)
+        val totalRecorded = ledgers.sumOf { it.totalBilled }
+        val totalReceived = ledgers.sumOf { it.totalPaid }
+        val totalDue = ledgers.sumOf { it.balanceDue }
 
-        val totalReceived = roundToPositiveWholeRupee(scopedJobs.sumOf { j -> j.amountReceived })
+        val totalExpenses = roundMoney(scopedExpenses.sumOf { it.amount }).coerceAtLeast(0.0)
 
-        val totalDue = roundToPositiveWholeRupee(scopedJobs.sumOf { job ->
-            if (isSyntheticPayment(job)) {
-                0.0
-            } else if (job.pendingAmount > 0.0) {
-                job.pendingAmount
-            } else {
-                maxOf(0.0, job.totalAmount - job.amountReceived)
-            }
-        })
+        val totalWithdrawals = roundMoney(scopedWithdrawals.sumOf { it.amount }).coerceAtLeast(0.0)
 
-        val totalExpenses = roundToPositiveWholeRupee(scopedExpenses.sumOf { it.amount })
-
-        val totalWithdrawals = roundToPositiveWholeRupee(scopedWithdrawals.sumOf { it.amount })
-
-        val availableBalance = if (payments == null) roundToWholeRupee(totalReceived - totalExpenses - totalWithdrawals)
-            else cashAvailable(payments, expenses, withdrawals, scope.copy(workspaceId = authorizedWorkspace))
+        val availableBalance = if (payments == null) roundMoney(totalReceived - totalExpenses - totalWithdrawals)
+            else cashAvailable(payments, expenses, withdrawals, scope.copy(workspaceId = authorizedWorkspace), jobs)
 
         val jobCount = scopedJobs.count { !isSyntheticPayment(it) }
 
@@ -475,9 +468,16 @@ object FinancialCalculationEngine {
             .mapValues { (_, rows) -> rows.map { it.name.trim() }.filter { it.isNotBlank() }.distinct().singleOrNull() }
 
         val participantUids = linkedSetOf<String>()
+        val businessTotal = scopedExpenses.filter { it.paidBy.trim().equals("Business Paid", true) }.sumOf { it.amount }
+        val businessParticipants = eligibleMembers.values.filter {
+            it.status.equals("active", true) && RoleUtils.normalizeRole(it.role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER)
+        }.map { it.uid }.sorted()
+        val businessShares = equalMoneyShares(businessTotal, businessParticipants)
+            .ifEmpty { if (businessTotal > 0) mapOf("" to businessTotal) else emptyMap() }
+        if (businessTotal > 0) participantUids.addAll(businessShares.keys)
         scopedJobs.forEach { participantUids.add(beneficiary(it.financialAttributionUid.ifBlank { it.entryForUid })) }
         scopedExpenses.filter { it.paidBy.equals("I Paid", ignoreCase = true) }
-            .forEach { participantUids.add(beneficiary(it.financialAttributionUid.ifBlank { it.expenseForUid })) }
+            .forEach { participantUids.add(beneficiary(it.paidByUid)) }
         scopedWithdrawals.forEach { participantUids.add(beneficiary(it.targetPartnerUid)) }
 
         return participantUids.map { uid ->
@@ -490,23 +490,16 @@ object FinancialCalculationEngine {
             val pJobs = scopedJobs.filter { beneficiary(it.financialAttributionUid.ifBlank { it.entryForUid }) == uid }
             val pExp = scopedExpenses.filter {
                 it.paidBy.equals("I Paid", ignoreCase = true) &&
-                beneficiary(it.financialAttributionUid.ifBlank { it.expenseForUid }) == uid
+                beneficiary(it.paidByUid) == uid
             }
             val pWth = scopedWithdrawals.filter { beneficiary(it.targetPartnerUid) == uid }
 
-            val recorded = roundToPositiveWholeRupee(pJobs.sumOf {
-                if (isSyntheticPayment(it)) 0.0
-                else if (it.totalAmount > 0.0) it.totalAmount
-                else (it.amountReceived + it.pendingAmount)
-            })
-            val received = roundToPositiveWholeRupee(pJobs.sumOf { it.amountReceived })
-            val due = roundToPositiveWholeRupee(pJobs.sumOf {
-                if (isSyntheticPayment(it)) 0.0
-                else if (it.pendingAmount > 0.0) it.pendingAmount
-                else maxOf(0.0, it.totalAmount - it.amountReceived)
-            })
-            val exp = roundToPositiveWholeRupee(pExp.sumOf { it.amount })
-            val wth = roundToPositiveWholeRupee(pWth.sumOf { it.amount })
+            val ledger = calculateSummary(pJobs, emptyList(), emptyList(), scope)
+            val recorded = ledger.totalRecorded
+            val received = ledger.totalReceived
+            val due = ledger.totalDue
+            val exp = roundMoney(pExp.sumOf { it.amount }).coerceAtLeast(0.0)
+            val wth = roundMoney(pWth.sumOf { it.amount }).coerceAtLeast(0.0)
 
             PartnerFinancialBreakdown(
                 partnerUid = uid,
@@ -516,9 +509,10 @@ object FinancialCalculationEngine {
                 received = received,
                 due = due,
                 expenses = exp,
-                withdrawals = wth
+                withdrawals = wth,
+                businessExpenses = businessShares[uid] ?: 0.0
             )
-        }.filter { it.recorded > 0 || it.received > 0 || it.due > 0 || it.expenses > 0 || it.withdrawals > 0 }
+        }.filter { it.recorded > 0 || it.received > 0 || it.due > 0 || it.totalExpenses > 0 || it.withdrawals > 0 }
          .sortedByDescending { it.recorded + it.received }
     }
 
@@ -534,28 +528,25 @@ object FinancialCalculationEngine {
     ): CustomerFinancialBreakdown {
         val customerJobs = jobs.filter { it.workspaceId == customer.workspaceId && it.customerId == customer.id }
 
-        if (customerJobs.isEmpty()) {
-            return CustomerFinancialBreakdown(
-                totalBilled = roundToPositiveWholeRupee(customer.totalBilled),
-                totalPaid = roundToPositiveWholeRupee(customer.totalPaid),
-                balanceDue = roundToPositiveWholeRupee(customer.balanceDue)
-            )
-        }
+        return customerLedger(customerJobs)
+    }
 
+    private fun customerLedger(customerJobs: List<JobEntryEntity>): CustomerFinancialBreakdown {
         val workJobs = customerJobs.filterNot { isSyntheticPayment(it) }
+        if (workJobs.isEmpty()) return CustomerFinancialBreakdown()
         val billed = workJobs.sumOf { job ->
             if (job.totalAmount > 0.0) job.totalAmount else (job.amountReceived + job.pendingAmount)
         }
         val paid = customerJobs.sumOf { it.amountReceived }
-        val rawDue = workJobs.sumOf { job ->
-            if (job.pendingAmount > 0.0) job.pendingAmount else maxOf(0.0, job.totalAmount - job.amountReceived)
-        }
-        val effectiveDue = maxOf(0.0, minOf(rawDue, billed - paid))
+        // pendingAmount is a denormalized cache. Derive the current obligation
+        // from billed minus received so a stale cache cannot understate dues.
+        val displayedBilled = roundToPositiveWholeRupee(billed)
+        val displayedPaid = roundToPositiveWholeRupee(paid)
 
         return CustomerFinancialBreakdown(
-            totalBilled = roundToPositiveWholeRupee(billed),
-            totalPaid = roundToPositiveWholeRupee(paid),
-            balanceDue = roundToPositiveWholeRupee(effectiveDue)
+            totalBilled = displayedBilled,
+            totalPaid = displayedPaid,
+            balanceDue = maxOf(0.0, displayedBilled - displayedPaid)
         )
     }
 
@@ -575,6 +566,21 @@ object FinancialCalculationEngine {
         customers: List<CustomerEntity>,
         jobs: List<JobEntryEntity>
     ): List<CustomerEntity> {
-        return customers.map { synchronizeCustomerWithJobs(it, jobs) }
+        val rows = customers.associateBy { it.workspaceId to it.id }.toMutableMap()
+        jobs.filterNot(::isSyntheticPayment).filter { it.customerId > 0 }
+            .groupBy { it.workspaceId to it.customerId }.forEach { (key, sources) ->
+                if (key !in rows) {
+                    val source = sources.maxBy { it.createdAt }
+                    rows[key] = CustomerEntity(id = source.customerId, workspaceId = source.workspaceId,
+                        name = source.customerName, phone = source.customerPhone, location = source.customerLocation,
+                        createdAt = source.createdAt, updatedAt = source.updatedAt)
+                }
+            }
+        return rows.values.map { synchronizeCustomerWithJobs(it, jobs) }
+    }
+
+    fun customersWithLedger(customers: List<CustomerEntity>, jobs: List<JobEntryEntity>): List<CustomerEntity> {
+        val sources = jobs.filterNot(::isSyntheticPayment).map { it.workspaceId to it.customerId }.toSet()
+        return synchronizeCustomers(customers, jobs).filter { (it.workspaceId to it.id) in sources }
     }
 }

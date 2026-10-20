@@ -328,16 +328,9 @@ fun ReportMenuDashboard(
             currentUid = currentUid
         )
     }
-    val totalCollected = if (collectionSource.payments.isNotEmpty()) {
-        collectionSource.payments.filter { it.status == "ACTIVE" }.sumOf { it.amount }
-    } else {
+    val totalCollected = collectionSource.payments.filter { it.status == "ACTIVE" }.sumOf { it.amount } +
         collectionSource.legacyJobs.sumOf { it.amountReceived }
-    }
-    val collectionsCount = if (collectionSource.payments.isNotEmpty()) {
-        collectionSource.payments.count { it.status == "ACTIVE" }
-    } else {
-        collectionSource.legacyJobs.size
-    }
+    val collectionsCount = collectionSource.payments.count { it.status == "ACTIVE" } + collectionSource.legacyJobs.size
 
     Column(
         modifier = Modifier

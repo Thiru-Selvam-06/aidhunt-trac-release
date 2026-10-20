@@ -668,9 +668,7 @@ fun BusinessOverviewScreen(
 
                         // Responsive Bar Chart â€” REAL data
                         DriverEarningsBarChart(
-                            partnerBreakdowns = if (selectedChartMetric == OverviewChartMetric.AMOUNT)
-                                businessOverviewChartMembers(partnerBreakdowns, workspaceMembers, currentUid, settings.workspaceId)
-                            else partnerBreakdowns,
+                            partnerBreakdowns = businessOverviewChartMembers(partnerBreakdowns, workspaceMembers, currentUid, settings.workspaceId),
                             workspaceMembers = workspaceMembers,
                             scopedJobs = scopedJobs,
                             totalExpenses = summary.totalExpenses,
@@ -683,6 +681,19 @@ fun BusinessOverviewScreen(
                                 selectedMemberFilter = if (selectedMemberFilter == memberName) "All" else memberName
                             }
                         )
+                        val unassigned = partnerBreakdowns.filter { row -> row.partnerUid.isBlank() || workspaceMembers.none {
+                            it.workspaceId == settings.workspaceId && it.uid == row.partnerUid &&
+                                (it.status.equals("ACTIVE", true) || it.status.equals("REMOVED", true))
+                        } }
+                        if (unassigned.isNotEmpty()) {
+                            Text(
+                                text = if (isTamil) "சில பழைய பதிவுகளின் பங்குதாரர் அடையாளத்தைச் சரிபார்க்க வேண்டும். மொத்தத் தொகையில் அவை சேர்க்கப்பட்டுள்ளன."
+                                    else "Some older records need a verified partner assignment. Their amounts remain included in the business totals.",
+                                color = TextMutedDark,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(top = 12.dp).testTag("unassigned_records_notice")
+                            )
+                        }
                     }
                 }
             }
@@ -938,7 +949,7 @@ fun BusinessOverviewScreen(
         // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // 7. EXISTING JOB DETAILS POPUP â€” reuses existing CustomerSummaryPopup
         // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        selectedJobForDetail?.let { job ->
+        selectedJobForDetail?.let { selected -> jobs.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { job ->
             CustomerSummaryPopup(
                 job = job,
                 settings = settings,
@@ -2059,7 +2070,7 @@ private fun YearPickerDialog(
 @Composable
 internal fun DriverEarningsCircularChart(breakdowns: List<PartnerFinancialBreakdown>, showExpenses: Boolean, currency: String, isTamil: Boolean) {
     val data = remember(breakdowns, showExpenses) {
-        breakdowns.map { MemberFinancialData(it.partnerUid, it.partnerName, it.role, it.recorded, it.received, it.due, if (showExpenses) it.expenses else 0.0) }
+        breakdowns.map { MemberFinancialData(it.partnerUid, it.partnerName, it.role, it.recorded, it.received, it.due, if (showExpenses) it.totalExpenses else 0.0) }
     }
     var selected by remember(data) { mutableStateOf<MemberFinancialData?>(null) }
     androidx.compose.foundation.lazy.LazyRow(Modifier.fillMaxWidth().heightIn(min = 180.dp),

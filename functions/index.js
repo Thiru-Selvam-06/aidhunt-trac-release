@@ -206,7 +206,11 @@ exports.deleteWorkspaceEntry = onCall(async request => {
     let totals;
     try { totals=require("./entry-deletion-policy").customerTotals(customerEntries.docs.filter(d=>d.id!==id && String(d.get("customerId"))===customerId).map(d=>{ if(d.get("workspaceId")!==wsId) throw Error("Customer Entry workspace mismatch"); return d.data(); })); }
     catch(error) { throw new HttpsError("failed-precondition",error.message); }
-    tx.update(customerRef,totals);
+    const customerPlan=require("./entry-deletion-policy").customerAfterEntryDeletion(customerId,
+      customerEntries.docs.filter(d=>d.id!==id).map(d=>d.data()),
+      collectionData.filter(c=>!collectionDeletes.includes(c)),id);
+    if(customerPlan.deleteCustomer && owner) tx.delete(customerRef);
+    else tx.update(customerRef,totals);
     collectionDeleteDocs.forEach(collection=>tx.delete(collection.ref));
     linkedExpenses.forEach(expense=>tx.delete(expense.ref));
     tx.delete(ref);

@@ -108,9 +108,8 @@ fun CollectionHistoryTab(
     val context = LocalContext.current
     val responsive = com.example.ui.theme.rememberResponsiveDimensions()
 
-    // Consolidate payment records.
-    // If explicit PaymentEntity records exist, use them.
-    // If none exist yet (legacy data), derive payment records from JobEntryEntity records with amountReceived > 0 or tractorLabel == "Payment"
+    // Upgraded workspaces can contain both explicit Collections and older Entry receipts.
+    // Reconcile their amounts for display without storing synthetic Collections.
     val source = remember(settings.workspaceId, payments, jobs, workspaceMembers, isOwner, currentUid) {
         authorizedCollectionSource(
             workspaceId = settings.workspaceId,
@@ -121,19 +120,21 @@ fun CollectionHistoryTab(
             currentUid = currentUid
         )
     }
-    val effectivePayments = if (source.payments.isNotEmpty()) source.payments else source.legacyJobs.map { j ->
+    val effectivePayments = source.payments + source.legacyJobs.map { j ->
         val (role, name) = RoleUtils.resolveCreatorRoleAndName(j, ownerName, workspaceMembers, partners)
-        PaymentEntity(id = j.id, workspaceId = j.workspaceId, jobEntryId = j.id,
+        PaymentEntity(id = -j.id, workspaceId = j.workspaceId, jobEntryId = j.id,
+            customerId = j.customerId,
             customerName = j.customerName, amount = j.amountReceived,
-            paymentMethod = extractPaymentMethodFromNotes(j.notes),
+            paymentMethod = recordedLegacyPaymentMethod(j.notes),
             collectedAt = j.startTimeMillis.takeIf { it > 0 } ?: j.createdAt,
             collectedByUid = j.createdByUid, collectedByName = name,
             collectedByRole = j.createdByRole.ifBlank { role }, notes = j.notes,
             tractorId = j.tractorId, tractorLabel = j.tractorLabel, isSynced = j.isSynced, createdAt = j.createdAt)
     }
     val jobHistory = remember(settings.workspaceId, effectivePayments, jobs) {
-        collectionJobHistory(settings.workspaceId, effectivePayments, jobs)
+        visibleCollectionJobHistory(collectionJobHistory(settings.workspaceId, effectivePayments, jobs))
     }
+    val storedPaymentIds = source.payments.map { it.id }.toSet()
     val displayPayments = jobHistory.flatMap { group -> group.events.map { event ->
         val p = event.payment
         val collector = com.example.data.auth.CollectionPolicy.collector(p, workspaceMembers)
@@ -146,7 +147,7 @@ fun CollectionHistoryTab(
             notes = p.notes, tractorId = p.tractorId, tractorLabel = p.tractorLabel, status = p.status,
             jobEntryId = group.jobId ?: 0, reversedAt = p.reversedAt, reversedByUid = p.reversedByUid,
             isSynced = p.isSynced,
-            canReverse = source.payments.isNotEmpty() && com.example.data.auth.AuthorizationManager.canReverseCollection(p, isOwner, currentUid, if (isOwner) "Owner" else "Partner")
+            canReverse = p.id in storedPaymentIds && com.example.data.auth.AuthorizationManager.canReverseCollection(p, isOwner, currentUid, if (isOwner) "Owner" else "Partner")
         )
     } }
 
@@ -660,15 +661,12 @@ internal fun authorizedCollectionSource(
     val scopedPayments = payments.filter {
         inWorkspace(it.workspaceId)
     }
-    if (scopedPayments.isNotEmpty()) {
-        return AuthorizedCollectionSource(scopedPayments, emptyList())
-    }
-
-    val scopedLegacyJobs = jobs.filter {
-        inWorkspace(it.workspaceId) &&
-            (it.amountReceived > 0.0 || it.tractorLabel == "Payment" || it.workType == "Payment Received")
-    }
-    return AuthorizedCollectionSource(emptyList(), scopedLegacyJobs)
+    // An upgraded workspace can contain both entry-only receipts and Collections.
+    // Subtract only receipts explicitly allocated to this Entry, never a different
+    // customer's payment or a reversed event. Do not invent dates for missing history:
+    // the remaining legacy amount retains its original Entry date.
+    val scopedLegacyJobs = reconciledLegacyReceiptJobs(workspaceId, scopedPayments, jobs)
+    return AuthorizedCollectionSource(scopedPayments, scopedLegacyJobs)
 }
 
 private data class PaymentDisplayModel(
@@ -694,15 +692,6 @@ private data class PaymentDisplayModel(
     val recordedByName: String = "",
     val recordedByUid: String = ""
 )
-
-private fun extractPaymentMethodFromNotes(notes: String): String {
-    return when {
-        notes.contains("UPI", ignoreCase = true) || notes.contains("GPay", ignoreCase = true) -> "UPI / GPay"
-        notes.contains("Bank", ignoreCase = true) || notes.contains("Transfer", ignoreCase = true) -> "Bank Transfer"
-        notes.contains("Cheque", ignoreCase = true) -> "Cheque"
-        else -> "Cash"
-    }
-}
 
 @Composable
 private fun CollectionHistoryCard(

@@ -99,6 +99,7 @@ fun MainAppContent(
     val unsyncedExpensesCount by viewModel.unsyncedExpensesCount.collectAsState()
     val unsyncedWithdrawalsCount by viewModel.unsyncedWithdrawalsCount.collectAsState()
     val unsyncedCustomersCount by viewModel.unsyncedCustomersCount.collectAsState()
+    val unsyncedPaymentsCount by viewModel.unsyncedPaymentsCount.collectAsState()
     val simulatedOffline by viewModel.simulatedOffline.collectAsState()
     val syncMessage by viewModel.syncMessage.collectAsState()
     val rejectedOperationCount by viewModel.rejectedOperationCount.collectAsState()
@@ -549,7 +550,7 @@ fun MainAppContent(
                     Crossfade(targetState = currentTab, label = "tab_crossfade") { tab ->
                         when (tab) {
                             BottomTab.HOME -> {
-                                val homeSummary = remember(jobs) { com.example.ui.util.HomeRecordSummary.from(jobs) }
+                                val homeSummary = remember(jobs, customers) { com.example.ui.util.HomeRecordSummary.from(jobs, customers) }
                                 HomeScreen(
                                     settings = settings,
                                     totalRecorded = homeSummary.recorded,
@@ -558,6 +559,7 @@ fun MainAppContent(
                                     availableBalance = availableAmount,
                                     recentJobs = todayJobs.take(20),
                                     recordedJobCount = homeSummary.count,
+                                    recordedCustomerCount = homeSummary.customerCount,
                                     expenses = expenses,
                                     isOnline = isOnline,
                                     isSyncing = isSyncing,
@@ -800,18 +802,25 @@ fun MainAppContent(
                                 val currentActorUid = viewModel.currentUid ?: ""
                                 val wsId = settings.workspaceId
                                 val ownerName = settings.ownerName.ifBlank { settings.activePartnerName.ifBlank { "Owner" } }
+                                val canSelectEntryMember = isCollaborationOwner || activeWorkspaceMembers.any {
+                                    it.uid == currentActorUid && it.workspaceId == wsId && it.status.equals("active", true) &&
+                                        com.example.data.auth.RoleUtils.normalizeRole(it.role) == com.example.data.auth.RoleUtils.ROLE_PARTNER
+                                }
+                                val actorDisplayName = activeWorkspaceMembers.firstOrNull {
+                                    it.uid == currentActorUid && it.workspaceId == wsId
+                                }?.displayName.orEmpty().ifBlank { if (isCollaborationOwner) ownerName else settings.activePartnerName.ifBlank { "Partner" } }
 
                                 val draft = newEntryDraft ?: run {
                                     var resolvedUid = currentActorUid
-                                    var resolvedName = ownerName
+                                    var resolvedName = actorDisplayName
                                     var isPersonLocked = false
 
-                                    if (isCollaborationOwner) {
+                                    if (canSelectEntryMember) {
                                         val lockedUid = viewModel.getOwnerLockedPersonUid(currentActorUid, wsId)
                                         if (lockedUid.isNotBlank()) {
                                             if (lockedUid == currentActorUid) {
                                                 resolvedUid = currentActorUid
-                                                resolvedName = ownerName
+                                                resolvedName = actorDisplayName
                                                 isPersonLocked = true
                                             } else {
                                                 val partner = workspaceMembers.firstOrNull { it.status.equals("active", ignoreCase = true) && it.uid == lockedUid }
@@ -874,7 +883,7 @@ fun MainAppContent(
                                         viewModel.updateSettings(settings.copy(lockedTractorLabel = locked))
                                     },
                                     onUpdateLockedPerson = { lockedUid ->
-                                        if (isCollaborationOwner) {
+                                        if (canSelectEntryMember) {
                                             viewModel.setOwnerLockedPersonUid(currentActorUid, wsId, lockedUid)
                                         }
                                     },
@@ -915,6 +924,7 @@ fun MainAppContent(
                                     unsyncedExpensesCount = unsyncedExpensesCount,
                                     unsyncedWithdrawalsCount = unsyncedWithdrawalsCount,
                                     unsyncedCustomersCount = unsyncedCustomersCount,
+                                    unsyncedPaymentsCount = unsyncedPaymentsCount,
                                     totalUnsyncedCount = totalUnsyncedCount,
                                     rejectedOperationCount = rejectedOperationCount,
                                     blockedOperationCount = blockedOperationCount,

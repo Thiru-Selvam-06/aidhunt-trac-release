@@ -82,7 +82,7 @@ fun getEligibleProfitShareParticipants(
 data class ProfitShareDisplayItem(
     val uid: String,
     val displayName: String,
-    val percentage: Int,
+    val percentage: Double,
     val isActive: Boolean
 )
 
@@ -238,12 +238,7 @@ fun WithdrawalTab(
         eligibleProfitShareParticipants.forEach { p ->
             val name = p.displayName
             if (!name.equals(bizName, ignoreCase = true)) {
-                val pct = if (hasConfig) {
-                    profitShareAllocations[p.uid] ?: 0
-                } else {
-                    val status = partnerShareInvestmentStatuses.find { it.partnerUid == p.uid || it.partnerName.equals(name, ignoreCase = true) }
-                    status?.percentage ?: 0
-                }
+                val pct = partnerShareInvestmentStatuses.firstOrNull { it.partnerUid == p.uid }?.percentage ?: 0.0
                 val detail = profitShareAllocationDetails[p.uid]
                 val isActive = detail?.isActive ?: (pct > 0 || !hasConfig)
                 items.add(
@@ -664,7 +659,7 @@ fun WithdrawalTab(
                                         color = if (pct > 0) col.copy(alpha = 0.12f) else Color(0xFFF1F5F9)
                                     ) {
                                         Text(
-                                            text = "$pct%",
+                                            text = com.example.ui.util.formatSharePercentage(pct),
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = col,
@@ -1911,6 +1906,9 @@ fun ConfigurePercentagesDialog(
     val selectedCount = eligibleParticipants.count { selectedMap[it.uid] == true }
     val totalSum = eligibleParticipants.filter { selectedMap[it.uid] == true }.sumOf { draftPercentages[it.uid] ?: 0 }
     val isValid = totalSum == 100 && selectedCount > 0
+    var customEditor by remember { mutableStateOf(false) }
+    val equalDisplay = !customEditor && selectedCount == eligibleParticipants.size &&
+        com.example.ui.util.isEqualShareAllocation(eligibleParticipants.map { it.uid }.toSet(), draftPercentages.toMap())
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1949,6 +1947,9 @@ fun ConfigurePercentagesDialog(
 
                 // Quick Action Bar: Selected count and Equal Share Button (only in editable mode)
                 if (!isReadOnly) {
+                    if (equalDisplay) TextButton(onClick = { customEditor = true }) {
+                        Text(if (isTamil) "தனிப்பயன் சதவீதங்கள்" else "Custom percentages")
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1962,6 +1963,7 @@ fun ConfigurePercentagesDialog(
                         )
                         OutlinedButton(
                             onClick = {
+                                customEditor = false
                                 val selectedList = eligibleParticipants.filter { selectedMap[it.uid] == true }
                                 if (selectedList.isNotEmpty()) {
                                     val count = selectedList.size
@@ -2062,9 +2064,9 @@ fun ConfigurePercentagesDialog(
 
                             // Controls or Excluded label
                             if (isSelected) {
-                                if (isReadOnly) {
+                                if (isReadOnly || equalDisplay) {
                                     Text(
-                                        text = "$currentVal%",
+                                        text = if (equalDisplay) com.example.ui.util.formatSharePercentage(100.0 / selectedCount) else "$currentVal%",
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF0B532E),

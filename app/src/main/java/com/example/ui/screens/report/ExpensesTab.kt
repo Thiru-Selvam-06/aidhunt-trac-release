@@ -334,7 +334,7 @@ fun ExpensesTab(
                 )
             }
             ExpenseScreenView.EXPENSE_DETAILS -> {
-                activeExpense?.let { expense ->
+                activeExpense?.let { selected -> expenses.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { expense ->
                     val canEdit = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canEditExpense(
                         expense = expense,
                         isOwner = isOwner,
@@ -428,8 +428,6 @@ fun ExpenseReportListScreen(
         expenses.forEach { exp ->
             val op = exp.operatorName.trim()
             if (op.isNotBlank()) set.add(op)
-            val added = exp.addedByPartner.trim()
-            if (added.isNotBlank()) set.add(added)
         }
         set.toList()
     }
@@ -444,8 +442,7 @@ fun ExpenseReportListScreen(
                 exp.tractorLabel.contains(searchQuery, ignoreCase = true)
         // Dropdowns
         val matchesOperator = selectedOperatorFilter == "All" ||
-                exp.operatorName.contains(selectedOperatorFilter, ignoreCase = true) ||
-                exp.addedByPartner.contains(selectedOperatorFilter, ignoreCase = true)
+                exp.operatorName.trim().equals(selectedOperatorFilter, ignoreCase = true)
         val matchesTractor = selectedTractorFilter == "All" ||
                 exp.tractorLabel.contains(selectedTractorFilter, ignoreCase = true)
         val matchesType = selectedTypeFilter == "All" ||
@@ -1201,7 +1198,9 @@ fun ExpenseListItemRow(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                val opName = expense.operatorName.ifBlank { expense.addedByPartner }
+                val opName = if (expense.paidBy.trim().equals("Business Paid", true)) {
+                    if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid · Shared expense"
+                } else expense.paidByPartner.ifBlank { if (isTamil) "செலுத்தியவர் விவரம் இல்லை" else "Payer unavailable" }
                 if (opName.isNotBlank()) {
                     Text(
                         text = opName,
@@ -1367,14 +1366,19 @@ fun AddOrEditExpenseScreen(
             } else {
                 actorName.ifBlank { settings.activePartnerName.ifBlank { "Partner" } }
             }
-            val cleanOperator = if (!isOwner) currentActor else selectedOperator.substringBefore(" (").trim()
+            val cleanOperator = initialExpense?.operatorName
+                ?: if (!isOwner) currentActor else selectedOperator.substringBefore(" (").trim()
             val finalAddedByPartner = if (!isOwner) currentActor else (initialExpense?.addedByPartner?.ifBlank { null } ?: currentActor)
             val isBusinessPaid = selectedWhoPaid.equals("Business Paid", ignoreCase = true)
             val finalPaidByPartner = if (!isBusinessPaid) {
-                if (!isOwner) currentActor else (cleanOperator.ifBlank { currentActor })
+                initialExpense?.paidByPartner?.takeIf { it.isNotBlank() }
+                    ?: workspaceMembers.firstOrNull { it.uid == (initialExpense?.expenseForUid ?: selectedTargetUid) }
+                        ?.displayName.orEmpty().ifBlank { cleanOperator.ifBlank { currentActor } }
             } else ""
             val finalPaidByUid = if (!isBusinessPaid) {
-                if (!isOwner) currentUid else (initialExpense?.paidByUid?.takeIf { it.isNotBlank() } ?: selectedTargetUid)
+                initialExpense?.paidByUid?.takeIf { it.isNotBlank() }
+                    ?: initialExpense?.expenseForUid?.takeIf { it.isNotBlank() }
+                    ?: if (!isOwner) currentUid else selectedTargetUid
             } else ""
             val targetMemberUid = if (isOwner) selectedTargetUid else currentUid
 
@@ -1387,6 +1391,7 @@ fun AddOrEditExpenseScreen(
                 tractorLabel = selectedTractor,
                 operatorName = cleanOperator,
                 description = descriptionText,
+                relatedJobId = initialExpense?.relatedJobId,
                 addedByPartner = finalAddedByPartner,
                 dateTimestamp = selectedTimestamp,
                 createdAt = initialExpense?.createdAt ?: System.currentTimeMillis(),
@@ -1522,10 +1527,10 @@ fun AddOrEditExpenseScreen(
                             icon = Icons.Default.Person,
                             label = if (isTamil) "இயக்குநர்*" else "Operator*",
                             value = selectedOperator,
-                            isDropdown = isOwner && operatorOptions.size > 1,
-                            onClick = { if (isOwner && operatorOptions.size > 1) isOperatorDropdownOpen = true }
+                            isDropdown = initialExpense == null && isOwner && operatorOptions.size > 1,
+                            onClick = { if (initialExpense == null && isOwner && operatorOptions.size > 1) isOperatorDropdownOpen = true }
                         )
-                        if (isOwner && operatorOptions.size > 1) {
+                        if (initialExpense == null && isOwner && operatorOptions.size > 1) {
                             DropdownMenu(
                                 expanded = isOperatorDropdownOpen,
                                 onDismissRequest = { isOperatorDropdownOpen = false }
@@ -1981,6 +1986,14 @@ fun ExpenseDetailsScreen(
                     }
                     Divider(color = Color(0xFFF3F4F6), thickness = 1.dp)
                     // Row 3: Added By & Created At
+                    DetailInfoItem(
+                        modifier = Modifier.fillMaxWidth(),
+                        icon = Icons.Default.Person,
+                        label = if (isTamil) "செலுத்தியவர்" else "Paid By",
+                        value = if (expense.paidBy.trim().equals("Business Paid", true)) {
+                            if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid · Shared expense"
+                        } else expense.paidByPartner.ifBlank { "I Paid" }
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)

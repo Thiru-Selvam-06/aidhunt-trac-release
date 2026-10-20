@@ -20,7 +20,9 @@ async function fixture(role="PARTNER",extra={}) {
 }
 for(const role of ["OWNER","PARTNER","OPERATOR"]) test(role+" hard-deletes authorized unpaid source and clears final due",async()=>{
  const f=await fixture(role);await f.run();assert.equal((await f.ws.collection("entries").doc("1").get()).exists,false);
- const c=(await f.ws.collection("customers").doc("2").get()).data();assert.equal(Number(c.balanceDue),0);assert.equal(Number(c.totalBilled),0);
+ const customer=await f.ws.collection("customers").doc("2").get();
+ if(role==="OWNER") assert.equal(customer.exists,false);
+ else {assert.equal(customer.exists,true);assert.equal(Number(customer.get("balanceDue")),0);}
 });
 test("duplicate acknowledged command returns same result; missing unacknowledged command fails",async()=>{const f=await fixture();await f.run();await f.run();await assert.rejects(f.run(f.creator,"another"));await assert.rejects(f.run("other"));});
 for(const extra of [{isHistorical:true},{authorizationCreatedAt:Timestamp.fromMillis(Date.now()-72*3600000)},{authorizationCreatedAt:null}]) test("non-Owner historical, expired or untrusted creation blocks deletion "+JSON.stringify(extra),async()=>{const f=await fixture("PARTNER",extra);await assert.rejects(f.run());assert.equal((await f.ws.collection("entries").doc("1").get()).exists,true);});

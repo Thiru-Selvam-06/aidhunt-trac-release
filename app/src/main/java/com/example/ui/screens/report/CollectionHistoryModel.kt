@@ -14,6 +14,33 @@ internal data class CollectionJobHistory(
     val allocationNeedsReview: Boolean = false
 )
 
+/** History cards require a retained source job; stored receipts and reversals remain audit data. */
+internal fun visibleCollectionJobHistory(groups: List<CollectionJobHistory>): List<CollectionJobHistory> =
+    groups.filter { it.job != null && it.events.isNotEmpty() }
+
+/** One projection for report history and cash balances; explicit receipts are never counted twice. */
+internal fun reconciledLegacyReceiptJobs(workspaceId: String, payments: List<PaymentEntity>, jobs: List<JobEntryEntity>): List<JobEntryEntity> {
+    if (workspaceId.isBlank()) return emptyList()
+    val history = collectionJobHistory(workspaceId, payments, jobs)
+    val represented = history.filter { it.jobId != null }.associate { group ->
+        group.jobId to group.events.filter { it.payment.status == "ACTIVE" }.sumOf { it.amount }
+    }
+    val ambiguous = history.filter { it.jobId == null }.flatMap { it.events }
+        .map { it.payment.customerId }.filter { it > 0 }.toSet()
+    return jobs.filter { it.workspaceId == workspaceId && it.amountReceived > 0 }.mapNotNull { job ->
+        if (job.customerId in ambiguous) null else (job.amountReceived - (represented[job.id] ?: 0.0))
+            .takeIf { it > 0.000001 }?.let { job.copy(amountReceived = it) }
+    }
+}
+
+internal fun recordedLegacyPaymentMethod(notes: String): String = when {
+    notes.contains("UPI", true) || notes.contains("GPay", true) -> "UPI / GPay"
+    notes.contains("Bank", true) || notes.contains("Transfer", true) -> "Bank Transfer"
+    notes.contains("Cheque", true) -> "Cheque"
+    notes.contains("Cash", true) -> "Cash"
+    else -> "Method not recorded"
+}
+
 /** Read-only presentation projection. No payment, allocation, or Entry balance is mutated.
  * Missing/invalid relationships stay separate rather than grouping unrelated customer payments.
  */

@@ -45,7 +45,11 @@ function plannedCollectionDeletes(entry, collections, id, role, uid, actionTime)
     total+=amount;
   }
   const billed=Number(entry.totalAmount), paid=Number(entry.amountReceived), due=Number(entry.pendingAmount);
-  if(![billed,paid,due,total].every(Number.isFinite) || billed<0 || Math.abs(paid-total)>=0.01 ||
+  // The user-approved future explicit Owner deletion also removes a pre-collection
+  // embedded receipt. This is never a cleanup/migration or a bulk-delete instruction.
+  const embeddedLegacyReceipt = role==="OWNER" && linked.length===0 && !entry.collectionId &&
+    entry.protocolVersion==null && !entry.authorizationTimeStatus && paid>=0 && paid<=billed;
+  if(![billed,paid,due,total].every(Number.isFinite) || billed<0 || (!embeddedLegacyReceipt && Math.abs(paid-total)>=0.01) ||
      Math.abs(billed-paid-due)>=0.01)
     throw Error("Entry and Collection balances need reconciliation before deletion");
   return active;
@@ -53,11 +57,18 @@ function plannedCollectionDeletes(entry, collections, id, role, uid, actionTime)
 function customerTotals(entries) {
   const jobs=entries.filter(e=>!e.isDeleted);
   const work=jobs.filter(e=>String(e.tractorLabel).toLowerCase()!=="payment" && String(e.workType).toLowerCase()!=="payment received");
+  if(work.length===0) return {totalBilled:0,totalPaid:0,balanceDue:0};
   const billed=work.reduce((sum,e)=>sum+(Number(e.totalAmount)>0?Number(e.totalAmount):Number(e.amountReceived)+Number(e.pendingAmount)),0);
   const paid=jobs.reduce((sum,e)=>sum+Number(e.amountReceived),0);
-  const rawDue=work.reduce((sum,e)=>sum+(Number(e.pendingAmount)>0?Number(e.pendingAmount):Math.max(0,Number(e.totalAmount)-Number(e.amountReceived))),0);
-  if(![billed,paid,rawDue].every(Number.isFinite)) throw Error("Customer balances contain invalid records");
+  if(![billed,paid].every(Number.isFinite)) throw Error("Customer balances contain invalid records");
   const round=value=>Math.max(0,Math.round(value));
-  return {totalBilled:round(billed),totalPaid:round(paid),balanceDue:round(Math.max(0,Math.min(rawDue,billed-paid)))};
+  return {totalBilled:round(billed),totalPaid:round(paid),balanceDue:Math.max(0,round(billed)-round(paid))};
 }
-module.exports={references, requireUnpaid,plannedCollectionDeletes,customerTotals};
+function customerAfterEntryDeletion(customerId, retainedEntries, retainedCollections, entryId) {
+  const entries = retainedEntries.filter(e => String(e.customerId) === customerId);
+  const collections = retainedCollections.filter(c => String(c.customerId) === customerId ||
+    (entryId !== undefined && references(c, entryId)));
+  return { deleteCustomer: entries.length === 0 && collections.length === 0,
+    totals: customerTotals(entries) };
+}
+module.exports={references, requireUnpaid,plannedCollectionDeletes,customerTotals,customerAfterEntryDeletion};

@@ -10,13 +10,16 @@ internal fun businessOverviewChartMembers(
     currentUid: String,
     workspaceId: String
 ): List<PartnerFinancialBreakdown> {
-    if (currentUid.isBlank() || workspaceId.isBlank()) return breakdowns
+    if (currentUid.isBlank() || workspaceId.isBlank()) return emptyList()
     val eligible = members.filter {
         it.uid.isNotBlank() && it.workspaceId == workspaceId && it.status.equals("ACTIVE", true) &&
             RoleUtils.normalizeRole(it.role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER)
     }.distinctBy { it.uid }
-    val self = eligible.firstOrNull { it.uid == currentUid } ?: return breakdowns
-    val rows = breakdowns.distinctBy { it.partnerUid }.toMutableList()
+    val self = eligible.firstOrNull { it.uid == currentUid } ?: return emptyList()
+    val knownIds = members.filter { it.workspaceId == workspaceId &&
+        (it.status.equals("ACTIVE", true) || it.status.equals("REMOVED", true)) }.map { it.uid }.toSet()
+    val rows = breakdowns.filter { it.partnerUid.isNotBlank() && it.partnerUid in knownIds }
+        .distinctBy { it.partnerUid }.toMutableList()
     eligible.forEach { member ->
         if (rows.none { it.partnerUid == member.uid }) rows.add(PartnerFinancialBreakdown(
             partnerUid = member.uid,

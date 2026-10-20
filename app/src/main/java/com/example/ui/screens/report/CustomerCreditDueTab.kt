@@ -303,7 +303,7 @@ fun CustomerCreditDueTab(
         }
     }
     val synchronizedCustomers = remember(customers, jobs) {
-        com.example.ui.util.FinancialCalculationEngine.synchronizeCustomers(customers, jobs)
+        com.example.ui.util.FinancialCalculationEngine.customersWithLedger(customers, jobs)
     }
     val filteredCustomers = remember(
         synchronizedCustomers,
@@ -331,7 +331,7 @@ fun CustomerCreditDueTab(
                 true
             } else {
                 val hasJobInDate = jobs.any { j ->
-                    (j.customerId == c.id || (c.phone.isNotBlank() && j.customerPhone == c.phone)) &&
+                    j.workspaceId == c.workspaceId && j.customerId == c.id &&
                             j.startTimeMillis in dateFilterStart..dateFilterEnd
                 }
                 val hasCustomerUpdatedInDate = c.updatedAt in dateFilterStart..dateFilterEnd || c.createdAt in dateFilterStart..dateFilterEnd
@@ -813,9 +813,9 @@ fun CustomerCreditDueTab(
         }
     }
     // Customer Statement & Details Bottom Sheet
-    selectedCustomer?.let { customer ->
+    selectedCustomer?.let { selected -> synchronizedCustomers.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { customer ->
         // Keep updated customer data if changed in list
-        val currentCustomer = synchronizedCustomers.find { it.id == customer.id } ?: customer
+        val currentCustomer = customer
         val customerJobs = jobs.filter {
             it.workspaceId == currentCustomer.workspaceId && it.customerId == currentCustomer.id
         }
@@ -857,8 +857,8 @@ fun CustomerCreditDueTab(
         )
     }
     // Dialog to Add Payment for Customer
-    customerForPayment?.let { customer ->
-        val currentCustomer = synchronizedCustomers.find { it.id == customer.id } ?: customer
+    customerForPayment?.let { selected -> synchronizedCustomers.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { customer ->
+        val currentCustomer = customer
         RecordCustomerPaymentDialog(
             customer = currentCustomer,
             settings = settings,
@@ -1002,10 +1002,10 @@ fun CustomerCreditDueTab(
         )
     }
 
-    pdfCustomerSelected?.let { customer ->
-        val currentCustomer = synchronizedCustomers.find { it.id == customer.id } ?: customer
+    pdfCustomerSelected?.let { selected -> synchronizedCustomers.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { customer ->
+        val currentCustomer = customer
         val custJobs = jobs.filter {
-            it.customerId == currentCustomer.id || it.customerName.equals(currentCustomer.name, ignoreCase = true)
+            it.workspaceId == currentCustomer.workspaceId && it.customerId == currentCustomer.id
         }
         PdfOptionsDialog(
             title = if (isTamil) "வாடிக்கையாளர் அறிக்கை PDF" else "Customer Statement PDF",
@@ -1740,7 +1740,7 @@ fun CustomerDetailSheet(
         }
     }
 
-    selectedJobForDetail?.let { job ->
+    selectedJobForDetail?.let { selected -> jobs.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { job ->
         CustomerSummaryPopup(
             job = job,
             settings = settings,

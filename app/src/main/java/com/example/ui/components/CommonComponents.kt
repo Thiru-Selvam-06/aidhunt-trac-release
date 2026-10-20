@@ -370,12 +370,15 @@ fun PdfExportDialog(
 }
 
 fun formatInr(amount: Double, currency: String = "₹"): String {
+    val cents = java.math.BigDecimal.valueOf(amount.takeIf { it.isFinite() } ?: 0.0)
+        .setScale(2, java.math.RoundingMode.HALF_UP)
+    if (cents.stripTrailingZeros().scale() > 0) return currency + String.format(Locale.US, "%,.2f", cents)
     val rounded = Math.round(amount)
     return currency + String.format(Locale.US, "%,d", rounded)
 }
 
 fun formatInrWithDecimals(amount: Double, currency: String = "₹"): String {
-    return formatInr(amount, currency)
+    return currency + String.format(Locale.US, "%,.2f", amount)
 }
 
 fun formatDate(timeMillis: Long): String {

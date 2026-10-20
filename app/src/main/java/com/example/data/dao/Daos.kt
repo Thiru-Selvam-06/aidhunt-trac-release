@@ -191,6 +191,9 @@ interface CustomerDao {
     @Query("SELECT COUNT(*) FROM customers WHERE workspaceId = :workspaceId AND isSynced = 0")
     fun getUnsyncedCountForWorkspace(workspaceId: String): Flow<Int>
 
+    @Query("SELECT id FROM customers WHERE workspaceId = :workspaceId AND isSynced = 0")
+    fun observeUnsyncedIdsForWorkspace(workspaceId: String): Flow<List<Long>>
+
     @Query("SELECT COUNT(*) FROM customers WHERE isSynced = 0")
     fun getUnsyncedCount(): Flow<Int>
 }
@@ -293,6 +296,9 @@ interface JobEntryDao {
     @Query("SELECT COUNT(*) FROM job_entries WHERE workspaceId = :workspaceId AND isSynced = 0")
     fun getUnsyncedCountForWorkspace(workspaceId: String): Flow<Int>
 
+    @Query("SELECT id FROM job_entries WHERE workspaceId = :workspaceId AND isSynced = 0")
+    fun observeUnsyncedIdsForWorkspace(workspaceId: String): Flow<List<Long>>
+
     @Query("SELECT COUNT(*) FROM job_entries WHERE workspaceId IN (:workspaceIds) AND isSynced = 0")
     fun getUnsyncedCountForWorkspaces(workspaceIds: List<String>): Flow<Int>
 
@@ -374,6 +380,9 @@ interface ExpenseDao {
     @Query("SELECT COUNT(*) FROM expenses WHERE workspaceId = :workspaceId AND isSynced = 0")
     fun getUnsyncedCountForWorkspace(workspaceId: String): Flow<Int>
 
+    @Query("SELECT id FROM expenses WHERE workspaceId = :workspaceId AND isSynced = 0")
+    fun observeUnsyncedIdsForWorkspace(workspaceId: String): Flow<List<Long>>
+
     @Query("SELECT COUNT(*) FROM expenses WHERE workspaceId IN (:workspaceIds) AND isSynced = 0")
     fun getUnsyncedCountForWorkspaces(workspaceIds: List<String>): Flow<Int>
 
@@ -446,6 +455,9 @@ interface WithdrawalDao {
     @Query("SELECT COUNT(*) FROM withdrawals WHERE workspaceId = :workspaceId AND isSynced = 0")
     fun getUnsyncedCountForWorkspace(workspaceId: String): Flow<Int>
 
+    @Query("SELECT id FROM withdrawals WHERE workspaceId = :workspaceId AND isSynced = 0")
+    fun observeUnsyncedIdsForWorkspace(workspaceId: String): Flow<List<Long>>
+
     @Query("SELECT COUNT(*) FROM withdrawals WHERE workspaceId IN (:workspaceIds) AND isSynced = 0")
     fun getUnsyncedCountForWorkspaces(workspaceIds: List<String>): Flow<Int>
 
@@ -517,6 +529,9 @@ interface PaymentDao {
 
     @Query("SELECT * FROM payments WHERE workspaceId = :workspaceId AND isSynced = 0")
     suspend fun getUnsyncedPaymentsForWorkspace(workspaceId: String): List<PaymentEntity>
+
+    @Query("SELECT id FROM payments WHERE workspaceId = :workspaceId AND isSynced = 0")
+    fun observeUnsyncedIdsForWorkspace(workspaceId: String): Flow<List<Long>>
 
     @Query("UPDATE payments SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)")
     suspend fun markPaymentsSynced(workspaceId: String, ids: List<Long>)

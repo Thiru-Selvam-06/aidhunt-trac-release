@@ -379,11 +379,12 @@ object AuthorizationManager {
     /**
      * ENTRY FOR PERMISSION RULE:
      * - OWNER: Can create entry for self or any valid workspace member.
-     * - PARTNER: Self only.
+     * - PARTNER: Self or another active member (validated by the repository/server).
      * - OPERATOR: Self only.
      */
-    fun canCreateEntryFor(isOwner: Boolean, currentActorUid: String, targetPersonUid: String): Boolean {
-        return currentActorUid.isNotBlank() && targetPersonUid.isNotBlank() && (isOwner || targetPersonUid == currentActorUid)
+    fun canCreateEntryFor(isOwner: Boolean, currentActorUid: String, targetPersonUid: String, role: String = ""): Boolean {
+        return currentActorUid.isNotBlank() && targetPersonUid.isNotBlank() &&
+            (isOwner || RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER || targetPersonUid == currentActorUid)
     }
 
     /**

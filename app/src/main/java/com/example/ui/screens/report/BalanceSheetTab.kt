@@ -127,8 +127,9 @@ fun BalanceSheetTab(
                 }
 
                 map.entries.sortedByDescending { it.value.first }.map { (dateLabel, data) ->
-                    val sales = data.second.sumOf { it.amountReceived }
-                    val exp = data.third.sumOf { it.amount }
+                    val ledger = FinancialCalculationEngine.calculateSummary(data.second, data.third, emptyList(), FinancialScope())
+                    val sales = ledger.totalReceived
+                    val exp = ledger.totalExpenses
                     BreakdownPeriodGroup(
                         key = "day_$dateLabel",
                         title = dateLabel,
@@ -177,8 +178,9 @@ fun BalanceSheetTab(
                 }
 
                 map.entries.sortedByDescending { it.value.first }.map { (monthLabel, data) ->
-                    val sales = data.second.sumOf { it.amountReceived }
-                    val exp = data.third.sumOf { it.amount }
+                    val ledger = FinancialCalculationEngine.calculateSummary(data.second, data.third, emptyList(), FinancialScope())
+                    val sales = ledger.totalReceived
+                    val exp = ledger.totalExpenses
                     BreakdownPeriodGroup(
                         key = "month_$monthLabel",
                         title = monthLabel,
@@ -219,8 +221,9 @@ fun BalanceSheetTab(
                 }
 
                 map.entries.sortedByDescending { it.value.first }.map { (yearLabel, data) ->
-                    val sales = data.second.sumOf { it.amountReceived }
-                    val exp = data.third.sumOf { it.amount }
+                    val ledger = FinancialCalculationEngine.calculateSummary(data.second, data.third, emptyList(), FinancialScope())
+                    val sales = ledger.totalReceived
+                    val exp = ledger.totalExpenses
                     BreakdownPeriodGroup(
                         key = "year_$yearLabel",
                         title = yearLabel,

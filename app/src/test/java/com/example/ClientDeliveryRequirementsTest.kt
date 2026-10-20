@@ -11,7 +11,7 @@ import com.example.data.firebase.WorkspaceMember
 import com.example.ui.screens.account.pendingInvitationForUnresolvedPartner
 import com.example.ui.util.isRecentJobToday
 import com.example.ui.util.recentJobDisplayTimestamp
-import com.example.data.repository.enforceSelfOnlyEntryIdentity
+import com.example.data.repository.enforceEntryIdentity
 import com.example.ui.screens.report.WithdrawalCategories
 import com.example.ui.screens.report.authorizedCollectionSource
 import com.example.ui.util.FinancialCalculationEngine
@@ -565,14 +565,15 @@ class ClientDeliveryRequirementsTest {
     }
 
     @Test
-    fun partnerNewEntry_identityIsSelfOnly_evenWhenSubmittedNameIsStale() {
+    fun partnerNewEntry_preservesSelectedPersonAndRealCreator() {
         val submitted = createJob(id = 140L, createdByUid = "mi_uid").copy(
             operatorName = "Perumal",
+            entryForUid = "perumal_uid",
             addedByPartner = "Perumal",
             createdByRole = "Operator"
         )
 
-        val saved = enforceSelfOnlyEntryIdentity(
+        val saved = enforceEntryIdentity(
             job = submitted,
             actorUid = "mi_uid",
             actorRole = "Partner",
@@ -581,13 +582,14 @@ class ClientDeliveryRequirementsTest {
 
         assertEquals("mi_uid", saved.createdByUid)
         assertEquals("Partner", saved.createdByRole)
-        assertEquals("MI", saved.operatorName)
+        assertEquals("Perumal", saved.operatorName)
+        assertEquals("perumal_uid", saved.entryForUid)
         assertEquals("MI", saved.addedByPartner)
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun partnerNewEntry_identityFailsClosedWithoutAuthenticatedUid() {
-        enforceSelfOnlyEntryIdentity(
+        enforceEntryIdentity(
             job = createJob(id = 141L),
             actorUid = "",
             actorRole = "Partner",

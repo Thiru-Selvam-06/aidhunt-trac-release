@@ -164,9 +164,10 @@ class PartnerWithdrawalsProfitShareTest {
         val p1 = statuses.find { it.partnerUid == "p1_uid" }!!
         val p2 = statuses.find { it.partnerUid == "p2_uid" }!!
 
-        assertEquals(1700.0, owner.totalShare, 0.01)
-        assertEquals(1650.0, p1.totalShare, 0.01)
-        assertEquals(1650.0, p2.totalShare, 0.01)
+        assertEquals(1666.67, owner.totalShare, 0.001)
+        assertEquals(1666.67, p1.totalShare, 0.001)
+        assertEquals(1666.66, p2.totalShare, 0.001)
+        assertTrue(statuses.all { kotlin.math.abs(it.percentage - 100.0 / 3) < 0.000001 })
     }
 
     @Test
