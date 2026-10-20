@@ -786,6 +786,11 @@ class FirestoreRepository(
         }
     }
 
+    suspend fun getCustomerDeletionProofFromServer(workspaceId: String, customerId: Long): Map<String, Any?>? =
+        (db ?: throw IllegalStateException("Firestore unavailable")).collection("workspaces").document(workspaceId)
+            .collection("customerDeletionProofs").document(customerId.toString())
+            .get(com.google.firebase.firestore.Source.SERVER).await().data
+
     /** Explicit server read for rejected-action recovery; never falls back to the SDK cache. */
     suspend fun getOperationRecordFromServer(op: com.example.data.entity.PendingOperationEntity): Map<String, Any?>? {
         val collection = when(op.entityType) {

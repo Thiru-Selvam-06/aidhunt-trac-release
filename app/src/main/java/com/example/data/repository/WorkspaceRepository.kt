@@ -1373,6 +1373,17 @@ class WorkspaceRepository(
         val snapshotActorUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
         if (snapshotActorUid.isNullOrBlank() || activeUid != snapshotActorUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) return
         try {
+            // ACK can finish before a previously delivered customer snapshot is applied.
+            // Check actual server proof, since deleting one job may leave other customer jobs intact.
+            val sourceCustomerIds = operations.observe(listenerWsId).first().filter {
+                it.entityType == "JOB" && it.mutationType == "DELETE" && it.state == "ACKNOWLEDGED"
+            }.map { org.json.JSONObject(it.payloadJson).optLong("customerId") }.toSet()
+            val confirmedDeletedIds = mutableSetOf<Long>()
+            for (customer in remoteCustomers.filter { it.id in sourceCustomerIds }) {
+                val proof = firestoreRepository.getCustomerDeletionProofFromServer(listenerWsId, customer.id)
+                if (com.example.data.sync.ConfirmedEntryDeletion.matchesCustomerProof(customer, proof))
+                    confirmedDeletedIds.add(customer.id)
+            }
             database.withTransaction {
                 if (activeUid != snapshotActorUid || getEffectiveActorUid() != snapshotActorUid ||
                     !_visibleWorkspaceIds.value.contains(listenerWsId)) return@withTransaction
@@ -1380,7 +1391,7 @@ class WorkspaceRepository(
                 // Serialize the source rows and pending protection with deletion/acknowledgement.
                 val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("CUSTOMER", listenerWsId)
                 val unsyncedIds = customerDao.getUnsyncedCustomersForWorkspace(listenerWsId).map { it.id }.toSet()
-                val retained = remoteCustomers.filterNot { it.id in pendingDeleteIds }
+                val retained = remoteCustomers.filterNot { it.id in pendingDeleteIds || it.id in confirmedDeletedIds }
                 val jobs = jobEntryDao.getJobsForWorkspaceOnce(listenerWsId)
                 val deletedSourceCustomers = operations.observe(listenerWsId).firstOrNull().orEmpty().filter {
                     it.entityType == "JOB" && it.mutationType == "DELETE" && it.state == "ACKNOWLEDGED"
@@ -1552,14 +1563,6 @@ class WorkspaceRepository(
         _workspaceInitState.value = WorkspaceInitState.CachedReady(wsId)
         _isInitialized.value = true
         _verifiedWorkspaceContext.value = uid to _activeWorkspaceId.value.orEmpty()
-    }
-
-    /** Restore only the authenticated account's last verified selection, never choose a queue's workspace. */
-    internal fun restoreBackgroundSyncSession(uid: String): String? {
-        if (uid.isBlank() || getEffectiveActorUid() != uid) return null
-        if (_verifiedWorkspaceContext.value == null && _activeWorkspaceId.value.isNullOrBlank())
-            restoreVerifiedMembership(uid)
-        return _activeWorkspaceId.value?.takeIf { _verifiedWorkspaceContext.value == (uid to it) }
     }
 
     private val syncMutex = Mutex()

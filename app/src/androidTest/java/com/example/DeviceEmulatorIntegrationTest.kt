@@ -182,14 +182,15 @@ class DeviceEmulatorIntegrationTest {
   db.pendingOperationDao().insert(deletion);workspace.pushUnsyncedToCloud(isOnline=true)
   assertEquals("ACKNOWLEDGED",db.pendingOperationDao().observe(ws).first().first{it.operationId==deletion.operationId}.state)
   assertNull(db.jobEntryDao().getJobById(ws,id))
-  val local=db.customerDao().getCustomerById(ws,id)!!;assertTrue(local.isSynced);assertEquals(0.0,local.totalBilled,0.001);assertEquals(0.0,local.balanceDue,0.001)
-  val remote=cloud.document("workspaces/$ws/customers/$id").get(Source.SERVER).await();assertEquals(0.0,remote.getDouble("totalBilled")!!,0.001);assertEquals(0.0,remote.getDouble("balanceDue")!!,0.001)
+  assertNull("The final source deletion removes its customer too",db.customerDao().getCustomerById(ws,id))
+  assertFalse(cloud.document("workspaces/$ws/customers/$id").get(Source.SERVER).await().exists())
+  assertEquals(deletion.operationId,cloud.document("workspaces/$ws/customerDeletionProofs/$id").get(Source.SERVER).await().getString("operationId"))
   workspace.syncRemoteCustomersToLocal(listOf(customerFromFirestoreMap(customer)),ws)
-  val afterStale=db.customerDao().getCustomerById(ws,id)!!;assertTrue(afterStale.isSynced);assertEquals(0.0,afterStale.totalBilled,0.001);assertEquals(0.0,afterStale.balanceDue,0.001)
+  assertNull("Stale customer snapshot cannot resurrect the deleted customer",db.customerDao().getCustomerById(ws,id))
   val retained=cloud.collection("workspaces/$ws/entries").get(Source.SERVER).await().documents.map{jobEntryFromFirestoreMap(it.data!!)}
   workspace.syncRemoteJobsToLocal(retained+jobEntryFromFirestoreMap(data),ws)
   assertNull("Delayed Entry snapshot cannot resurrect a confirmed deleted source",db.jobEntryDao().getJobById(ws,id))
-  val afterEntrySnapshot=db.customerDao().getCustomerById(ws,id)!!;assertEquals(0.0,afterEntrySnapshot.totalBilled,0.001);assertEquals(0.0,afterEntrySnapshot.balanceDue,0.001)
+  assertNull(db.customerDao().getCustomerById(ws,id))
  }
  @Test(timeout=90000) fun kBackgroundColdStartRestoresOnlyOriginalVerifiedSession()=runBlocking {
   login("owner")
@@ -200,13 +201,14 @@ class DeviceEmulatorIntegrationTest {
   val warm=com.example.data.repository.WorkspaceRepository.getInstance(context,db)
   assertTrue(warm.initializeForUser(profile).isSuccess)
   val cold=com.example.data.repository.WorkspaceRepository(context,db,FirestoreRepository(context))
-  assertNull(cold.verifiedWorkspaceContext.value)
-  assertNull(cold.restoreBackgroundSyncSession("device-partner"))
-  assertNull(cold.verifiedWorkspaceContext.value)
-  assertEquals(ws,cold.restoreBackgroundSyncSession("device-owner"))
   assertEquals("device-owner" to ws,cold.verifiedWorkspaceContext.value)
-  // Restoration alone does not upload: push still revalidates membership at the server.
   assertEquals(ws,cold.activeWorkspaceId.value)
+  try {
+   login("partner")
+   val other=com.example.data.repository.WorkspaceRepository(context,db,FirestoreRepository(context))
+   assertNull("Another account cannot restore the Owner's saved selection",other.verifiedWorkspaceContext.value)
+   assertNull(other.activeWorkspaceId.value)
+  } finally {login("owner")}
  }
  @Test(timeout=120000) fun lOfflineNewJobCollectionExpenseAndIndependentPartnerReplica()=runBlocking {
   login("owner")

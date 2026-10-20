@@ -93,4 +93,17 @@ class OfflineSyncReliabilityTest {
         try {QueuedWriteConflict.requireUnchanged("JOB","null",base,op().entityId,op().workspaceId);fail("Collision allowed")}catch(_:IllegalArgumentException){}
         try {QueuedWriteConflict.requireUnchanged("JOB",JSONObject(base).toString(),base+mapOf("id" to op().entityId+1),op().entityId,op().workspaceId);fail("Long IDs rounded")}catch(_:IllegalArgumentException){}
     }
+    @Test fun confirmedCustomerProofPreventsStaleResurrectionOnlyForExactIdentity() {
+        val customer=com.example.data.entity.CustomerEntity(id=9007199254740995L,workspaceId="workspace-a",name="Synthetic",createdAt=1000)
+        val proof=mapOf<String,Any?>("workspaceId" to customer.workspaceId,"recordId" to customer.id.toString(),"sourceCreatedAt" to 1000L)
+        assertTrue(ConfirmedEntryDeletion.matchesCustomerProof(customer,proof))
+        assertFalse(ConfirmedEntryDeletion.matchesCustomerProof(customer,proof+mapOf("workspaceId" to "foreign")))
+        assertFalse(ConfirmedEntryDeletion.matchesCustomerProof(customer,proof+mapOf("recordId" to (customer.id+1).toString())))
+        assertFalse(ConfirmedEntryDeletion.matchesCustomerProof(customer,proof+mapOf("sourceCreatedAt" to 1001L)))
+    }
+    @Test fun deletingOneSourceDoesNotSuppressACustomerWithoutServerDeletionProof() {
+        val customer=com.example.data.entity.CustomerEntity(id=2,workspaceId="workspace-a",name="Retained customer",createdAt=1000)
+        assertFalse(ConfirmedEntryDeletion.matchesCustomerProof(customer,null))
+        assertFalse(ConfirmedEntryDeletion.matchesCustomerProof(customer,emptyMap()))
+    }
 }
