@@ -185,8 +185,10 @@ class DeviceEmulatorIntegrationTest {
   assertNull("The final source deletion removes its customer too",db.customerDao().getCustomerById(ws,id))
   assertFalse(cloud.document("workspaces/$ws/customers/$id").get(Source.SERVER).await().exists())
   assertEquals(deletion.operationId,cloud.document("workspaces/$ws/customerDeletionProofs/$id").get(Source.SERVER).await().getString("operationId"))
-  workspace.syncRemoteCustomersToLocal(listOf(customerFromFirestoreMap(customer)),ws)
+  val retainedCustomers=cloud.collection("workspaces/$ws/customers").get(Source.SERVER).await().documents.map{customerFromFirestoreMap(it.data!!)}
+  workspace.syncRemoteCustomersToLocal(retainedCustomers+customerFromFirestoreMap(customer),ws)
   assertNull("Stale customer snapshot cannot resurrect the deleted customer",db.customerDao().getCustomerById(ws,id))
+  assertNotNull("Customers with other retained jobs must survive",db.customerDao().getCustomerById(ws,2))
   val retained=cloud.collection("workspaces/$ws/entries").get(Source.SERVER).await().documents.map{jobEntryFromFirestoreMap(it.data!!)}
   workspace.syncRemoteJobsToLocal(retained+jobEntryFromFirestoreMap(data),ws)
   assertNull("Delayed Entry snapshot cannot resurrect a confirmed deleted source",db.jobEntryDao().getJobById(ws,id))
