@@ -44,9 +44,10 @@ class WorkspaceSyncWorker(context: Context, params: WorkerParameters) : Coroutin
         if (expectedUid != uid) return Result.success()
         val db = AppDatabase.getInstance(applicationContext)
         val repository = WorkspaceRepository.getInstance(applicationContext, db)
-        val ws = inputData.getString("workspaceId") ?: repository.activeWorkspaceId.value ?: return Result.success()
-        if (repository.verifiedWorkspaceContext.value != (uid to ws)) return Result.success()
         return try {
+            val selected = repository.restoreBackgroundSyncSession(uid) ?: return Result.success()
+            val ws = inputData.getString("workspaceId") ?: selected
+            if (ws != selected || repository.verifiedWorkspaceContext.value != (uid to ws)) return Result.success()
             withTimeout(110_000) { repository.pushUnsyncedToCloud(ws) }
             val pending = db.pendingOperationDao().outstandingOperations(ws).filter { it.actorUid == uid && it.state == "PENDING" }
             // Blocked dependents need human resolution, not endless automatic financial attempts.

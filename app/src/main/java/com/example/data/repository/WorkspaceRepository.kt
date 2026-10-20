@@ -1554,6 +1554,14 @@ class WorkspaceRepository(
         _verifiedWorkspaceContext.value = uid to _activeWorkspaceId.value.orEmpty()
     }
 
+    /** Restore only the authenticated account's last verified selection, never choose a queue's workspace. */
+    internal fun restoreBackgroundSyncSession(uid: String): String? {
+        if (uid.isBlank() || getEffectiveActorUid() != uid) return null
+        if (_verifiedWorkspaceContext.value == null && _activeWorkspaceId.value.isNullOrBlank())
+            restoreVerifiedMembership(uid)
+        return _activeWorkspaceId.value?.takeIf { _verifiedWorkspaceContext.value == (uid to it) }
+    }
+
     private val syncMutex = Mutex()
     private val operations get() = database.pendingOperationDao()
     fun pendingOperations(wsId: String): kotlinx.coroutines.flow.Flow<List<com.example.data.entity.PendingOperationEntity>> {

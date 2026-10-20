@@ -22,6 +22,13 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 @org.junit.FixMethodOrder(org.junit.runners.MethodSorters.NAME_ASCENDING)
 class DeviceEmulatorIntegrationTest {
+ companion object {
+  private val replicaApps=mutableListOf<com.google.firebase.FirebaseApp>()
+  @org.junit.AfterClass @JvmStatic fun closeReplicaApps() {
+   // Auth emulator configuration keeps app callbacks; retire apps after all clients are configured.
+   replicaApps.forEach{it.delete()};replicaApps.clear()
+  }
+ }
  private val context=InstrumentationRegistry.getInstrumentation().targetContext
  private val auth=FirebaseAuth.getInstance()
  private val cloud=FirebaseFirestore.getInstance()
@@ -31,6 +38,19 @@ class DeviceEmulatorIntegrationTest {
   android.util.Log.i("DEVICE_ROLE_TRACE", "START " + stage)
   return try { kotlinx.coroutines.withTimeout(20000) { action() } }
   finally { android.util.Log.i("DEVICE_ROLE_TRACE", "END " + stage) }
+ }
+ private suspend fun deletionPayload(source:Map<String,Any?>):JSONObject {
+  val entry=jobEntryFromFirestoreMap(source)
+  val expenses=cloud.collection("workspaces/$ws/expenses").get(Source.SERVER).await().documents
+   .map{expenseFromFirestoreMap(it.data!!)}.filter{it.relatedJobId==entry.id}
+  val linked=cloud.collection("workspaces/$ws/collections").get(Source.SERVER).await().documents
+   .map{paymentFromFirestoreMap(it.data!!)}.filter{EntryDeletionPolicy.references(it,entry.id)}
+  val collections=EntryDeletionPolicy.plannedCollectionDeletes(entry,linked,true,"device-owner","OWNER",System.currentTimeMillis())
+  return JSONObject(source).put("operationProtocolVersion",2)
+   .put("linkedExpenseIds",org.json.JSONArray(expenses.map{it.id.toString()}))
+   .put("linkedExpenseSnapshots",org.json.JSONArray(expenses.map{JSONObject(it.toFirestoreMap())}))
+   .put("linkedCollectionIds",org.json.JSONArray(collections.map{it.id.toString()}))
+   .put("linkedCollectionSnapshots",org.json.JSONArray(collections.map{JSONObject(it.toFirestoreMap())}))
  }
  @Test(timeout = 90000) fun aRoleReadsAndWorkspaceIsolation()=runBlocking {
   assertEquals("com.aistudio.aidhunttrac.cedlir.devicetest",context.packageName)
@@ -59,12 +79,12 @@ class DeviceEmulatorIntegrationTest {
   val token=auth.currentUser!!.getIdToken(false).await().token!!;val request=WorkspaceCommandProtocol.request(FirebaseEnvironment.commandUrl(FirebaseEnvironment.DEMO_PROJECT,"deleteWorkspaceEntry"),token,JSONObject().put("workspaceId",ws).put("entryId","10"));okhttp3.OkHttpClient().newCall(request).execute().use{r->try{WorkspaceCommandProtocol.verifyResponse(r.code,r.body!!.string());fail("Legacy callable accepted")}catch(_:WorkspaceUpgradeRequiredException){}}
  }
  @Test(timeout = 90000) fun dFreshOwnerCreateDeleteAndRetry()=runBlocking {
-  login("owner");val now=System.currentTimeMillis();val data=cloud.document("workspaces/$ws/entries/10").get(Source.SERVER).await().data!!.toMutableMap();data["id"]=20L;data["createdAt"]=now;data["createdByUid"]="device-owner";data["createdByRole"]="OWNER";data["entryForUid"]="device-owner";data["financialAttributionUid"]="device-owner";data.remove("authorizationCreatedAt");data.remove("serverReceivedAt");val op=PendingOperationEntity("fresh-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",20,"UPSERT",1000,now,JSONObject(data).put("operationProtocolVersion",2).toString());val repo=FirestoreRepository(context);repo.applyPendingOperation(op);assertTrue(cloud.document("workspaces/$ws/entries/20").get(Source.SERVER).await().exists());val deletion=op.copy(operationId="delete-"+java.util.UUID.randomUUID(),mutationType="DELETE",actionTime=System.currentTimeMillis());repo.applyPendingOperation(deletion);repo.applyPendingOperation(deletion);assertFalse(cloud.document("workspaces/$ws/entries/20").get(Source.SERVER).await().exists());login("partner")
+  login("owner");val now=System.currentTimeMillis();val data=cloud.document("workspaces/$ws/entries/10").get(Source.SERVER).await().data!!.toMutableMap();data["id"]=20L;data["createdAt"]=now;data["createdByUid"]="device-owner";data["createdByRole"]="OWNER";data["entryForUid"]="device-owner";data["financialAttributionUid"]="device-owner";data.remove("authorizationCreatedAt");data.remove("serverReceivedAt");val op=PendingOperationEntity("fresh-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",20,"UPSERT",1000,now,JSONObject(data).put("operationProtocolVersion",2).toString());val repo=FirestoreRepository(context);repo.applyPendingOperation(op);assertTrue(cloud.document("workspaces/$ws/entries/20").get(Source.SERVER).await().exists());val deletion=op.copy(operationId="delete-"+java.util.UUID.randomUUID(),mutationType="DELETE",actionTime=System.currentTimeMillis(),payloadJson=deletionPayload(data).toString());repo.applyPendingOperation(deletion);repo.applyPendingOperation(deletion);assertFalse(cloud.document("workspaces/$ws/entries/20").get(Source.SERVER).await().exists());login("partner")
  }
 
  @Test(timeout=90000) fun eOwnerFinancialDeletionPreconditions()=runBlocking {
   login("owner");val repo=FirestoreRepository(context)
-  for(id in listOf(40L,43L,44L)){
+  for(id in listOf(43L,44L)){
    val ref=cloud.document("workspaces/$ws/entries/$id");val before=ref.get(Source.SERVER).await().data!!
    val op=PendingOperationEntity("blocked-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",id,"DELETE",2000,System.currentTimeMillis(),JSONObject(before).put("operationProtocolVersion",2).toString())
    try{repo.applyPendingOperation(op);fail("Financial precondition bypass $id")}catch(e:IllegalArgumentException){assertTrue(e.message!!.isNotBlank())}
@@ -74,13 +94,19 @@ class DeviceEmulatorIntegrationTest {
   val linked=cloud.document("workspaces/$ws/entries/42").get(Source.SERVER).await().data!!
   val linkedExpense=cloud.document("workspaces/$ws/expenses/142")
   assertTrue(linkedExpense.get(Source.SERVER).await().exists())
-  val compound=PendingOperationEntity("compound-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",42,"DELETE",2001,System.currentTimeMillis(),JSONObject(linked).put("operationProtocolVersion",2).toString())
+  val compound=PendingOperationEntity("compound-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",42,"DELETE",2001,System.currentTimeMillis(),deletionPayload(linked).toString())
   repo.applyPendingOperation(compound);repo.applyPendingOperation(compound)
   assertFalse(cloud.document("workspaces/$ws/entries/42").get(Source.SERVER).await().exists())
   assertFalse(linkedExpense.get(Source.SERVER).await().exists())
   val reversed=cloud.document("workspaces/$ws/entries/41").get(Source.SERVER).await().data!!
-  val op=PendingOperationEntity("reversed-delete-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",41,"DELETE",2001,System.currentTimeMillis(),JSONObject(reversed).put("operationProtocolVersion",2).toString());repo.applyPendingOperation(op);repo.applyPendingOperation(op)
+  val op=PendingOperationEntity("reversed-delete-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",41,"DELETE",2001,System.currentTimeMillis(),deletionPayload(reversed).toString());repo.applyPendingOperation(op);repo.applyPendingOperation(op)
   assertFalse(cloud.document("workspaces/$ws/entries/41").get(Source.SERVER).await().exists());assertEquals("REVERSED",cloud.document("workspaces/$ws/collections/141").get(Source.SERVER).await().getString("status"))
+  val paid=cloud.document("workspaces/$ws/entries/40").get(Source.SERVER).await().data!!
+  val paidDelete=PendingOperationEntity("paid-delete-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",40,"DELETE",2002,System.currentTimeMillis(),deletionPayload(paid).toString())
+  repo.applyPendingOperation(paidDelete);repo.applyPendingOperation(paidDelete)
+  assertFalse(cloud.document("workspaces/$ws/entries/40").get(Source.SERVER).await().exists())
+  assertFalse(cloud.document("workspaces/$ws/collections/140").get(Source.SERVER).await().exists())
+  assertEquals(paidDelete.operationId,cloud.document("workspaces/$ws/entryDeletionProofs/40").get(Source.SERVER).await().getString("operationId"))
  }
  @Test(timeout=90000) fun fMemberRemovalRetainsHistoryAndRevokesAccess()=runBlocking {
   login("owner");val repo=FirestoreRepository(context);val before=cloud.document("workspaces/$ws/entries/60").get(Source.SERVER).await().data!!
@@ -88,12 +114,13 @@ class DeviceEmulatorIntegrationTest {
   assertEquals("REMOVED",cloud.document("workspaces/$ws/members/device-removal").get(Source.SERVER).await().getString("status"));assertEquals("ARCHIVED",cloud.document("workspaces/$ws/deletedUsers/device-removal").get(Source.SERVER).await().getString("purgeState"));assertEquals(before,cloud.document("workspaces/$ws/entries/60").get(Source.SERVER).await().data)
   // A separate client cannot reuse the Owner's already-authorized listener snapshot.
   val revokedApp=com.google.firebase.FirebaseApp.initializeApp(context,com.google.firebase.FirebaseApp.getInstance().options,"revoked-"+java.util.UUID.randomUUID())!!
+  replicaApps.add(revokedApp)
   val revokedAuth=FirebaseAuth.getInstance(revokedApp).also{it.useEmulator("127.0.0.1",19099)}
   val revokedCloud=FirebaseFirestore.getInstance(revokedApp).also{it.useEmulator("127.0.0.1",18180)}
   try {
    revokedAuth.signInWithEmailAndPassword("removal@device.invalid","EmulatorOnly123!").await();assertEquals("device-removal",revokedAuth.currentUser!!.uid)
    try{revokedCloud.collection("workspaces/$ws/entries").get(Source.SERVER).await();fail("Removed member retains access")}catch(e:com.google.firebase.firestore.FirebaseFirestoreException){assertEquals(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,e.code)}
-  } finally {revokedCloud.terminate().await();revokedApp.delete()}
+  } finally {revokedCloud.terminate().await()}
   login("partner");try{repo.archiveMember(ws,"device-operator");fail("Partner removes member")}catch(_:SecurityException){};login("owner")
  }
 
@@ -151,7 +178,7 @@ class DeviceEmulatorIntegrationTest {
   // Reproduce interrupted legacy queue recovery: stale source and customer remain until ACK.
   db.jobEntryDao().insertJob(jobEntryFromFirestoreMap(data).copy(isSynced=true))
   db.customerDao().insertCustomer(customerFromFirestoreMap(customer).copy(isSynced=false))
-  val deletion=create.copy(operationId="ack-delete-"+java.util.UUID.randomUUID(),mutationType="DELETE",sequence=db.pendingOperationDao().nextSequence())
+  val deletion=create.copy(operationId="ack-delete-"+java.util.UUID.randomUUID(),mutationType="DELETE",sequence=db.pendingOperationDao().nextSequence(),payloadJson=deletionPayload(data).toString())
   db.pendingOperationDao().insert(deletion);workspace.pushUnsyncedToCloud(isOnline=true)
   assertEquals("ACKNOWLEDGED",db.pendingOperationDao().observe(ws).first().first{it.operationId==deletion.operationId}.state)
   assertNull(db.jobEntryDao().getJobById(ws,id))
@@ -163,6 +190,23 @@ class DeviceEmulatorIntegrationTest {
   workspace.syncRemoteJobsToLocal(retained+jobEntryFromFirestoreMap(data),ws)
   assertNull("Delayed Entry snapshot cannot resurrect a confirmed deleted source",db.jobEntryDao().getJobById(ws,id))
   val afterEntrySnapshot=db.customerDao().getCustomerById(ws,id)!!;assertEquals(0.0,afterEntrySnapshot.totalBilled,0.001);assertEquals(0.0,afterEntrySnapshot.balanceDue,0.001)
+ }
+ @Test(timeout=90000) fun kBackgroundColdStartRestoresOnlyOriginalVerifiedSession()=runBlocking {
+  login("owner")
+  val db=AppDatabase.getInstance(context)
+  val profile=com.example.data.repository.AuthRepository.getInstance(context).let { authRepo ->
+   authRepo.startListening();kotlinx.coroutines.withTimeout(15000){authRepo.currentUserProfile.first{it?.uid=="device-owner"}}!!
+  }
+  val warm=com.example.data.repository.WorkspaceRepository.getInstance(context,db)
+  assertTrue(warm.initializeForUser(profile).isSuccess)
+  val cold=com.example.data.repository.WorkspaceRepository(context,db,FirestoreRepository(context))
+  assertNull(cold.verifiedWorkspaceContext.value)
+  assertNull(cold.restoreBackgroundSyncSession("device-partner"))
+  assertNull(cold.verifiedWorkspaceContext.value)
+  assertEquals(ws,cold.restoreBackgroundSyncSession("device-owner"))
+  assertEquals("device-owner" to ws,cold.verifiedWorkspaceContext.value)
+  // Restoration alone does not upload: push still revalidates membership at the server.
+  assertEquals(ws,cold.activeWorkspaceId.value)
  }
  @Test(timeout=120000) fun lOfflineNewJobCollectionExpenseAndIndependentPartnerReplica()=runBlocking {
   login("owner")
@@ -206,6 +250,7 @@ class DeviceEmulatorIntegrationTest {
   val repo=FirestoreRepository(context);repo.applyPendingOperation(payment);repo.applyPendingOperation(expense)
   assertEquals(1250.0,cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().getDouble("amountReceived")!!,0.0)
   val app=com.google.firebase.FirebaseApp.initializeApp(context,com.google.firebase.FirebaseApp.getInstance().options,"partner-replica-"+now)!!
+  replicaApps.add(app)
   val otherAuth=FirebaseAuth.getInstance(app).also{it.useEmulator("127.0.0.1",19099)}
   val otherCloud=FirebaseFirestore.getInstance(app).also{it.useEmulator("127.0.0.1",18180)}
   try {
@@ -225,6 +270,6 @@ class DeviceEmulatorIntegrationTest {
    kotlinx.coroutines.withTimeout(15000){db.jobEntryDao().getJobsForWorkspace(ws).first{jobs->jobs.any{it.id==secondId}}}
    assertEquals("device-partner",db.jobEntryDao().getJobById(ws,secondId)!!.createdByUid)
    assertEquals(confirmed.data,otherCloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().data)
-  } finally {otherCloud.terminate().await();app.delete()}
+  } finally {otherCloud.terminate().await()}
  }
 }
