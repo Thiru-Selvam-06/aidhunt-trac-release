@@ -1,19 +1,26 @@
-# Offline synchronization repair — development review
+# Offline synchronization repair and release verification
 
-Baseline: current collaborative repository, main commit `24d7b91`. Development branch: `codex/offline-sync-reliability`.
+Current repository: Thiru-Selvam-06/aidhunt-trac-release. Baseline main: `24d7b91`. Development branch: `codex/offline-sync-reliability`; [draft PR #3](https://github.com/Thiru-Selvam-06/aidhunt-trac-release/pull/3).
 
-## Confirmed findings
+## Current status
 
-1. Collection authorization required `target.workspaceId == ws`, although valid legacy membership documents are scoped by `workspaces/{ws}/members/{uid}` and omit that redundant field. A read-only production rules comparison found no source/deployment mismatch. In an isolated emulator reproduction, the baseline rejected both Owner and Partner collections with `Property workspaceId is undefined`. The development rule accepted the same synthetic commands and atomically updated the receipt and source balance. Explicitly foreign membership metadata remains denied.
-2. On rejection, `OfflineEntryRecovery` restores the confirmed row, or removes the ordinary optimistic job row if the server has none. The original command JSON remains in `pending_operations`. Normal job lists read the job table, explaining the disappearance without loss of the original queue snapshot.
-3. The previous blocked counter counted permission-rejected payments instead of pending dependent operations. A job acknowledgement could also mark its local financial state synced before its initial collection completed.
-4. Background execution previously depended on app coroutines and foreground network callbacks. No durable WorkManager sync worker existed. A fourth failure could permanently reject an operation even when the latest error was transient.
-5. Offline job/expense updates had no comparison against the original edit base. Listener callbacks launched independent coroutines, allowing full snapshots to finish out of order. Expense and withdrawal reconciliation read pending rows outside a Room transaction.
-6. Deletion protection against rejected linked financial operations is intentional. It is retained, with a clearer explanation.
+Application implementation commit `3712901fba157138447cf7e8b8878518feb02211` passed the complete [Android CI run](https://github.com/Thiru-Selvam-06/aidhunt-trac-release/actions/runs/39432672198): all ten jobs, including 17 Android emulator tests and the aggregate gate. The source now declares version 1.0.8/code 9, matching the signed APK's effective packaging configuration. This publication follow-up changes version metadata and documentation only. Its CI is visible in the PR checks.
 
-The exact predicate rejecting the reported original job is **not proven**: its retained payload, actual device Auth UID and installed APK could not be read through ADB. No identity reassignment, timestamp correction or rules relaxation is justified by that screenshot alone.
+After explicit user approval, the tested Firestore Rules were deployed to `trac-aidhunt` and read back byte-for-byte. Production release APK assembly, release lint, original signing certificate, package/version, production Firebase resources, disabled test/debug flags, ZIP integrity and 16 KB alignment passed. [Release notes and evidence](releases/1.0.8/release-notes.md) record the APK hash and deployment details. The APK is distributed as a prerelease while physical-phone acceptance remains manual. The development branch has not been merged to main.
 
-## Minimal architecture corrections
+## Confirmed causes
+
+1. `validCollectionCollector` required a redundant `workspaceId` field absent from valid legacy workspace membership documents. The membership path already scopes the member to the workspace. Baseline Rules rejected isolated Owner and Partner receipts with `Property workspaceId is undefined`; the corrected Rules accept the same valid commands while rejecting explicit foreign metadata, inactive membership and unauthorized collectors. The deployed Rules matched baseline source during diagnosis: a deployment/source mismatch was not the current cause.
+2. A legitimate Owner tractor job for another active partner failed during repeated customer/tractor reference lookups. An independent Rules reproduction failed before the change and passed after one fetched map was reused per reference. Missing/deleted/foreign references remain denied. The emulator exposed a service-call error; its internal access-call counter was not exposed, so the exact counter is not claimed.
+3. `OfflineEntryRecovery` restores cloud-confirmed rows. When no server job exists, it removes the optimistic ordinary row while preserving the immutable command in `pending_operations`. Ordinary job screens therefore hid the rejected job. The retained command now remains readable on Home and in Sync details without adding rejected money to confirmed balances.
+4. Permission-rejected payments were counted as blocked children, and job acknowledgement could precede its initial collection. Review and blocked states are now distinct; financial acknowledgement observes dependent operations.
+5. Background sync depended on foreground coroutines/connectivity callbacks. Attempt count could also convert a transient network failure into permanent rejection. WorkManager now schedules the original Room outbox, and failure classification uses the cause.
+6. Offline job/expense edits lacked an original-base comparison; incoming snapshot coroutines could finish out of order. New edit commands capture a base for transactional comparison, financial snapshots apply serially, and expense/withdrawal reconciliation is transactional.
+7. A stale customer snapshot could recreate a zero-value customer after final source/customer deletion. Reconciliation suppresses it only when an authoritative customer-deletion proof matches workspace, record ID and original creation time. A deleted job alone is insufficient proof that its customer was deleted.
+
+The exact predicate rejecting the original inaccessible phone's JOB remains **unproven** without its retained payload, actual authenticated UID and installed APK. The original rejected payment amount was not inferred from a displayed zero. No historical attribution, amount, timestamp or operation ID was changed to make authorization pass.
+
+## Data flow and safeguards
 
 ```mermaid
 flowchart LR
@@ -25,53 +32,86 @@ flowchart LR
   F --> G[Server acknowledgement]
   G --> H[Room acknowledgement]
   F --> I[Ordered authoritative snapshots]
-  I --> J[Room reconciliation preserves unsynced work]
+  I --> J[Room reconciliation protects unsynced commands]
   J --> K[UI on authorized devices]
-  F --> L[Failure retained with original payload]
+  F --> L[Original failed command retained]
 ```
 
-- The existing Room command table remains the only business outbox. Its IDs, amounts, actor/workspace, timestamps and payloads are not rewritten. No business schema migration or destructive fallback was added.
-- WorkManager schedules network-constrained work, uses the same repository drain/mutex, checks the original actor and verified active workspace, and never reopens rejected commands. Periodic work is a safety net, subject to Android scheduling constraints.
-- Pending and rejected command summaries are visible on Home. The sync screen displays original customer/job/payment information and identity evidence. Restored confirmed ledger rows remain separate from rejected snapshots.
-- New job/expense edits capture their original business snapshot. The existing Firestore transaction compares it before replacement. Stale writes become explicit review cases. Pre-upgrade edits without a trustworthy base fail closed; absent new creates can still upload.
-- Receipt creation and its job balance remain one atomic Firestore transaction. Existing stable document/operation IDs prevent normal duplicate application. An interleaved lost acknowledgement that cannot be proven from current state requires review; no blind overwrite or guessed recovery is introduced.
-- Listener updates are serialized and expense/withdrawal reconciliation is transactional. Existing authoritative-only snapshot filtering and workspace isolation remain in force.
-- Temporary transport failures remain pending regardless of count. Permission/validation/conflict failures require review. Blocked children retain their original payload and do not acquire a write attempt.
+The existing Room command table remains the sole business outbox. IDs, original actors/workspaces, amounts, timestamps and payloads remain durable. No business database or destructive schema migration was introduced. WorkManager's internal scheduling database does not replace the ledger. The worker checks the actual Auth UID and verified workspace before using the existing repository drain/mutex; that drain rechecks server membership and dependencies. It never reopens rejected financial commands.
 
-## Tests and tools
+A collection and source-job balance update remain one atomic Firestore transaction. Stable IDs prevent normal duplicate replay. New job/expense edit bases are compared inside the transaction before replacement. Permission, validation and conflict failures remain review cases; temporary transport failures remain pending. A rejected parent blocks a dependent payment without writing or discarding it. Linked rejected financial actions intentionally continue to protect deletion.
 
-Reuse the existing Android/JUnit/Room/Compose, Firebase Emulator, Rules, backend and GitHub Actions gates. WorkManager 2.12.0 and its test helper are the only new library family: free, moderate app integration, no new hosted service or production configuration. Its internal scheduling database does not replace or duplicate the business outbox. No monitoring vendor or HTTP testing product was added.
+## Executed validation and CI corrections
 
-New tests cover legacy path-scoped membership, explicitly foreign metadata denial, durable retained job/payment details after reopen, original IDs/timestamps/amounts, actor isolation, transient errors, rejected versus blocked status, exact 64-bit identities, stale edit conflicts and ordered snapshots. The Android integration journey additionally exercises actual repository offline creation, a collection and business expense, acknowledgements, duplicate replay and an independently authenticated partner replica.
+| Verification | Result |
+|---|---|
+| Full local JVM/Room/Compose suite | 619 passed; 79 classes; zero failures/errors/skips |
+| Firestore Rules suite | 262 passed; valid and unauthorized cases retained |
+| Backend/HTTP/deletion/migration suite | 129 passed |
+| Python regression harness | 108 passed |
+| Hosted Android emulator journeys | 17 passed; API 35; complete CI gate passed |
+| Production APK build and release lint | Passed; zero lint errors, 101 warnings |
+| APK signature/package/version/configuration | Original release certificate; version code 9; real Firebase; test/debug flags false |
+| Physical installation/login/two phones | Not verified; user chose downloadable APK |
 
-Initial full Android run: 617 tests executed, 606 passed and 11 failed. Four failures exposed stale fixtures/expectations conflicting with the already-approved source behavior (known-member charts, hidden orphan collection groups, negative synthetic legacy receipt IDs). Seven were file-backed SQLite failures at Windows path lengths of 260–298 characters. Fixtures were corrected without removing their assertions; a shorter local test temporary directory is used for reruns. Final results must be taken from executed evidence, not this initial run.
+The real repository journey saves an offline job, initial collection and business expense, then waits for automatic acknowledgements without a manual push. It asserts original operation IDs, immutable payloads/times, authoritative amounts, one receipt, safe duplicate replay, a newly completed background task, and a separately authenticated partner replica. File-backed Room reopen, cached-session restoration, wrong-account isolation, rejected dependency preservation, conflict and deletion-proof cases also passed. Two authenticated clients in one journey do not substitute for two physical phones.
 
-The existing CI run on baseline main failed first in the interaction-inventory job (inventory drift), then Android builds failed before tests because the empty `INVITATION_TEST_PHONES` generated `public static final String INVITATION_TEST_PHONES = ;`. The inventory is regenerated and the unused server-only CSV is excluded from Android BuildConfig generation. The full CI regression/release gate is retained.
+CI failures were investigated without removing tests. Baseline inventory drift and an empty server-only value generating invalid BuildConfig Java were corrected. Outbox CI configured a Firestore host without starting the emulator; tests and coverage now run inside the emulator lifecycle. Synthetic deletion fixtures were aligned with the existing workspace/linked-record protocol, while invalid/shared receipts remained denied. A secondary test FirebaseApp lifetime and missing synthetic expense date were corrected. A device assertion exposed the real stale-customer reconciliation defect. The automatic acknowledgement test originally used `observeActor`, whose SQL excludes acknowledged rows; it now reads full durable history. The final complete implementation run passed every job.
 
-## Safety, recovery and release gates
+Existing JUnit, Robolectric, Room, Compose, Firebase emulators, Rules/backend tests and GitHub Actions were reused. WorkManager runtime/testing is the only new library family: free, moderate app-only integration, no hosted-service or billing change. Android Studio inspectors could not inspect the original phone because ADB did not expose it. No monitoring service was added. Existing Cloudflare staging preview automation still fails because its configured preview command lacks a `previews` block; that unrelated configuration was not changed.
 
-No production deployment, APK installation, live transaction retry/recovery, record deletion, queue reset, amount change or attribution change is part of this development work. Read-only cloud inspection does not recover a retained action.
+## Files changed for the implementation
 
-Before any approved recovery: preserve the original queue export; sign in as its original actor/workspace; read the source, parents, membership, deletion proofs and existing receipt from the server; compare exact IDs, action time, amount and balances; verify the corrected policy in an isolated emulator. If an original receipt already exists, reconcile its acknowledgement instead of applying the amount again. If source balances differ or a parent is rejected, stop for review. Recover a parent first, then explicitly authorize its original dependent payment. Never recreate a guessed entry or edit historical identity to make authorization pass.
+Paths below are relative to the current repository. Generated evidence and private inspection helpers outside Git are not application changes.
 
-Keep this PR as a development candidate until full tests/build/lint, the Android CI device journey and the reported physical-phone scenarios are verified. ADB currently exposes no phone; the local Android emulator cannot boot with available hardware acceleration. These are separate limitations from the running Firebase Emulator Suite. Do not merge, deploy production Rules or release an APK based only on local unit/Rules success. Retain the prior signed APK/rules version for rollback; rollback must also preserve newly created pending actions and must not downgrade Room destructively.
+| File | Reason |
+|---|---|
+| `.env.example` | Quote the empty server-only invitation CSV example. |
+| `.github/workflows/android-ci.yml` | Provision Firestore for outbox tests and coverage; retain every partition and release gate. |
+| `app/build.gradle.kts` | Declare version 1.0.8/code 9; exclude the unused server-only CSV from Android BuildConfig generation; add WorkManager dependencies. |
+| `gradle/libs.versions.toml` | Pin WorkManager runtime/test library version. |
+| `app/src/main/java/com/example/TracApplication.kt` | Start durable scheduling after the correct Firebase environment initializes. |
+| `app/src/main/java/com/example/MainActivity.kt` | Pass retained actions into Home. |
+| `app/src/main/java/com/example/data/dao/PendingOperationDao.kt` | Observe existing pending commands for scheduling. |
+| `app/src/main/java/com/example/data/firebase/FirestoreRepository.kt` | Check queued job/expense edit bases; read authoritative customer-deletion proofs; keep helper metadata local. |
+| `app/src/main/java/com/example/data/network/NetworkMonitor.kt` | Require validated connectivity; unknown state is not treated as online. |
+| `app/src/main/java/com/example/data/repository/WorkspaceRepository.kt` | Serialize reconciliation, transact expense/withdrawal merges, preserve retry policy, improve diagnostics/dependency acknowledgement and manual recovery checks. |
+| `app/src/main/java/com/example/data/sync/QueuedWriteConflict.kt` | Compare the original business snapshot and exact numeric identities; fail stale edits closed. |
+| `app/src/main/java/com/example/data/sync/ConfirmedEntryDeletion.kt` | Match exact server customer-deletion proofs before suppressing stale snapshots. |
+| `app/src/main/java/com/example/data/sync/ReplicaDispatcher.kt` | Apply financial snapshots in delivery order. |
+| `app/src/main/java/com/example/data/sync/SyncAuthorizationDiagnostic.kt` | Retain useful authorization-stage evidence without logging tokens or customer contact fields. |
+| `app/src/main/java/com/example/data/sync/SyncFailurePolicy.kt` | Classify failures by cause rather than attempt count. |
+| `app/src/main/java/com/example/data/sync/WorkspaceSyncWorker.kt` | Schedule/drain the original outbox with network, actor and workspace constraints. |
+| `app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt` | Observe background sync, verified retained actions and correct blocked status. |
+| `app/src/main/java/com/example/ui/screens/home/HomeScreen.kt` | Show retained pending/rejected actions without adding them to confirmed totals. |
+| `app/src/main/java/com/example/ui/screens/account/AccountScreen.kt` | Display original retained command details. |
+| `app/src/main/java/com/example/ui/util/RetainedActionDetails.kt` | Project original payload details and distinguish pending, blocked and review states. |
+| `firestore.rules` | Accept valid path-scoped legacy membership; reuse reference lookups without dropping authorization predicates. |
+| `security-tests/architecture.test.cjs` | Test legacy membership, foreign metadata denial, Owner/Partner tractor jobs and invalid reference denial. |
+| `app/src/test/java/com/example/OfflineSyncReliabilityTest.kt` | Test durable reopen, original payload preservation, actor isolation, retry classification, worker sign-out and conflicts. |
+| `app/src/test/java/com/example/ReplicaSyncOrderingTest.kt` | Verify ordered application and isolation after a failed snapshot. |
+| `app/src/test/java/com/example/BusinessOverviewChartMembersTest.kt` | Align fixtures with existing known-member chart behavior; preserve unknown source data. |
+| `app/src/test/java/com/example/CollectionFormRegressionTest.kt` | Supply valid source-job fixtures required by the existing form. |
+| `app/src/test/java/com/example/CollectionHistoryDetailsTest.kt` | Supply valid source jobs and test the existing orphan filtering behavior. |
+| `app/src/androidTest/java/com/example/DeviceEmulatorIntegrationTest.kt` | Exercise real offline job/payment/expense repository flow, acknowledgements and separate authenticated replica; align synthetic workspace ID and explicit journey order. |
+| `app/src/deviceTest/res/xml/device_test_network.xml` | Fix lint by explicitly limiting the two test-only loopback domains. |
+| `functions/device-test-fixtures.cjs` | Use a synthetic workspace ID accepted by the current deletion protocol. |
+| `scripts/test_regression_harness.py` | Guard the requirement to start Firestore around outbox tests and coverage. |
+| `docs/regression/asset-inventory.json` | Regenerate inventory after UI/dependency changes. |
+| `docs/regression/interaction-inventory.csv` | Regenerate current interaction locations. |
+| `docs/regression/interaction-inventory.json` | Regenerate current interaction locations. |
+| `docs/OFFLINE_SYNC_RELIABILITY.md` | Record evidence, architecture, limitations, validation and safe recovery/release gates. |
 
-The existing Rules retain a documented client-action-time trust limitation. New app-side snapshot comparison is not a new server-side conflict protocol for arbitrary legacy/custom clients. Concurrent nonfinancial customer/asset edits and physical manufacturer background restrictions need additional acceptance verification.
+Publication additionally records release notes, checksum, APK verification, Rules deployment and scoped Rules assessment under `docs/releases/1.0.8/`. Generated inventories identify current controls and are not proof of UI coverage. Signing credentials, raw private logs and live data exports are not publication artifacts.
+
+## Safety, remaining limits and recovery
+
+Production inspection was read-only until the user explicitly authorized Rules deployment. Only the reviewed Rules were deployed. No customer record, live pending action, historical financial value or attribution was edited, deleted or recovered. Billing and backend deployments remain unchanged. The APK has not been installed by this task.
+
+True process death, force-stop/reboot, manufacturer battery restrictions, actual phone login and two-device convergence require physical acceptance. Existing client action-time trust, incomplete legacy text-size bounds, nonfinancial customer/asset concurrent edits and arbitrary old/custom-client conflict protocols remain documented limitations. An interleaved lost acknowledgement can require review; no universal immutable operation-receipt registry was added. Pre-upgrade edits without a trustworthy base fail closed rather than inventing one. Historical expenses missing their original date require review, not fabricated timestamps.
+
+Before any live recovery, preserve the original queue/rows; verify actual Auth UID, original actor/workspace and the full original command; read current source/dependencies, membership, deletion proofs and existing receipt from the server; compare exact IDs, times, attribution, amounts and balances. An existing receipt must be reconciled, never collected again. Stop for review if balances differ, a parent is rejected or identity is ambiguous. Verify the exact command in isolation, recover its parent first, then authorize the original financial action only after checking the server again. The app's manual collection recovery adds source-balance and parent checks; no live rejected action is automatically retried.
+
+Keep the previous signed APK and Rules backup for rollback. Preserve newer pending operations and never destructively downgrade Room. Any live recovery, additional deployment or merge requires its own explicit authorization.
 
 I've set up prototype Security Rules to keep the data in Firestore safe. They are designed to be secure for active workspace membership, existing role/collector restrictions and atomic collection balances. However, you should review and verify them before broadly sharing your app. If you'd like, I can help you harden these rules.
-
-## Executed validation and CI follow-up
-
-Final local validation: **617 Android tests passed, zero failures and zero skipped; 257 Rules tests passed; 129 backend tests passed**. The separate synthetic baseline/development reproduction ran four Owner/Partner cases and verified exact source balances and the original denial message. Python harness checks are rerun after adding the outbox-provisioning regression. Demo APK, instrumentation APK and lint results are recorded separately from device execution.
-
-The first development CI run confirmed the inventory/BuildConfig corrections and passed Compose, unit, database, Rules and backend jobs. Its outbox job exposed a previously hidden harness defect: `FIRESTORE_EMULATOR_HOST` was set globally, but no emulator was started for Android outbox tests. All 16 Firebase deletion integration methods failed with connection errors. The workflow now provisions the Firestore Emulator around both outbox tests and coverage, with a regression check for that requirement. No test is excluded and the aggregation/release gate remains unchanged. Await the latest CI conclusions; cancelled runs do not constitute verification.
-
-The PR's first complete device run executed 16 tests and failed five. Two direct deletion journeys used the obsolete synthetic workspace ID `device-ws`, which violates the current `ws_...` deletion envelope; the seeder and test now share `ws_device_test`. Stateful journeys now explicitly run in their named order. A separate local Rules reproduction confirmed an Owner tractor job for another active partner was denied at the beneficiary lookup, while the equivalent Partner write succeeded. The `reference` helper performed repeated customer/tractor reads; it now reuses one fetched map for the identical positive-ID, existence, deletion and workspace checks. New positive Owner/Partner cases and missing/deleted/foreign tractor denials exercise this boundary. This does not establish the missing original phone payload's exact rejected condition.
-
-Both demo application and instrumentation APKs compile. Demo lint passes after explicitly setting `includeSubdomains="false"` on the two test-only loopback domains. Production network policy is unchanged. The Python harness passed 108 tests before these final Rules/device fixture corrections. The next CI run must validate all corrections together; the release gate remains closed until it succeeds and physical-phone acceptance is complete.
-
-The `c40a580` CI rerun passed every non-device job, including the repaired outbox gate. Device execution reached and passed the new job/payment/expense acknowledgements, but three old direct-delete fixtures lacked the current linked-record manifest, and configuring the second replica's Auth emulator encountered a callback to a previously deleted test app. Fixtures now capture the exact server dependency IDs/snapshots, valid single-source receipt allocations are explicit, mismatched/shared receipts remain protected, and secondary Firebase apps are retired after the class finishes. These are synthetic harness changes, not weakened application deletion checks.
-
-The next device run passed the offline upload and independent replica journey. Three remaining fixture assertions exposed a missing synthetic expense date, the obsolete expectation that a final customer's zero-value row survives deletion, and a cold-start test that overlooked restoration already performed in the repository constructor. The fixture now contains its original synthetic date and asserts full customer deletion plus stale-snapshot protection. Cold-start verification tests the existing constructor restoration and wrong-account isolation directly; the redundant extra restoration helper was removed. No historical date is fabricated or production deletion behavior changed. Complete gates are rerun for the final candidate.
-
-That stale-customer assertion also exposed a real reconciliation path: an acknowledged source deletion could be followed by an old customer snapshot that inserts the zero-value row again. Customer reconciliation now reads the server's deletion proof for candidate customers associated with an acknowledged source deletion and suppresses only an exact workspace/record/creation-time match. It does not infer that every customer of a deleted job was deleted. Proof reads occur before the Room transaction; existing pending-row and account/workspace guards remain. Pure negative/identity tests plus the real device deletion journey cover the correction.
