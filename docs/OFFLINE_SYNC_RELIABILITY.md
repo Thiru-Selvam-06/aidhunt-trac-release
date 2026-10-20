@@ -59,3 +59,9 @@ Keep this PR as a development candidate until full tests/build/lint, the Android
 The existing Rules retain a documented client-action-time trust limitation. New app-side snapshot comparison is not a new server-side conflict protocol for arbitrary legacy/custom clients. Concurrent nonfinancial customer/asset edits and physical manufacturer background restrictions need additional acceptance verification.
 
 I've set up prototype Security Rules to keep the data in Firestore safe. They are designed to be secure for active workspace membership, existing role/collector restrictions and atomic collection balances. However, you should review and verify them before broadly sharing your app. If you'd like, I can help you harden these rules.
+
+## Executed validation and CI follow-up
+
+Final local validation: **617 Android tests passed, zero failures and zero skipped; 257 Rules tests passed; 129 backend tests passed**. The separate synthetic baseline/development reproduction ran four Owner/Partner cases and verified exact source balances and the original denial message. Python harness checks are rerun after adding the outbox-provisioning regression. Demo APK, instrumentation APK and lint results are recorded separately from device execution.
+
+The first development CI run confirmed the inventory/BuildConfig corrections and passed Compose, unit, database, Rules and backend jobs. Its outbox job exposed a previously hidden harness defect: `FIRESTORE_EMULATOR_HOST` was set globally, but no emulator was started for Android outbox tests. All 16 Firebase deletion integration methods failed with connection errors. The workflow now provisions the Firestore Emulator around both outbox tests and coverage, with a regression check for that requirement. No test is excluded and the aggregation/release gate remains unchanged. Await the latest CI conclusions; cancelled runs do not constitute verification.

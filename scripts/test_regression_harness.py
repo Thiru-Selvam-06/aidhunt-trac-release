@@ -57,6 +57,16 @@ class EvidenceHarnessTest(unittest.TestCase):
         self.assertTrue(path.is_relative_to(ROOT))
         self.assertTrue(path.is_file())
         self.assertEqual("127.0.0.1",config["emulators"]["firestore"]["host"])
+    def test_outbox_gate_provisions_emulator_for_tests_and_coverage(self):
+        workflow=(ROOT/".github/workflows/android-ci.yml").read_text(encoding="utf-8")
+        job=workflow.split("  android-tests:",1)[1].split("\n  backend:",1)[0]
+        commands=[line for line in job.splitlines() if "run:" in line and "emulators:exec" in line]
+        self.assertEqual(1,len(commands),"Outbox integration needs a real emulator, not just a host variable")
+        command=commands[0]
+        for required in ["--project demo-aidhunt-v16","--only firestore","--config firebase.ci.json",
+                         ":app:testDebugUnitTest",":app:createDebugUnitTestCoverageReport","-PciSuite=outbox"]:
+            self.assertIn(required,command)
+        self.assertIn("suite: [unit, database, compose, outbox]",job)
     def test_new_operation_entities_require_explicit_role_matrix_expectations(self):
         import re
         source=(ROOT/"app/src/main/java/com/example/data/sync/OperationPolicy.kt").read_text(encoding="utf-8")

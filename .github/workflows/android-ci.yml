@@ -64,8 +64,17 @@ jobs:
         with: {distribution: temurin, java-version: '21', cache: gradle}
       - run: python3 scripts/prepare_ci.py
       - run: chmod +x gradlew
-      - run: ./gradlew :app:testDebugUnitTest --init-script scripts/ci-tests.gradle -PciSuite=${{ matrix.suite }} -PciCoverage=true --max-workers=2 --no-configuration-cache
+      - uses: actions/setup-node@v4
+        if: matrix.suite == 'outbox'
+        with: {node-version: '22'}
+      - name: Run Android regression partition
+        if: matrix.suite != 'outbox'
+        run: ./gradlew :app:testDebugUnitTest --init-script scripts/ci-tests.gradle -PciSuite=${{ matrix.suite }} -PciCoverage=true --max-workers=2 --no-configuration-cache
+      - name: Run outbox integration and coverage with Firestore Emulator
+        if: matrix.suite == 'outbox'
+        run: npx --yes firebase-tools@15.33.0 emulators:exec --project demo-aidhunt-v16 --only firestore --config firebase.ci.json "./gradlew :app:testDebugUnitTest :app:createDebugUnitTestCoverageReport --init-script scripts/ci-tests.gradle -PciSuite=outbox -PciCoverage=true --max-workers=2 --no-configuration-cache"
       - name: Generate partition code coverage
+        if: matrix.suite != 'outbox'
         run: ./gradlew :app:createDebugUnitTestCoverageReport --init-script scripts/ci-tests.gradle -PciSuite=${{ matrix.suite }} -PciCoverage=true --max-workers=2 --no-configuration-cache
       - name: Report actual JUnit results
         if: always()
