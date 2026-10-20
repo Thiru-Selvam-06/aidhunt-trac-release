@@ -241,7 +241,8 @@ class DeviceEmulatorIntegrationTest {
    assertTrue(original.all{it.state=="PENDING" && it.actorUid=="device-owner"})
   } finally {cloud.enableNetwork().await()}
   // No manual push: Room scheduling/reconnect must drive the existing queue automatically.
-  kotlinx.coroutines.withTimeout(90000){db.pendingOperationDao().observeActor(ws,"device-owner").first{rows ->
+  // observeActor intentionally excludes ACKNOWLEDGED rows; completion requires the durable history.
+  kotlinx.coroutines.withTimeout(90000){db.pendingOperationDao().observe(ws).first{rows ->
    original.all{op->rows.any{it.operationId==op.operationId && it.state=="ACKNOWLEDGED"}} ||
     original.any{op->rows.any{it.operationId==op.operationId && it.state=="REJECTED"}}
   }}
