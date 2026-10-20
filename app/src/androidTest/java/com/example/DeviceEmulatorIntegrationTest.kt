@@ -220,6 +220,8 @@ class DeviceEmulatorIntegrationTest {
   val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db)
   assertTrue(workspace.initializeForUser(profile).isSuccess)
   val now=System.currentTimeMillis()
+  val background=androidx.work.WorkManager.getInstance(context)
+  val previousWork=background.getWorkInfosByTagFlow("trac-ledger-sync").first().map{it.id}.toSet()
   cloud.disableNetwork().await()
   val id:Long
   val original:List<PendingOperationEntity>
@@ -238,12 +240,19 @@ class DeviceEmulatorIntegrationTest {
    assertEquals(1250.0,db.jobEntryDao().getJobById(ws,id)!!.amountReceived,0.0)
    assertTrue(original.all{it.state=="PENDING" && it.actorUid=="device-owner"})
   } finally {cloud.enableNetwork().await()}
-  workspace.pushUnsyncedToCloud(ws)
+  // No manual push: Room scheduling/reconnect must drive the existing queue automatically.
+  kotlinx.coroutines.withTimeout(90000){db.pendingOperationDao().observeActor(ws,"device-owner").first{rows ->
+   original.all{op->rows.any{it.operationId==op.operationId && it.state=="ACKNOWLEDGED"}} ||
+    original.any{op->rows.any{it.operationId==op.operationId && it.state=="REJECTED"}}
+  }}
   val history=db.pendingOperationDao().observe(ws).first().filter{it.actorUid=="device-owner"}
   for(op in original) {
    val ack=history.first{it.operationId==op.operationId};assertEquals(ack.failureReason,"ACKNOWLEDGED",ack.state)
    assertEquals(op.payloadJson,ack.payloadJson);assertEquals(op.actionTime,ack.actionTime)
   }
+  kotlinx.coroutines.withTimeout(15000){background.getWorkInfosByTagFlow("trac-ledger-sync").first{work ->
+   work.any{it.id !in previousWork && it.state==androidx.work.WorkInfo.State.SUCCEEDED}
+  }}
   val confirmed=cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await()
   assertEquals(1250.0,confirmed.getDouble("amountReceived")!!,0.0);assertEquals(9108.0,confirmed.getDouble("pendingAmount")!!,0.0)
   val payment=original.single{it.entityType=="PAYMENT"};val expense=original.single{it.entityType=="EXPENSE"}
