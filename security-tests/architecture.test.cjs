@@ -34,6 +34,15 @@ test.beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRules
  for(const [role,id] of Object.entries(uid)) if(role!=='outsider') await setDoc(doc(database,`workspaces/${ws}/members/${id}`),{uid:id,workspaceId:ws,role:role==='other'?'PARTNER':role.toUpperCase(),status:'ACTIVE'});
 });});
 for(const role of ['owner','partner','operator']) test(`${role} creates own ordinary entry`,async()=>assertSucceeds(setDoc(doc(db(role),path('entries')),entry(role))));
+for(const role of ['owner','partner']) test(`${role} creates tractor job for another active partner`,async()=>{
+ await seed('tractors',{workspaceId:ws,isDeleted:false},'3');
+ await assertSucceeds(setDoc(doc(db(role),path('entries')),entry(role,{tractorId:3,entryForUid:uid.other,financialAttributionUid:uid.other})));
+});
+for(const invalid of [null,{workspaceId:ws,isDeleted:true},{workspaceId:'foreign',isDeleted:false}])
+ test(`tractor reference remains denied for ${JSON.stringify(invalid)}`,async()=>{
+  if(invalid) await seed('tractors',invalid,'3');
+  await assertFails(setDoc(doc(db('owner'),path('entries')),entry('owner',{tractorId:3,entryForUid:uid.other,financialAttributionUid:uid.other})));
+ });
 for(const role of ['partner','operator']) {
  test(`${role} entry-for permission follows role`,async()=>{
    const result=setDoc(doc(db(role),path('entries')),entry(role,{entryForUid:uid.other,financialAttributionUid:uid.other}));

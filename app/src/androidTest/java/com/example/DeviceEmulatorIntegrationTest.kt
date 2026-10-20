@@ -20,11 +20,12 @@ import org.junit.runner.RunWith
 
 /** Runs production repository/protocol code on the phone against demo Emulators only. */
 @RunWith(AndroidJUnit4::class)
+@org.junit.FixMethodOrder(org.junit.runners.MethodSorters.NAME_ASCENDING)
 class DeviceEmulatorIntegrationTest {
  private val context=InstrumentationRegistry.getInstrumentation().targetContext
  private val auth=FirebaseAuth.getInstance()
  private val cloud=FirebaseFirestore.getInstance()
- private val ws="device-ws"
+ private val ws="ws_device_test"
  private suspend fun login(role:String){check(BuildConfig.DEVICE_TEST);check(com.google.firebase.FirebaseApp.getInstance().options.projectId==FirebaseEnvironment.DEMO_PROJECT);auth.signInWithEmailAndPassword(role+"@device.invalid","EmulatorOnly123!").await();assertEquals("device-"+role,auth.currentUser!!.uid)}
  private suspend fun <T> tracedRoleRead(stage: String, action: suspend () -> T): T {
   android.util.Log.i("DEVICE_ROLE_TRACE", "START " + stage)

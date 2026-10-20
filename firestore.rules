@@ -83,9 +83,10 @@ service cloud.firestore {
         data.totalAmount == data.amountReceived + data.pendingAmount;
     }
     function reference(ws, collection, id) {
-      return id is int && id > 0 && exists(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))) &&
-        get(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))).data.get('isDeleted', false) == false &&
-        get(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))).data.workspaceId == ws;
+      // Reuse one lookup: a job can validate both Customer and Tractor plus a different beneficiary.
+      let target = get(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))).data;
+      return id is int && id > 0 && target is map &&
+        target.get('isDeleted', false) == false && target.workspaceId == ws;
     }
     function creationTime() {
       return request.resource.data.createdAt is int && request.resource.data.createdAt > 0 &&
