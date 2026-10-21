@@ -18,8 +18,8 @@ android {
     applicationId = "com.aistudio.aidhunttrac.cedlir"
     minSdk = 24
     targetSdk = 36
-    versionCode = 8
-    versionName = "1.0.7"
+    versionCode = 9
+    versionName = "1.0.8"
 
     buildConfigField("boolean", "DEVICE_TEST", "false")
     buildConfigField("boolean", "LIVE_TEST", "false")
@@ -117,6 +117,8 @@ secrets {
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
   ignoreList.add("FIREBASE_API_KEY")
+  // Server-only CSV; an empty value is not a Java expression.
+  ignoreList.add("INVITATION_TEST_PHONES")
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
@@ -146,6 +148,7 @@ dependencies {
   // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.work.runtime)
   implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   implementation(libs.firebase.ai)
@@ -170,6 +173,7 @@ dependencies {
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
   testImplementation(libs.junit)
+  testImplementation(libs.androidx.work.testing)
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)
   testImplementation(libs.roborazzi)

@@ -112,14 +112,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Sync State
     private val _isSyncing = MutableStateFlow(false)
-    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+    private val backgroundSync = runCatching {
+        androidx.work.WorkManager.getInstance(application).getWorkInfosByTagFlow("trac-ledger-sync")
+    }.getOrElse { flowOf(emptyList<androidx.work.WorkInfo>()) }
+    val isSyncing: StateFlow<Boolean> = combine(_isSyncing, backgroundSync) { foreground, work ->
+        foreground || work.any { it.state == androidx.work.WorkInfo.State.RUNNING }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _syncMessage = MutableStateFlow("")
     val syncMessage: StateFlow<String> = _syncMessage.asStateFlow()
-    val pendingActions by lazy { authorizedWorkspaceId.flatMapLatest { ws ->
-        if (ws.isNullOrBlank()) flowOf(emptyList<com.example.data.entity.PendingOperationEntity>())
-        else workspaceRepository.pendingOperations(ws)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val pendingActions by lazy {
+        combine(authorizedWorkspaceId, currentUserProfile, workspaceRepository.verifiedWorkspaceContext) { ws, profile, verified ->
+            if (!ws.isNullOrBlank() && profile?.uid == currentUid && verified == (profile?.uid to ws)) ws else null
+        }.flatMapLatest { ws ->
+            if (ws.isNullOrBlank()) flowOf(emptyList<com.example.data.entity.PendingOperationEntity>())
+            else workspaceRepository.pendingOperations(ws)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     }
 
 
@@ -414,8 +422,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val rejectedOperationCount = localSyncStatus.map { it.reviewCount }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
     val blockedOperationCount = actorOperations.map { rows -> rows.count {
-        it.state == "REJECTED" && it.entityType == "PAYMENT" &&
-            it.failureReason.contains("PERMISSION_DENIED", ignoreCase = true)
+        com.example.ui.util.RetainedActionDetails.blocked(it)
     } }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
     val retainedOperationWarning = combine(actorOperations, currentUserRole, localSyncStatus) { rows, role, status ->
         listOf(com.example.ui.util.RetainedOperationWarning.from(rows, role),

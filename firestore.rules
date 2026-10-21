@@ -83,9 +83,10 @@ service cloud.firestore {
         data.totalAmount == data.amountReceived + data.pendingAmount;
     }
     function reference(ws, collection, id) {
-      return id is int && id > 0 && exists(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))) &&
-        get(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))).data.get('isDeleted', false) == false &&
-        get(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))).data.workspaceId == ws;
+      // Reuse one lookup: a job can validate both Customer and Tractor plus a different beneficiary.
+      let target = get(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))).data;
+      return id is int && id > 0 && target is map &&
+        target.get('isDeleted', false) == false && target.workspaceId == ws;
     }
     function creationTime() {
       return request.resource.data.createdAt is int && request.resource.data.createdAt > 0 &&
@@ -101,7 +102,8 @@ service cloud.firestore {
     function validCollectionCollector(ws, data) {
       let uid = data.get('collectorUid', data.collectedByUid);
       let target = get(memberPath(ws, uid)).data;
-      return uid is string && active(ws, uid) && target.workspaceId == ws && target.role in ['OWNER', 'Owner', 'owner', 'PARTNER', 'Partner', 'partner'] &&
+      // The membership path is authoritative; older valid members have no redundant workspaceId.
+      return uid is string && active(ws, uid) && target.get('workspaceId', ws) == ws && target.role in ['OWNER', 'Owner', 'owner', 'PARTNER', 'Partner', 'partner'] &&
         (owner(ws) || uid == request.auth.uid) &&
         (!data.keys().hasAny(['collectorUid', 'collectorName', 'collectorRole']) ||
           (data.collectorUid == uid && data.collectorName == (target.get('displayName', null) == null ? '' : target.displayName) && data.collectorRole == target.role));

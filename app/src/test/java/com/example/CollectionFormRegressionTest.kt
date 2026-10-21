@@ -30,11 +30,11 @@ class CollectionFormRegressionTest {
         workType="Work",startTimeMillis=1,endTimeMillis=2,durationMinutes=1,totalAmount=100.0,amountReceived=0.0,pendingAmount=100.0,addedByPartner="Owner",createdAt=created)
     @Test fun historyShowsSelectedPartnerAndDistinctAuthenticatedRecorder() {
         compose.setContent { MyApplicationTheme { CollectionHistoryTab(
-            settings=AppSettingsEntity(workspaceId="a"),workspaceMembers=members,isOwner=true,currentUid="owner",payments=listOf(
-                PaymentEntity(id=10,workspaceId="a",customerName="Fixture",amount=100.0,collectorUid="partner-b",collectorName="Stale snapshot",
+            settings=AppSettingsEntity(workspaceId="a"),workspaceMembers=members,isOwner=true,currentUid="owner",jobs=listOf(job(1).copy(amountReceived=100.0,pendingAmount=0.0)),payments=listOf(
+                PaymentEntity(id=10,workspaceId="a",jobEntryId=1,customerName="Fixture",amount=100.0,collectorUid="partner-b",collectorName="Stale snapshot",
                     collectorRole="PARTNER",collectedByUid="owner",collectedByName="Owner",collectedByRole="OWNER"))) } }
         settle()
-        compose.onNodeWithTag("expand_job_card_10").performScrollTo().performClick()
+        compose.onNodeWithTag("expand_job_card_1").performScrollTo().performClick()
         compose.onNodeWithTag("collection_history_card_10").performScrollTo().performClick()
         settle()
         compose.onNodeWithText("Collected by: Partner B").assertExists()
@@ -63,8 +63,8 @@ class CollectionFormRegressionTest {
             settings=AppSettingsEntity(workspaceId="a"),isOwner=true,currentUid="owner",
             jobs=listOf(job(1).copy(amountReceived=40.0,pendingAmount=60.0)),payments=emptyList(),onDeleteCollection={}) } }
         compose.onNodeWithTag("expand_job_card_1").performScrollTo().performClick()
-        compose.onNodeWithTag("collection_history_card_1").performScrollTo().assertExists()
-        compose.onNodeWithTag("reverse_collection_1",useUnmergedTree=true).assertDoesNotExist()
+        compose.onNodeWithTag("collection_history_card_-1").performScrollTo().assertExists()
+        compose.onNodeWithTag("reverse_collection_-1",useUnmergedTree=true).assertDoesNotExist()
     }
 
 }

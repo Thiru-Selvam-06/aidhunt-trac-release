@@ -34,6 +34,15 @@ test.beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRules
  for(const [role,id] of Object.entries(uid)) if(role!=='outsider') await setDoc(doc(database,`workspaces/${ws}/members/${id}`),{uid:id,workspaceId:ws,role:role==='other'?'PARTNER':role.toUpperCase(),status:'ACTIVE'});
 });});
 for(const role of ['owner','partner','operator']) test(`${role} creates own ordinary entry`,async()=>assertSucceeds(setDoc(doc(db(role),path('entries')),entry(role))));
+for(const role of ['owner','partner']) test(`${role} creates tractor job for another active partner`,async()=>{
+ await seed('tractors',{workspaceId:ws,isDeleted:false},'3');
+ await assertSucceeds(setDoc(doc(db(role),path('entries')),entry(role,{tractorId:3,entryForUid:uid.other,financialAttributionUid:uid.other})));
+});
+for(const invalid of [null,{workspaceId:ws,isDeleted:true},{workspaceId:'foreign',isDeleted:false}])
+ test(`tractor reference remains denied for ${JSON.stringify(invalid)}`,async()=>{
+  if(invalid) await seed('tractors',invalid,'3');
+  await assertFails(setDoc(doc(db('owner'),path('entries')),entry('owner',{tractorId:3,entryForUid:uid.other,financialAttributionUid:uid.other})));
+ });
 for(const role of ['partner','operator']) {
  test(`${role} entry-for permission follows role`,async()=>{
    const result=setDoc(doc(db(role),path('entries')),entry(role,{entryForUid:uid.other,financialAttributionUid:uid.other}));
@@ -81,6 +90,25 @@ test('Partner cannot add another member expense through a historical job',async(
 test('accepted limitation: backdated offline action can arrive after deadline',async()=>{let record=entry('partner',{createdAt:now-53*3600000,authorizationCreatedAt:Timestamp.fromMillis(now-53*3600000),actionTime:now-48*3600000});await seed('entries',record);await assertSucceeds(updateDoc(doc(db('partner'),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
 test('offline action after deadline rejected',async()=>{let record=entry('partner',{createdAt:now-53*3600000,authorizationCreatedAt:Timestamp.fromMillis(now-53*3600000),actionTime:now-27*3600000});await seed('entries',record);await assertFails(updateDoc(doc(db('partner'),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
 test('future action timestamp rejected',async()=>assertFails(setDoc(doc(db('partner'),path('entries')),entry('partner',{actionTime:now+3600000}))));
+
+for (const role of ['owner','partner']) test(`${role} offline collection accepts legacy path-scoped member without workspaceId`, async()=>{
+ await env.withSecurityRulesDisabled(async c=>{
+   await setDoc(doc(c.firestore(),path('members',uid[role])), {role:role==='owner'?'owner':'Partner',status:'active'});
+ });
+ const before=entry(role);await seed('entries',before);
+ const action=await collect(role,'91',1250,before);
+ await assertSucceeds(action.commit());
+ const confirmed=(await getDoc(doc(db(role),path('entries')))).data();
+ assert.equal(confirmed.amountReceived,1250);assert.equal(confirmed.pendingAmount,48750);
+ assert.equal((await getDoc(doc(db(role),path('collections','91')))).data().collectedByUid,uid[role]);
+});
+test('collection rejects explicitly foreign workspace membership metadata',async()=>{
+ await env.withSecurityRulesDisabled(async c=>updateDoc(doc(c.firestore(),path('members',uid.partner)),{workspaceId:'foreign'}));
+ const before=entry();await seed('entries',before);
+ await assertFails((await collect('partner','92',1250,before)).commit());
+ assert.equal((await getDoc(doc(db('owner'),path('entries')))).data().amountReceived,0);
+ assert.equal((await getDoc(doc(db('owner'),path('collections','92')))).exists(),false);
+});
 test('outsider cannot read or write workspace',async()=>{await seed('entries',entry());await assertFails(getDoc(doc(db('outsider'),path('entries'))));await assertFails(setDoc(doc(db('outsider'),path('entries','2')),entry('outsider')));});
 test('cross-workspace envelope rejected',async()=>assertFails(setDoc(doc(db('partner'),path('entries')),entry('partner',{workspaceId:'workspace-b'}))));
 test('removed membership denied',async()=>{await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),`workspaces/${ws}/members/${uid.partner}`),{status:'REMOVED'}));await assertFails(setDoc(doc(db('partner'),path('entries')),entry()));});

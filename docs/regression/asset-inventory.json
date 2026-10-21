@@ -70,17 +70,23 @@
     "app/src/test/java/com/example/FinalTargetedClientFixesTest.kt",
     "app/src/test/java/com/example/FinalTwoClientFixesTest.kt",
     "app/src/test/java/com/example/FinancialConsistencyAndSyncRepairTest.kt",
+    "app/src/test/java/com/example/FirebaseLedgerDeletionTest.kt",
+    "app/src/test/java/com/example/FirebaseOnlyDeletionEmulatorTest.kt",
     "app/src/test/java/com/example/GreetingScreenshotTest.kt",
     "app/src/test/java/com/example/HomeFinancialVisibilityTest.kt",
     "app/src/test/java/com/example/HomeRecordSummaryTest.kt",
     "app/src/test/java/com/example/InitialWorkspaceSettingsTest.kt",
+    "app/src/test/java/com/example/LedgerConsistencyRegressionTest.kt",
+    "app/src/test/java/com/example/LedgerReportUiRegressionTest.kt",
     "app/src/test/java/com/example/LocalLedgerReferenceTest.kt",
     "app/src/test/java/com/example/MemberDetailsNavigationTest.kt",
     "app/src/test/java/com/example/NewEntryExpenseAndTakingCategoriesTest.kt",
     "app/src/test/java/com/example/OfflineActionTimeTest.kt",
+    "app/src/test/java/com/example/OfflineSyncReliabilityTest.kt",
     "app/src/test/java/com/example/OperationDiagnosticTest.kt",
     "app/src/test/java/com/example/OperationRoleMatrixTest.kt",
     "app/src/test/java/com/example/PartnerEarningsChartTest.kt",
+    "app/src/test/java/com/example/PartnerLedgerFollowupTest.kt",
     "app/src/test/java/com/example/PartnerWithdrawalsProfitShareTest.kt",
     "app/src/test/java/com/example/PaymentReversalAndCollectionHistoryTest.kt",
     "app/src/test/java/com/example/PdfAuthorizationTest.kt",
@@ -88,9 +94,11 @@
     "app/src/test/java/com/example/PhoneOnlySignupRoutingTest.kt",
     "app/src/test/java/com/example/PurgeReconciliationProtocolTest.kt",
     "app/src/test/java/com/example/RecordIdentityPolicyTest.kt",
+    "app/src/test/java/com/example/ReplicaSyncOrderingTest.kt",
     "app/src/test/java/com/example/RetainedOperationWarningTest.kt",
     "app/src/test/java/com/example/RoomMigrationChainTest.kt",
     "app/src/test/java/com/example/RoomScopeTest.kt",
+    "app/src/test/java/com/example/ScreenshotFollowupRegressionTest.kt",
     "app/src/test/java/com/example/StartupAuthPresentationTest.kt",
     "app/src/test/java/com/example/TractorCardAuthorizationTest.kt",
     "app/src/test/java/com/example/TrustedCommandRoutingTest.kt",
@@ -443,6 +451,12 @@
     },
     {
       "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "observeUnsyncedIdsForWorkspace",
+      "sql": "SELECT id FROM customers WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
       "method": "getUnsyncedCount",
       "sql": "SELECT COUNT(*) FROM customers WHERE isSynced = 0",
       "status": "NOT VERIFIED: map each DAO query to executed assertions"
@@ -623,6 +637,12 @@
     },
     {
       "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "observeUnsyncedIdsForWorkspace",
+      "sql": "SELECT id FROM job_entries WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
       "method": "getUnsyncedCountForWorkspaces",
       "sql": "SELECT COUNT(*) FROM job_entries WHERE workspaceId IN (:workspaceIds) AND isSynced = 0",
       "status": "NOT VERIFIED: map each DAO query to executed assertions"
@@ -761,6 +781,12 @@
     },
     {
       "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "observeUnsyncedIdsForWorkspace",
+      "sql": "SELECT id FROM expenses WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
       "method": "getUnsyncedCountForWorkspaces",
       "sql": "SELECT COUNT(*) FROM expenses WHERE workspaceId IN (:workspaceIds) AND isSynced = 0",
       "status": "NOT VERIFIED: map each DAO query to executed assertions"
@@ -881,6 +907,12 @@
     },
     {
       "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "observeUnsyncedIdsForWorkspace",
+      "sql": "SELECT id FROM withdrawals WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
       "method": "getUnsyncedCountForWorkspaces",
       "sql": "SELECT COUNT(*) FROM withdrawals WHERE workspaceId IN (:workspaceIds) AND isSynced = 0",
       "status": "NOT VERIFIED: map each DAO query to executed assertions"
@@ -989,6 +1021,12 @@
     },
     {
       "source": "app/src/main/java/com/example/data/dao/Daos.kt",
+      "method": "observeUnsyncedIdsForWorkspace",
+      "sql": "SELECT id FROM payments WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/Daos.kt",
       "method": "markPaymentsSynced",
       "sql": "UPDATE payments SET isSynced = 1 WHERE workspaceId = :workspaceId AND id IN (:ids)",
       "status": "NOT VERIFIED: map each DAO query to executed assertions"
@@ -1057,6 +1095,12 @@
       "source": "app/src/main/java/com/example/data/dao/DeletedMemberDao.kt",
       "method": "get",
       "sql": "SELECT * FROM deleted_members WHERE workspaceId = :wsId AND uid = :uid",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
+      "method": "observePending",
+      "sql": "SELECT * FROM pending_operations WHERE state = 'PENDING' ORDER BY sequence",
       "status": "NOT VERIFIED: map each DAO query to executed assertions"
     },
     {
@@ -1212,7 +1256,7 @@
     ],
     "SyncResult.kt": [],
     "WorkspaceRepository.kt": [
-      "enforceSelfOnlyEntryIdentity",
+      "enforceEntryIdentity",
       "effectiveEntryStartTimeForEdit",
       "initialWorkspaceSettings",
       "getPersonalWorkspaceId",

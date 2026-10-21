@@ -696,7 +696,8 @@ class FirestoreRepository(
     private suspend fun saveTimedDocument(
         ref: com.google.firebase.firestore.DocumentReference,
         data: Map<String, Any?>,
-        merge: Boolean = false
+        merge: Boolean = false,
+        queuedOperation: com.example.data.entity.PendingOperationEntity? = null
     ) {
         val firestore = db ?: throw IllegalStateException("Firestore is unavailable")
         firestore.runTransaction { transaction ->
@@ -705,6 +706,11 @@ class FirestoreRepository(
             // An already committed command needs acknowledgement, not a new deadline check.
             if (!operationId.isNullOrBlank() && existing.getString("operationId") == operationId) {
                 return@runTransaction null
+            }
+            if (queuedOperation != null && queuedOperation.entityType in setOf("JOB", "EXPENSE")) {
+                com.example.data.sync.QueuedWriteConflict.requireUnchanged(queuedOperation.entityType,
+                    org.json.JSONObject(queuedOperation.payloadJson).optString("expectedBaseJson").takeIf { it.isNotBlank() },
+                    existing.data, queuedOperation.entityId, queuedOperation.workspaceId)
             }
             val payload = data.toMutableMap()
             payload.remove("operationProtocolVersion")
@@ -780,6 +786,11 @@ class FirestoreRepository(
         }
     }
 
+    suspend fun getCustomerDeletionProofFromServer(workspaceId: String, customerId: Long): Map<String, Any?>? =
+        (db ?: throw IllegalStateException("Firestore unavailable")).collection("workspaces").document(workspaceId)
+            .collection("customerDeletionProofs").document(customerId.toString())
+            .get(com.google.firebase.firestore.Source.SERVER).await().data
+
     /** Explicit server read for rejected-action recovery; never falls back to the SDK cache. */
     suspend fun getOperationRecordFromServer(op: com.example.data.entity.PendingOperationEntity): Map<String, Any?>? {
         val collection = when(op.entityType) {
@@ -817,6 +828,7 @@ class FirestoreRepository(
         val payload = mutableMapOf<String, Any?>()
         json.keys().forEach { key -> payload[key] = json.opt(key).takeUnless { it == org.json.JSONObject.NULL } }
         payload.remove("operationProtocolVersion")
+        payload.remove("expectedBaseJson")
         payload["protocolVersion"] = 2
         payload["operationType"] = op.mutationType
         payload["dependencies"] = (0 until dependencies.length()).map { index -> val item = dependencies.getJSONObject(index); mapOf("entityType" to item.getString("entityType"), "entityId" to item.getString("entityId")) }
@@ -893,7 +905,7 @@ class FirestoreRepository(
             else require(existing.getString("operationId") == op.operationId) { "Delete belongs to another pending operation" }
             ref.delete().await()
         } else if (op.entityType in setOf("JOB", "EXPENSE", "WITHDRAWAL")) {
-            saveTimedDocument(ref, payload)
+            saveTimedDocument(ref, payload, queuedOperation = op)
         } else ref.set(payload).await()
     }
 

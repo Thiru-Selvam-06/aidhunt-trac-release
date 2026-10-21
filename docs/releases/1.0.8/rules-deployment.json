@@ -1,0 +1,18 @@
+{
+  "verifiedAtUtc": "2026-10-20T17:21:57.447822+00:00",
+  "project": "trac-aidhunt",
+  "deploymentScope": "firestore:rules only",
+  "sourceCommit": "3712901fba157138447cf7e8b8878518feb02211",
+  "dryRun": "PASS",
+  "deployment": "SUCCESS",
+  "readBackMatchesTestedSource": true,
+  "previousSha256": "c92b59e5139b8527b43af00c399490c8ea4fab31a4269a5226b0d7bf53df3caf",
+  "deployedSha256": "04507f3f22acc160cef4025e72f924ae9478cdf4d5f1d770d95361c4b5974890",
+  "ruleset": "projects/trac-aidhunt/rulesets/607bb637-165b-4ac8-8f76-0aff877271b6",
+  "syntheticRulesTestsPassed": 262,
+  "customerRecordsWrittenOrDeleted": false,
+  "liveRejectedOperationsRetried": false,
+  "billingPlanChanged": false,
+  "functionsWorkersOrIndexesDeployed": false,
+  "rollbackBackupRetained": true
+}

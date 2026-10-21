@@ -105,6 +105,7 @@ fun MainAppContent(
     val rejectedOperationCount by viewModel.rejectedOperationCount.collectAsState()
     val blockedOperationCount by viewModel.blockedOperationCount.collectAsState()
     val retainedOperationWarning by viewModel.retainedOperationWarning.collectAsState()
+    val retainedHomeActions by viewModel.pendingActions.collectAsState()
     val pendingInvitations by viewModel.pendingInvitations.collectAsState()
     val activeWorkspaceId by viewModel.activeWorkspaceId.collectAsState()
     val workspaceMembers by viewModel.workspaceMembers.collectAsState()
@@ -566,6 +567,7 @@ fun MainAppContent(
                                     unsyncedCount = totalUnsyncedCount,
                                     syncMessage = syncMessage,
                                     retainedOperationWarning = retainedOperationWarning,
+                                    retainedActions = retainedHomeActions,
                                     isOwner = isCollaborationOwner,
                                     currentUid = viewModel.currentUid ?: "",
                                     workspaceMembers = activeWorkspaceMembers,

@@ -49,8 +49,8 @@ class NetworkMonitor(context: Context) {
                 networkRequest,
                 object : ConnectivityManager.NetworkCallback() {
                     override fun onAvailable(network: Network) {
-                        _isOnline.value = true
-                        CoroutineScope(Dispatchers.IO).launch {
+                        _isOnline.value = checkInitialConnectivity()
+                        if (_isOnline.value) CoroutineScope(Dispatchers.IO).launch {
                             onNetworkAvailableListener?.invoke()
                         }
                     }
@@ -65,7 +65,8 @@ class NetworkMonitor(context: Context) {
                         network: Network,
                         networkCapabilities: NetworkCapabilities
                     ) {
-                        val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                            networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
                         _isOnline.value = hasInternet
                         if (hasInternet) {
                             CoroutineScope(Dispatchers.IO).launch {
@@ -77,7 +78,7 @@ class NetworkMonitor(context: Context) {
             )
         } catch (e: Exception) {
             // Fallback for restricted test environments
-            _isOnline.value = true
+            _isOnline.value = false
         }
     }
 
@@ -90,9 +91,10 @@ class NetworkMonitor(context: Context) {
         return try {
             val activeNetwork = connectivityManager?.activeNetwork ?: return false
             val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         } catch (e: Exception) {
-            true // default to true if check fails
+            false // Unknown connectivity is not proof of a usable network.
         }
     }
 }

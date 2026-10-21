@@ -145,6 +145,7 @@ fun HomeScreen(
     unsyncedCount: Int = 0,
     syncMessage: String = "",
     retainedOperationWarning: String = "",
+    retainedActions: List<com.example.data.entity.PendingOperationEntity> = emptyList(),
     isOwner: Boolean = true,
     currentUid: String = "",
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
@@ -342,6 +343,17 @@ fun HomeScreen(
             if (retainedOperationWarning.isNotBlank()) item {
                 Card(colors = CardDefaults.cardColors(containerColor = AlertDueRedBg), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
                     Text(retainedOperationWarning, color = AlertDueRed, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
+                }
+            }
+
+            // Immutable rejected snapshots stay visible without contaminating confirmed balances.
+            items(retainedActions.filter { it.state in setOf("PENDING", "REJECTED") }, key = { "retained-${it.operationId}" }) { action ->
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = AlertDueRedBg)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("${action.entityType}: ${com.example.ui.util.RetainedActionDetails.status(action)}", fontWeight = FontWeight.Bold)
+                        Text(com.example.ui.util.RetainedActionDetails.summary(action), fontSize = 12.sp)
+                        Text("Original local action; awaiting server confirmation or review. Details in Account → SQLite & Cloud Sync.", fontSize = 12.sp)
+                    }
                 }
             }
 

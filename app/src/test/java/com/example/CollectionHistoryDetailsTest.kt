@@ -8,6 +8,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import com.example.data.entity.AppSettingsEntity
 import com.example.data.entity.PaymentEntity
+import com.example.data.entity.JobEntryEntity
 import com.example.ui.screens.report.CollectionHistoryTab
 import com.example.ui.theme.MyApplicationTheme
 import org.junit.Rule
@@ -26,8 +27,9 @@ class CollectionHistoryDetailsTest {
             MyApplicationTheme {
                 CollectionHistoryTab(
                     settings = AppSettingsEntity(workspaceId = "staging"),
+                    jobs = listOf(10L,42L).map { id -> JobEntryEntity(id=id,workspaceId="staging",customerId=2,customerName="Synthetic source",operatorName="Owner",tractorLabel="T",workType="Work",startTimeMillis=1,endTimeMillis=2,durationMinutes=1,totalAmount=if(id==10L)100.0 else 50.0,amountReceived=if(id==10L)100.0 else 0.0,pendingAmount=if(id==10L)0.0 else 50.0,addedByPartner="Owner",createdByUid="owner",entryForUid="owner") },
                     payments = listOf(
-                        PaymentEntity(id = 10, workspaceId = "staging", customerName = "Active Test", amount = 100.0,
+                        PaymentEntity(id = 10, workspaceId = "staging", jobEntryId = 10, customerName = "Active Test", amount = 100.0,
                             collectedAt = 200, collectedByName = "Owner Test"),
                         PaymentEntity(id = 11, workspaceId = "staging", customerName = "Reversed Test", amount = 50.0,
                             jobEntryId = 42, collectedAt = 100, collectedByName = "Owner Test", status = "REVERSED",
@@ -40,7 +42,7 @@ class CollectionHistoryDetailsTest {
             }
         }
         // Active total reflects only active payments
-        compose.onNodeWithText("₹100").assertExists()
+        compose.onAllNodesWithText("₹100").onFirst().assertExists()
         compose.onNodeWithText("₹150").assertDoesNotExist()
 
         // In collapsed state, payment timeline cards are not displayed

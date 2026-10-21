@@ -10,6 +10,12 @@ import kotlinx.coroutines.flow.first
  * Provisional reversals stay recoverable until then; receipts retain the audit.
  */
 object ConfirmedEntryDeletion {
+    /** A deleted job alone does not prove its Customer was removed; use the server's exact proof. */
+    fun matchesCustomerProof(customer: com.example.data.entity.CustomerEntity, proof: Map<String, Any?>?): Boolean =
+        proof != null && proof["workspaceId"] == customer.workspaceId &&
+            proof["recordId"] == customer.id.toString() &&
+            (proof["sourceCreatedAt"] as? Number)?.toLong() == customer.createdAt
+
     suspend fun apply(db: AppDatabase, op: PendingOperationEntity, allowCustomerCleanup: Boolean = false) = db.withTransaction {
         require(op.entityType == "JOB" && op.mutationType == "DELETE")
         require(db.pendingOperationDao().getOperation(op.operationId)?.state == "ACKNOWLEDGED") {

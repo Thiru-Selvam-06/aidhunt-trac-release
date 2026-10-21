@@ -1,0 +1,37 @@
+{
+  "score": 3,
+  "summary": "Scoped security review of the two tested Rules corrections, now deployed with explicit user approval to trac-aidhunt and read back byte-for-byte. All 262 Rules tests passed. Existing timestamp trust and schema-limit risks remain; this is not a comprehensive security certification.",
+  "findings": [
+    {
+      "check": "Authority Source / historical edit time",
+      "severity": "moderate",
+      "issue": "The existing offline edit policy trusts the client's original action timestamp. An authorized client can backdate that claim; this patch does not introduce tamper-proof time authorization.",
+      "recommendation": "Keep this limitation explicit. Design any server-issued authorization or time-policy change separately, including offline usability and migration tests, before changing historical eligibility."
+    },
+    {
+      "check": "Storage Abuse and Type Safety",
+      "severity": "minor",
+      "issue": "The changed envelope bounds dependency count, but the complete legacy ruleset does not impose comprehensive per-field length/type limits for all customer and business text fields.",
+      "recommendation": "Perform a separate compatibility-aware schema and resource-limit hardening review; do not add untested limits that reject existing customer records during this repair."
+    }
+  ],
+  "reviewedControls": [
+    "Membership comes from workspace member paths, not user profile role claims.",
+    "Absent redundant membership workspaceId falls back to the authoritative path; explicitly foreign metadata is denied.",
+    "Positive IDs, active references, foreign workspace denial and inactive member denial remain tested.",
+    "Collection create/update and source balance changes remain atomic and subject to collector authorization.",
+    "Membership escalation, foreign access, direct deletion bypasses and immutable provenance changes retain negative tests.",
+    "Only the tested Rules candidate was deployed, with user approval; customer records and live rejected operations were not mutated.",
+    "Stale customer snapshots are suppressed only by an exact server deletion-proof workspace, record ID and original creation-time match; reads occur outside the Room transaction."
+  ],
+  "candidateCommit": "3712901fba157138447cf7e8b8878518feb02211",
+  "resolvedFindings": [
+    {
+      "check": "Business Logic vs. Rules",
+      "severity": "major",
+      "issue": "The legacy collector membership-field requirement and the repeated reference evaluation defect are corrected in the live deployed candidate.",
+      "recommendation": "Preserve role, membership, workspace and atomic-collection safeguards; review retained live operations individually before recovery."
+    }
+  ],
+  "deployedSha256": "04507f3f22acc160cef4025e72f924ae9478cdf4d5f1d770d95361c4b5974890"
+}
