@@ -76,4 +76,37 @@ class TamilLocalizationDeviceTest {
         listOf("PAID", "Due", "No Due").forEach { compose.onNodeWithText(it).assertExists() }
         assertEquals(original, customers)
     }
+
+    @Test fun customerDuesPartnerFilterAggregatesOnlyBeneficiaryJobsAndKeepsCollectionAccountComplete() {
+        val language = mutableStateOf("EN")
+        val people = listOf("owner" to "Owner", "partner-a" to "Perumal", "partner-b" to "Sriram").map { (uid, name) ->
+            WorkspaceMember(uid = uid, workspaceId = "fixture", displayName = name,
+                role = if (uid == "owner") "OWNER" else "PARTNER", status = "ACTIVE")
+        }
+        fun job(id: Long, target: String, total: Double, paid: Double) = com.example.data.entity.JobEntryEntity(
+            id = id, workspaceId = "fixture", customerId = 10, customerName = "Raman", customerPhone = "",
+            operatorName = target, tractorLabel = "Tractor", workType = "Rotavator", startTimeMillis = 1000,
+            endTimeMillis = 2000, durationMinutes = 1, totalAmount = total, amountReceived = paid,
+            pendingAmount = total - paid, addedByPartner = "Owner", createdAt = 1000,
+            createdByUid = "owner", createdByRole = "OWNER", entryForUid = target, financialAttributionUid = target)
+        val jobs = listOf(job(1, "partner-a", 500.0, 200.0), job(2, "partner-b", 800.0, 100.0))
+        compose.setContent { MyApplicationTheme {
+            com.example.ui.screens.report.CustomerCreditDueTab(
+                settings = AppSettingsEntity(workspaceId = "fixture", language = language.value),
+                customers = listOf(CustomerEntity(id = 10, workspaceId = "fixture", name = "Raman", phone = "")), jobs = jobs,
+                workspaceMembers = people, actorUid = "owner", isOwner = true, onRecordPaymentWithCollector = { _, _, _, _, _, _, _, _ -> })
+        } }
+        compose.onAllNodesWithText("₹1,000").onFirst().assertExists()
+        compose.onNodeWithTag("dues_partner_partner-a").performScrollTo().performClick()
+        compose.onAllNodesWithText("₹300").onFirst().assertExists()
+        compose.onNodeWithTag("dues_partner_partner-b").performScrollTo().performClick()
+        compose.onAllNodesWithText("₹700").onFirst().assertExists()
+        compose.runOnIdle { language.value = "TA" }
+        compose.onNodeWithText("Sriram").assertExists()
+        compose.onAllNodesWithText("₹700").onFirst().assertExists()
+        compose.onNodeWithTag("btn_add_payment_card_10").performScrollTo().performClick()
+        compose.onNode(hasText("₹1,000", substring = true) and hasAnyAncestor(isDialog()), useUnmergedTree = true).assertExists()
+        assertEquals(listOf(300.0, 700.0), jobs.map { it.pendingAmount })
+        assertEquals(listOf("partner-a", "partner-b"), jobs.map { it.entryForUid })
+    }
 }

@@ -743,6 +743,7 @@ fun WithdrawalTab(
             currentUserName = currentUserName,
             currentUid = currentUid,
             workspaceMembers = workspaceMembers,
+            workspaceId = settings.workspaceId,
             onDismiss = {
                 showTakeAmountDialog = false
                 takeAmountTargetStatus = null
@@ -945,6 +946,11 @@ private fun PartnerShareInvestmentCard(
             Spacer(modifier = Modifier.height(10.dp))
 
             // Horizontal Details Row: Share | Investment | Total to get
+            if (status.businessFundedCost > 0) {
+                Text("${if (isTamil) "வணிகம் செலுத்திய செலவுப் பங்கு" else "Business-funded cost"}: ${formatInr(status.businessFundedCost)}",
+                    fontSize = 11.sp, color = Color(0xFF475569))
+                Spacer(modifier = Modifier.height(6.dp))
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -952,7 +958,7 @@ private fun PartnerShareInvestmentCard(
                 // Column 1: Share
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Share (${formatInr(status.totalShare)})",
+                        text = "${if (isTamil) "பங்கு" else "Share"} (${formatInr(status.totalShare)})",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF475569)
@@ -997,7 +1003,7 @@ private fun PartnerShareInvestmentCard(
                 // Column 2: Investment
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (status.totalInvestment > 0) "Investment (${formatInr(status.totalInvestment)})" else "Investment",
+                        text = (if (isTamil) "முதலீடு" else "Investment") + if (status.totalInvestment > 0) " (${formatInr(status.totalInvestment)})" else "",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF475569)
@@ -1133,6 +1139,7 @@ fun TakeAmountDialog(
     currentUserName: String = "",
     currentUid: String = "",
     workspaceMembers: List<WorkspaceMember> = emptyList(),
+    workspaceId: String = "",
     onDismiss: () -> Unit,
     onConfirm: (List<WithdrawalEntity>) -> Unit
 ) {
@@ -1384,7 +1391,7 @@ fun TakeAmountDialog(
                         ) {
                             eligibleMemberOptions.forEach { member ->
                                 val personName = member.displayName.orEmpty().ifBlank { "Member" }
-                                val personRole = com.example.data.auth.RoleUtils.getRoleDisplayName(member.role, isTamil)
+                                val personRole = com.example.ui.util.businessRoleDisplayName(member.role, workspaceId, workspaceMembers, isTamil)
                                 DropdownMenuItem(
                                     text = { Text("$personName ($personRole)", fontWeight = FontWeight.Medium) },
                                     onClick = {

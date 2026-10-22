@@ -88,6 +88,7 @@ fun BusinessOverviewScreen(
     currentUid: String = ""
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
+    val hasPartnership = rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
     val context = LocalContext.current
     val responsive = rememberResponsiveDimensions()
 
@@ -129,9 +130,9 @@ fun BusinessOverviewScreen(
         FinancialCalculationEngine.calculateSummary(jobs, expenses, withdrawals, scope, payments)
     }
 
-    val partnerBreakdowns = remember(jobs, expenses, withdrawals, partners, workspaceMembers, scope) {
+    val partnerBreakdowns = remember(jobs, expenses, withdrawals, partners, workspaceMembers, scope, hasPartnership) {
         FinancialCalculationEngine.calculatePartnerBreakdown(jobs, expenses, withdrawals, partners, workspaceMembers, scope,
-            preserveUnresolvedUids = true)
+            preserveUnresolvedUids = true).map { it.copy(role = businessDisplayRole(it.role, hasPartnership)) }
     }
 
     val scopedJobs = remember(jobs, scope) {
@@ -1393,6 +1394,7 @@ private fun PersonSelectorModal(
                 ) {
                     Text(
                         text = if (isTamil) "நபரைத் தேர்ந்தெடுக்கவும்" else "Select Person",
+                        modifier = Modifier.weight(1f),
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF0F172A)

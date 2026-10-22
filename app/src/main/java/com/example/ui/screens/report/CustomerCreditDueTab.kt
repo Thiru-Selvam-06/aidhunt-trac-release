@@ -88,6 +88,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -225,6 +226,14 @@ fun CustomerCreditDueTab(
     var selectedSortOrder by remember { mutableStateOf(CreditDueSortOrder.HIGH_TO_LOW) }
     var selectedStatusFilter by remember { mutableStateOf(CreditDueStatusFilter.PENDING_DUE) }
     var selectedDateFilter by remember { mutableStateOf(CreditDueDateFilter.ALL) }
+    var selectedPartnerUid by remember(settings.workspaceId, actorUid) { mutableStateOf<String?>(null) }
+    val filterPartners = remember(settings.workspaceId, workspaceMembers) { duesFilterPartners(settings.workspaceId, workspaceMembers) }
+    LaunchedEffect(filterPartners, selectedPartnerUid) {
+        if (selectedPartnerUid != null && filterPartners.none { it.uid == selectedPartnerUid }) selectedPartnerUid = null
+    }
+    val partnerJobs = remember(settings.workspaceId, jobs, selectedPartnerUid) {
+        jobs.filter { it.workspaceId == settings.workspaceId && (selectedPartnerUid == null || it.entryForUid == selectedPartnerUid) }
+    }
     var isFilterExpanded by remember { mutableStateOf(false) }
     var customStartDateMillis by remember {
         mutableLongStateOf(Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, -30) }.timeInMillis)
@@ -238,10 +247,10 @@ fun CustomerCreditDueTab(
     var showBulkPdfOptionsDialog by remember { mutableStateOf(false) }
     var pdfCustomerSelected by remember { mutableStateOf<CustomerEntity?>(null) }
     // Map each customer to their most recent job timestamp
-    val customerRecentJobTime = remember(jobs) {
+    val customerRecentJobTime = remember(partnerJobs) {
         val map = mutableMapOf<Long, Long>()
         val nameMap = mutableMapOf<String, Long>()
-        jobs.forEach { job ->
+        partnerJobs.forEach { job ->
             val prevTime = map[job.customerId] ?: 0L
             if (job.startTimeMillis > prevTime) {
                 map[job.customerId] = job.startTimeMillis
@@ -302,12 +311,15 @@ fun CustomerCreditDueTab(
             }
         }
     }
-    val synchronizedCustomers = remember(customers, jobs) {
-        com.example.ui.util.FinancialCalculationEngine.customersWithLedger(customers, jobs)
+    val fullCustomerAccounts = remember(settings.workspaceId, customers, jobs) {
+        customerDuesForPartner(settings.workspaceId, customers, jobs, null)
+    }
+    val synchronizedCustomers = remember(settings.workspaceId, customers, jobs, selectedPartnerUid) {
+        customerDuesForPartner(settings.workspaceId, customers, jobs, selectedPartnerUid)
     }
     val filteredCustomers = remember(
         synchronizedCustomers,
-        jobs,
+        partnerJobs,
         searchQuery,
         selectedSortOrder,
         selectedStatusFilter,
@@ -330,7 +342,7 @@ fun CustomerCreditDueTab(
             val matchesDate = if (selectedDateFilter == CreditDueDateFilter.ALL) {
                 true
             } else {
-                val hasJobInDate = jobs.any { j ->
+                val hasJobInDate = partnerJobs.any { j ->
                     j.workspaceId == c.workspaceId && j.customerId == c.id &&
                             j.startTimeMillis in dateFilterStart..dateFilterEnd
                 }
@@ -449,6 +461,24 @@ fun CustomerCreditDueTab(
             )
         }
         // 3. Sorting & Filtering Controls (Collapsible by default)
+        item {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.testTag("customer_dues_partner_filter")) {
+                item {
+                    FilterChip(selected = selectedPartnerUid == null, onClick = { selectedPartnerUid = null },
+                        label = { Text(if (isTamil) "அனைத்து பங்குதாரர்கள்" else "All Partners") },
+                        modifier = Modifier.testTag("dues_partner_all"))
+                }
+                items(filterPartners, key = { it.uid }) { partner ->
+                    FilterChip(selected = selectedPartnerUid == partner.uid, onClick = { selectedPartnerUid = partner.uid },
+                        label = { Text(partner.displayName.orEmpty().ifBlank { if (isTamil) "பங்குதாரர்" else "Partner" }) },
+                        modifier = Modifier.testTag("dues_partner_${partner.uid}"))
+                }
+            }
+            if (selectedPartnerUid != null) Text(
+                if (isTamil) "காட்டப்படும் நிலுவை மட்டும் வடிகட்டப்படும். வசூல் முழு வாடிக்கையாளர் கணக்கிற்கும் பொருந்தும்." else
+                    "Displayed dues are filtered. Collections use the complete customer account.",
+                fontSize = 11.sp, color = TextSecondaryDark)
+        }
         item {
             val activeFilterCount = (if (selectedStatusFilter != CreditDueStatusFilter.PENDING_DUE) 1 else 0) +
                 (if (selectedSortOrder != CreditDueSortOrder.HIGH_TO_LOW) 1 else 0) +
@@ -816,7 +846,7 @@ fun CustomerCreditDueTab(
     selectedCustomer?.let { selected -> synchronizedCustomers.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { customer ->
         // Keep updated customer data if changed in list
         val currentCustomer = customer
-        val customerJobs = jobs.filter {
+        val customerJobs = partnerJobs.filter {
             it.workspaceId == currentCustomer.workspaceId && it.customerId == currentCustomer.id
         }
         CustomerDetailSheet(
@@ -857,7 +887,7 @@ fun CustomerCreditDueTab(
         )
     }
     // Dialog to Add Payment for Customer
-    customerForPayment?.let { selected -> synchronizedCustomers.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { customer ->
+    customerForPayment?.let { selected -> fullCustomerAccounts.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { customer ->
         val currentCustomer = customer
         RecordCustomerPaymentDialog(
             customer = currentCustomer,

@@ -1320,14 +1320,17 @@ fun AddOrEditExpenseScreen(
     val isTamil = settings.language.equals("TA", ignoreCase = true)
 
     val eligibleMembers = workspaceMembers.filter { it.workspaceId == settings.workspaceId && it.uid.isNotBlank() && it.status.equals("active", true) && (isOwner || it.uid == currentUid) }
-    val targetLabels = eligibleMembers.associateBy { "${it.displayName.orEmpty().ifBlank { "Member" }} (${it.role} · ${it.phoneNumber.orEmpty().takeLast(4).ifBlank { it.uid.takeLast(4) }})" }
+    val hasPartnership = com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
+    val targetLabels = eligibleMembers.associateBy { "${it.displayName.orEmpty().ifBlank { "Member" }} (${com.example.data.auth.RoleUtils.getRoleDisplayName(com.example.ui.util.businessDisplayRole(it.role, hasPartnership), isTamil)} · ${it.phoneNumber.orEmpty().takeLast(4).ifBlank { it.uid.takeLast(4) }})" }
     val operatorOptions = targetLabels.keys.toList()
     var selectedTargetUid by remember(initialExpense, currentUid) { mutableStateOf(initialExpense?.expenseForUid?.takeIf { it.isNotBlank() } ?: currentUid) }
 
     // Operator Default: If creating a new expense, default to whoever is logged in
-    val defaultOperatorName = remember(initialExpense, settings.activePartnerName, settings.ownerName, operatorOptions, isOwner, actorName) {
+    val defaultOperatorName = remember(initialExpense, currentUid, targetLabels, settings.activePartnerName, settings.ownerName, operatorOptions, isOwner, actorName) {
         if (initialExpense != null) {
             initialExpense.operatorName
+        } else if (targetLabels.values.any { it.uid == currentUid }) {
+            targetLabels.entries.first { it.value.uid == currentUid }.key
         } else if (!isOwner) {
             val currentActor = actorName.ifBlank { settings.activePartnerName.trim() }
             operatorOptions.firstOrNull() ?: currentActor
@@ -1367,7 +1370,8 @@ fun AddOrEditExpenseScreen(
                 actorName.ifBlank { settings.activePartnerName.ifBlank { "Partner" } }
             }
             val cleanOperator = initialExpense?.operatorName
-                ?: if (!isOwner) currentActor else selectedOperator.substringBefore(" (").trim()
+                ?: workspaceMembers.firstOrNull { it.workspaceId == settings.workspaceId && it.uid == (if (isOwner) selectedTargetUid else currentUid) }
+                    ?.displayName.orEmpty().ifBlank { currentActor }
             val finalAddedByPartner = if (!isOwner) currentActor else (initialExpense?.addedByPartner?.ifBlank { null } ?: currentActor)
             val isBusinessPaid = selectedWhoPaid.equals("Business Paid", ignoreCase = true)
             val finalPaidByPartner = if (!isBusinessPaid) {

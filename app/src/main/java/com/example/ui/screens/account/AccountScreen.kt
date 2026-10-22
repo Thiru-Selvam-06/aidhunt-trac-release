@@ -3202,7 +3202,7 @@ fun ManagePartnersPage(
             }
         }
         items(reconciledPartners, key = { "${it.id}_${it.phone}_${it.role}" }) { partner ->
-            val roleLabel = com.example.data.auth.RoleUtils.getRoleDisplayName(partner.role, isTamil)
+            val roleLabel = com.example.ui.util.businessRoleDisplayName(partner.role, settings.workspaceId, workspaceMembers, isTamil)
             Card(
                 shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -3312,7 +3312,7 @@ fun ManagePartnersPage(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(selected.name)
-                        Text("${if (isTamil) "பங்கு" else "Role"}: ${com.example.data.auth.RoleUtils.getRoleDisplayName(selected.role, isTamil)}")
+                        Text("${if (isTamil) "பங்கு" else "Role"}: ${com.example.ui.util.businessRoleDisplayName(selected.role, settings.workspaceId, workspaceMembers, isTamil)}")
                         if (selected.phone.isNotBlank()) Text("${if (isTamil) "தொலைபேசி" else "Phone"}: ${selected.phone}")
                         Text(if (selected.isConnected) (if (isTamil) "இணைக்கப்பட்டது" else "Connected")
                             else (if (isTamil) "கணக்கு பதிவு செய்யப்படவில்லை" else "Account not created"))

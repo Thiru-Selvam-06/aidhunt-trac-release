@@ -251,7 +251,7 @@ fun HomeScreen(
                             (currentAuthUser?.phoneNumber != null && it.phoneNumber == currentAuthUser.phoneNumber)
                         }
                         val loggedInRole = when {
-                            isOwner -> if (isTamil) "உரிமையாளர்" else "Owner"
+                            isOwner -> com.example.ui.util.businessRoleDisplayName("Owner", settings.workspaceId, workspaceMembers, isTamil)
                             authenticatedUserRole.equals("operator", ignoreCase = true) || currentMember?.role.equals("operator", ignoreCase = true) -> if (isTamil) "இயக்குநர்" else "Operator"
                             else -> if (isTamil) "பங்குதாரர்" else "Partner"
                         }
@@ -1211,7 +1211,8 @@ fun CustomerSummaryPopup(
                     val (cRole, cName) = com.example.data.auth.RoleUtils.resolveCreatorRoleAndName(job, settings.ownerName, workspaceMembers, partners)
                     val createdByText = com.example.data.auth.RecordIdentityPolicy.savedCreatorLabel(
                         com.example.data.auth.RoleUtils.formatRoleAndName(cRole, cName, isTamil), job.createdByUid, isTamil)
-                    val entryForDisplay = com.example.data.auth.RoleUtils.getEntryForDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil)
+                    val entryForDisplay = com.example.data.auth.RoleUtils.getEntryForDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil,
+                        com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers))
                     val editedByDisplayModal = com.example.data.auth.RoleUtils.getEditedByDisplay(job, isTamil)
 
                     Surface(

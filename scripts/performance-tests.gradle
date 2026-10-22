@@ -1,0 +1,7 @@
+// Explicit synthetic tiers for a measured baseline; no invented timing threshold.
+allprojects {
+    tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        systemProperty "trac.performance.tiers", project.findProperty("qaPerformanceTiers") ?: "100,1000"
+        testLogging.showStandardStreams = true
+    }
+}

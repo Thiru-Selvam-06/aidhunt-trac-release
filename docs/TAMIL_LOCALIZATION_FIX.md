@@ -33,7 +33,9 @@ No database migration, record update, historical-data rewrite, Firebase Rules ch
 
 The new source checks scan all 112 main Kotlin/Java/XML files. They detected the baseline overview corruption and all three lost Customer Dues labels; the corrected sources pass. All 110 Python tests passed using a workspace-local temporary directory.
 
-The local Compose regression partition executed 57 tests: 56 passed and one new person-filter dialog test failed with `AppNotIdleException`. Eight of the nine new Tamil UI tests passed; the two plain JVM data-preservation tests also passed. The failing test and assertions remain enabled. A matching mandatory Android instrumentation journey has been added to distinguish Android behavior from the local Windows Robolectric environment. Final CI results are pending; this is not a passing release gate.
+The initial local Compose partition and GitHub run `39755775953` executed 57 Compose tests: 56 passed and the person-filter dialog failed with `AppNotIdleException` on Windows and Linux. The same full journey passed on the actual Android emulator: that run had 19 passing instrumentation tests, zero skipped. With explicit user approval, the full dialog journey and all its assertions stay mandatory on Android; metric/language checks stay in Robolectric. No ignored or optional replacement was introduced.
+
+After that approved split, the selected local rerun passed all nine Tamil UI tests and both plain data-preservation tests. The broader October 22 selected run passed 21 tests with zero failures/skips, including standalone serialization and financial policies. Full final CI remains required; this is not a production release approval. See `regression/OCT22_ENGINEERING_REPORT.md` for the final candidate's broader scope and evidence.
 
 Native-rendered images of Tamil Customer Dues and Business Overview were inspected. They show readable Tamil, correct rupee symbols and unchanged entered names/contact details. The overview's expense toggle now wraps below its legend when space is limited instead of overlapping it.
 
