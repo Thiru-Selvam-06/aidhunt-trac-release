@@ -1,0 +1,30 @@
+{
+  "score": 3,
+  "summary": "Local prototype reviewed against financial identity, initial collector, workspace and update-diff boundaries. 297 emulator rules tests passed. Not a production deployment approval or a guarantee of a complete rules audit.",
+  "findings": [
+    {
+      "check": "Expense funding identity on create and funding changes",
+      "severity": "major",
+      "issue": "Baseline accepted four invalid new funding combinations. The local candidate rejects them, preserves unchanged legacy funding, and keeps creator/beneficiary/payer distinct. Production rules remain unchanged.",
+      "recommendation": "Review the narrow candidate and full CI evidence before separately approving deployment. Do not replay retained live expenses automatically."
+    },
+    {
+      "check": "Initial collection exception and general collector authority",
+      "severity": "moderate",
+      "issue": "The new initial-beneficiary exception must stay bound to the original unpaid ordinary job, original creator/actor, operation UUID and action time. Existing membership, collector metadata, date and atomic amount checks passed the emulator cases; no later Partner collector escalation is granted.",
+      "recommendation": "Keep positive and adversarial cases mandatory, including compound-write expression-budget regressions and wrong-parent/recorder/beneficiary/repeated receipt denials."
+    },
+    {
+      "check": "Historical offline action-time trust",
+      "severity": "moderate",
+      "issue": "The existing approved offline authorization model trusts original client action time, which is not tamper-proof. Accepted-limitation tests remain visible and unchanged.",
+      "recommendation": "Treat this as an existing policy limitation. A server-issued offline authorization design would require separate product/security approval; do not change historical timestamps to hide it."
+    },
+    {
+      "check": "Request schema and resource limits",
+      "severity": "minor",
+      "issue": "This scoped review does not establish complete hasOnly/type/size validation for every document field or every legacy backend path. Passing the relevant test suite is not a complete schema-hardening claim.",
+      "recommendation": "Retain the existing gates and schedule separate schema/size-limit hardening if required; avoid unrelated policy changes in this candidate."
+    }
+  ]
+}
