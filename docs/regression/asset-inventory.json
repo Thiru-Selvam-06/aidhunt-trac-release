@@ -103,6 +103,7 @@
     "app/src/test/java/com/example/RoomMigrationChainTest.kt",
     "app/src/test/java/com/example/RoomScopeTest.kt",
     "app/src/test/java/com/example/ScreenshotFollowupRegressionTest.kt",
+    "app/src/test/java/com/example/StandaloneExpenseConflictCompatibilityTest.kt",
     "app/src/test/java/com/example/StandaloneExpenseWireTest.kt",
     "app/src/test/java/com/example/StartupAuthPresentationTest.kt",
     "app/src/test/java/com/example/TamilLocalizationUiTest.kt",

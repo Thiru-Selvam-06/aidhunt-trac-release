@@ -14,6 +14,7 @@ These expectations come from the user's two October 22 attachments and clarifica
 | HISTORY | Job beneficiary A, later collection by B | Entry For A; Collected By B; recorder unchanged | Compose + existing grouping tests |
 | DUES | Customer Raman with A due 300, B due 700 | A filter 300; B filter 700; All 1000; filter jobs by UID before grouping | Pure aggregation + Compose |
 | EXP-WIRE | Standalone expense has no related job, either payer source | Existing Rules contract uses numeric zero; linked positive job ID unchanged; original amount/actor/payer/timestamps unchanged | Serialization + actual Firestore Rules |
+| EXP-UPGRADE | Retained old expense-edit base has null source; unchanged server uses missing/null/zero | No false conflict and no mutation to retained original JSON; real source/money/payer/workspace/identity changes still rejected | Original compiled-code reproduction + conflict compatibility regression |
 | EXP-AUTH | Active Owner/Partner, correct workspace, amount 1/1/2 | Valid standalone expense commits once; outsider/Operator/foreign actor denied | Emulator |
 | EXP-DURABLE | Offline standalone expense and original outbox command, then restart | IDs, amounts, actor, workspace, timestamps and payload survive; only server ACK permits Synced | Room + outbox integration |
 | PERSONAL | Cash 10000, member personally funds 900 | Cash 10000; member investment 900; zero artificial withdrawal | Independent financial assertions |

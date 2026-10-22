@@ -12,6 +12,8 @@ The frozen serialization regression failed against the previously compiled appli
 
 The three original live expenses (1, 1 and 2) were not individually inspected because their diagnostics were unavailable. This confirms a source defect and synthetic reproduction, not the exact rejection reason of each unseen live operation. Existing rejected payloads are not rewritten or retried.
 
+Upgrade review also reproduced a false conflict for an older queued expense edit whose immutable base contains `relatedJobId:null`. The server-normalized snapshot now uses zero, so the old comparator incorrectly treated an unchanged record as edited by another device. A fresh test against the compiled candidate failed with that exact conflict exception. The comparator now treats only absent/null/numeric-zero source representations as equivalent, without changing stored queue bytes. It compares the raw server source so positive links, string links, fractional/invalid sources, changed amounts, different payers, attribution, workspace or 64-bit identity still require review. New compatibility regressions and the full suite are being rerun. The first diagnostic fixture used a nonexistent updatedAt parameter; that fixture compilation error was corrected before the real failing assertion was recorded.
+
 ### Deployed policy comparison
 
 Read-only inspection found that deployed rules matched the pre-candidate local rules, SHA256 `04507f3f22acc160cef4025e72f924ae9478cdf4d5f1d770d95361c4b5974890`. Therefore an old/local collection-rule mismatch is not assumed to explain the current defect. Project edition was verified as Firestore Standard; no edition, billing or production policy was changed.
@@ -51,6 +53,7 @@ Paths are relative to the repository. The earlier Tamil-only file list is in its
 | `app/src/main/java/com/example/data/auth/CollectionPolicy.kt` | Resolve eligible initial beneficiary collector by exact UID/workspace. |
 | `app/src/main/java/com/example/data/auth/RoleUtils.kt` | UID/workspace-based Entry For display; do not invent a role for missing identity. |
 | `app/src/main/java/com/example/data/sync/SyncAuthorizationDiagnostic.kt` | Include retained expense beneficiary/payer/funding/source evidence without tokens/contact details. |
+| `app/src/main/java/com/example/data/sync/QueuedWriteConflict.kt` | Preserve older null-source edit bases while comparing raw nonzero/malformed server links and retaining genuine conflict protection. |
 | `app/src/main/java/com/example/ui/util/BusinessRolePresentation.kt` | Display-only Owner→Partner transition with local sticky preference; no authorization change. |
 | `app/src/main/java/com/example/ui/screens/home/HomeScreen.kt` | Business/beneficiary display labels. |
 | `app/src/main/java/com/example/ui/screens/account/AccountScreen.kt` | Manage-members display labels. |
@@ -64,6 +67,7 @@ Paths are relative to the repository. The earlier Tamil-only file list is in its
 | `firestore.rules` | Approved initial-collector exception and expense funding validation; local prototype only. |
 | `security-tests/architecture.test.cjs` | Independent sentinel, identity, financial authorization and compatibility regressions. |
 | `app/src/test/java/com/example/StandaloneExpenseWireTest.kt` | Old null failure/new zero contract, original fields and 64-bit round trip. |
+| `app/src/test/java/com/example/StandaloneExpenseConflictCompatibilityTest.kt` | Upgrade compatibility without queue rewriting; financial/payer/identity/source changes remain conflicts. |
 | `app/src/test/java/com/example/BusinessMaintenancePolicyTest.kt` | Frozen role/UID/filter/cash/investment/paisa/unequal-share expectations. |
 | `app/src/test/java/com/example/BusinessPerformanceTest.kt` | Synthetic calculation latency/heap baseline with independent totals. |
 | `app/src/test/java/com/example/TamilLocalizationUiTest.kt` | Keep metrics/language assertions in Robolectric; approved full dialog journey remains mandatory Android coverage. |
@@ -73,6 +77,12 @@ Paths are relative to the repository. The earlier Tamil-only file list is in its
 | `docs/regression/interaction-inventory.json`, `.csv`, `asset-inventory.json` | Regenerate source inventory after added controls; not a claim of runtime coverage. |
 | `docs/regression/OCT22_EXPECTATIONS.md` | Freeze independent acceptance expectations and original live-evidence limits. |
 | This report, physical checklist and security assessment | Evidence, risks, safe recovery and review record. |
+| `app/build.gradle.kts` | Reserve development version 1.0.9/code 10; no production APK distribution. |
+| `app/src/main/java/com/example/ui/util/Localization.kt` | Translate exact app-owned options while preserving custom entered work-type labels. |
+| `app/src/test/java/com/example/LocalizationDataPreservationTest.kt` | Independent entered-label preservation expectations. |
+| `scripts/instrumentation-plan.json` | Mandatory Tamil Android journeys alongside existing required classes. |
+| `scripts/test_localization_integrity.py` | Strict UTF-8, mojibake/replacement/C1 and question-mark-label source checks. |
+| `docs/TAMIL_LOCALIZATION_FIX.md` | Tamil causes, original failure history and actual test-environment distinctions. |
 
 ## Verification record
 
@@ -92,6 +102,7 @@ Paths are relative to the repository. The earlier Tamil-only file list is in its
 | Final local backend | 129 passed, zero failures/skips; 75.819 seconds. |
 | Full local Android JVM/Room/Compose/outbox | 640 passed across 84 classes, zero failures/errors/skips; build successful in 5m17s. Demo configuration restored byte-for-byte afterward. |
 | GitHub run `39781274614`, commit `404bc97` | Inventory, build/lint, all four JVM partitions, backend and rules passed. Android instrumentation ran 23 journeys with one failure: new dues test attempted a non-composed off-screen LazyRow chip with performScrollTo. The aggregate correctly failed. Parent-list navigation corrected; all original amount/identity assertions retained. Full retest pending. |
+| GitHub run `39827115412`, commit `e968262` | All non-device required jobs passed; Android again ran 23 journeys with one failure in the same new test after Tamil labels widened the horizontal list and Sriram moved out of composition. Navigation now scrolls the selected chip into view after language changes too. All original name, due and full-account collection assertions remain enabled. Final retest pending. |
 | Manual physical-device scenarios | NOT TESTED. See separate checklist. |
 | Automated physical-device/ADB scenarios | NOT TESTED. No emulator result is represented as hardware evidence. |
 
@@ -117,7 +128,7 @@ These are one synthetic JVM run, with garbage collection affecting observed heap
 
 The sticky Owner→Partner label is retained on installations that observed an active Partner. A fresh install after all Partners were removed cannot reconstruct that historical fact from a local preference alone. No new shared historical flag or production migration is included; cross-install historical presentation remains unresolved and must not be claimed complete.
 
-Publication: development commits `27dd45b` and `404bc97` were pushed and verified in Git's normal authenticated UI and the public GitHub comparison. Main was not changed. PR creation through the connector returns 403 (integration access). An attempted native-browser route was stopped by automatic approval review because the available Comet window contained an unrelated private spreadsheet. A separate GitHub-only tab shows the correct base/head comparison but is signed out. No PR has been created yet; browser sign-in on that dedicated tab or a connector with PR write access is required. No unrelated private sheet was read or changed.
+Publication: development commits `27dd45b`, `404bc97` and `e968262` were pushed and remote heads verified. Main was not changed. PR creation through the connector returns 403 (integration access). Automatic approval review stopped an earlier browser route while it showed an unrelated private spreadsheet. After the user made the GitHub repository visible in their signed-in Comet window, [draft PR #4](https://github.com/Thiru-Selvam-06/aidhunt-trac-release/pull/4) was created against `codex/offline-sync-reliability` and attached to the task. No unrelated private sheet was read or changed. The PR remains a development candidate, without merge or deployment.
 
 Old rejected actions remain byte-for-byte retained. Before any live recovery, obtain explicit approval, back up the original operation/related rows privately, inspect authenticated actor and current verified membership, inspect exact authoritative server state and operation UUID, and establish whether any write already committed. Validate the original payload against the deployed policy in isolation. A null legacy source must not be silently rewritten/replayed; resolution needs a separate explicit recovery design preserving its original audit. Resolve the parent before authorizing its blocked receipt. If already committed, reconcile acknowledgement rather than creating another financial event. Ambiguous actor/amount/history stays under review. None of this live procedure was executed.
 

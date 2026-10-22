@@ -104,6 +104,7 @@ class TamilLocalizationDeviceTest {
         compose.onNodeWithTag("dues_partner_partner-b").performClick()
         compose.onAllNodesWithText("₹700").onFirst().assertExists()
         compose.runOnIdle { language.value = "TA" }
+        compose.onNodeWithTag("customer_dues_partner_filter").performScrollToNode(hasTestTag("dues_partner_partner-b"))
         compose.onNodeWithText("Sriram").assertExists()
         compose.onAllNodesWithText("₹700").onFirst().assertExists()
         compose.onNodeWithTag("btn_add_payment_card_10").performScrollTo().performClick()
