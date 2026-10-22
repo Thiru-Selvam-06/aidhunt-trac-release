@@ -88,7 +88,10 @@ Paths are relative to the repository. The earlier Tamil-only file list is in its
 | First payer-hardening candidate | 297 executed, 295 passed, two existing linked compound writes failed expression budget. |
 | Optimized payer-hardening candidate, full local rules suite | 297 passed, zero failures/cancellations/skips. 166.788 seconds. Includes existing compound-write and historical compatibility assertions. |
 | Current selected Kotlin/JUnit/Robolectric run | 21 passed, zero failures/skips: business policies 7, performance 1, expense wire 2, Tamil UI 9, entered-data preservation 2. Build successful in 13m39s. |
-| Final rules after retaining active Operator payer compatibility, full local suite and final CI | IN PROGRESS; required before release claim. |
+| Final local Rules after retaining active Operator payer compatibility | 298 passed, zero failures/skips; 190.041 seconds. |
+| Final local backend | 129 passed, zero failures/skips; 75.819 seconds. |
+| Full local Android JVM/Room/Compose/outbox | 640 passed across 84 classes, zero failures/errors/skips; build successful in 5m17s. Demo configuration restored byte-for-byte afterward. |
+| GitHub run `39781274614`, commit `404bc97` | Inventory, build/lint, all four JVM partitions, backend and rules passed. Android instrumentation ran 23 journeys with one failure: new dues test attempted a non-composed off-screen LazyRow chip with performScrollTo. The aggregate correctly failed. Parent-list navigation corrected; all original amount/identity assertions retained. Full retest pending. |
 | Manual physical-device scenarios | NOT TESTED. See separate checklist. |
 | Automated physical-device/ADB scenarios | NOT TESTED. No emulator result is represented as hardware evidence. |
 
@@ -113,6 +116,8 @@ These are one synthetic JVM run, with garbage collection affecting observed heap
 ## Risks, recovery and release boundary
 
 The sticky Owner→Partner label is retained on installations that observed an active Partner. A fresh install after all Partners were removed cannot reconstruct that historical fact from a local preference alone. No new shared historical flag or production migration is included; cross-install historical presentation remains unresolved and must not be claimed complete.
+
+Publication: development commits `27dd45b` and `404bc97` were pushed and verified in Git's normal authenticated UI and the public GitHub comparison. Main was not changed. PR creation through the connector returns 403 (integration access). An attempted native-browser route was stopped by automatic approval review because the available Comet window contained an unrelated private spreadsheet. A separate GitHub-only tab shows the correct base/head comparison but is signed out. No PR has been created yet; browser sign-in on that dedicated tab or a connector with PR write access is required. No unrelated private sheet was read or changed.
 
 Old rejected actions remain byte-for-byte retained. Before any live recovery, obtain explicit approval, back up the original operation/related rows privately, inspect authenticated actor and current verified membership, inspect exact authoritative server state and operation UUID, and establish whether any write already committed. Validate the original payload against the deployed policy in isolation. A null legacy source must not be silently rewritten/replayed; resolution needs a separate explicit recovery design preserving its original audit. Resolve the parent before authorizing its blocked receipt. If already committed, reconcile acknowledgement rather than creating another financial event. Ambiguous actor/amount/history stays under review. None of this live procedure was executed.
 

@@ -1,6 +1,6 @@
 {
   "score": 3,
-  "summary": "Local prototype reviewed against financial identity, initial collector, workspace and update-diff boundaries. 297 emulator rules tests passed. Not a production deployment approval or a guarantee of a complete rules audit.",
+  "summary": "Local prototype reviewed against financial identity, initial collector, workspace and update-diff boundaries. 298 emulator rules tests passed, including the user-confirmed active Operator payer compatibility. Operators gain no financial write authority. Not a production deployment approval or a guarantee of a complete rules audit.",
   "findings": [
     {
       "check": "Expense funding identity on create and funding changes",

@@ -97,9 +97,11 @@ class TamilLocalizationDeviceTest {
                 workspaceMembers = people, actorUid = "owner", isOwner = true, onRecordPaymentWithCollector = { _, _, _, _, _, _, _, _ -> })
         } }
         compose.onAllNodesWithText("₹1,000").onFirst().assertExists()
-        compose.onNodeWithTag("dues_partner_partner-a").performScrollTo().performClick()
+        compose.onNodeWithTag("customer_dues_partner_filter").performScrollToNode(hasTestTag("dues_partner_partner-a"))
+        compose.onNodeWithTag("dues_partner_partner-a").performClick()
         compose.onAllNodesWithText("₹300").onFirst().assertExists()
-        compose.onNodeWithTag("dues_partner_partner-b").performScrollTo().performClick()
+        compose.onNodeWithTag("customer_dues_partner_filter").performScrollToNode(hasTestTag("dues_partner_partner-b"))
+        compose.onNodeWithTag("dues_partner_partner-b").performClick()
         compose.onAllNodesWithText("₹700").onFirst().assertExists()
         compose.runOnIdle { language.value = "TA" }
         compose.onNodeWithText("Sriram").assertExists()
