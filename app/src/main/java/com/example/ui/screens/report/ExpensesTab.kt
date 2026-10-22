@@ -1130,7 +1130,7 @@ fun ExpenseListItemRow(
 ) {
     var isMenuExpanded by remember { mutableStateOf(false) }
     val visualConfig = getExpenseVisualConfig(expense.expenseType)
-    val itemDateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.getDefault()) }
+    val itemDateFormat = remember(isTamil) { SimpleDateFormat("dd MMM yyyy, hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH) }
 
     val linkedJob = jobs.find { it.workspaceId == expense.workspaceId && it.id == expense.relatedJobId }
     val linkedCustomerName = linkedJob?.customerName?.ifBlank { null }
@@ -1355,7 +1355,7 @@ fun AddOrEditExpenseScreen(
     var isPaymentModeDropdownOpen by remember { mutableStateOf(false) }
     var hasValidated by remember { mutableStateOf(false) }
     val isAmountValid = (amountText.toDoubleOrNull() ?: 0.0) > 0
-    val formDateFormat = remember { SimpleDateFormat("dd/MM/yyyy  hh:mm a", if (isTamil) Locale("ta", "IN") else java.util.Locale.getDefault()) }
+    val formDateFormat = remember(isTamil) { SimpleDateFormat("dd/MM/yyyy  hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH) }
     fun doSave() {
         hasValidated = true
         val amt = amountText.toDoubleOrNull() ?: 0.0
@@ -1771,7 +1771,7 @@ fun ExpenseDetailsScreen(
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     val visualConfig = getExpenseVisualConfig(expense.expenseType)
-    val detailsDateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.getDefault()) }
+    val detailsDateFormat = remember(isTamil) { SimpleDateFormat("dd MMM yyyy, hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH) }
 
     val linkedJob = jobs.find { it.workspaceId == expense.workspaceId && it.id == expense.relatedJobId }
     val linkedCustomerName = linkedJob?.customerName?.ifBlank { null }

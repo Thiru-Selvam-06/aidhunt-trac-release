@@ -1384,7 +1384,7 @@ fun TakeAmountDialog(
                         ) {
                             eligibleMemberOptions.forEach { member ->
                                 val personName = member.displayName.orEmpty().ifBlank { "Member" }
-                                val personRole = member.role
+                                val personRole = com.example.data.auth.RoleUtils.getRoleDisplayName(member.role, isTamil)
                                 DropdownMenuItem(
                                     text = { Text("$personName ($personRole)", fontWeight = FontWeight.Medium) },
                                     onClick = {

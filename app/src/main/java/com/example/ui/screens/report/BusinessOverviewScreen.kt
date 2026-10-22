@@ -46,9 +46,9 @@ import java.util.Calendar
 import kotlin.math.max
 
 enum class OverviewChartMetric(val labelEn: String, val labelTa: String) {
-    AMOUNT("Amount", "à®¤à¯Šà®•à¯ˆ"),
-    HOURS("Hours", "à®¨à¯‡à®°à®®à¯"),
-    JOBS("Jobs", "à®ªà®£à®¿à®•à®³à¯")
+    AMOUNT("Amount", "தொகை"),
+    HOURS("Hours", "நேரம்"),
+    JOBS("Jobs", "பணிகள்")
 }
 
 data class DriverMetricItem(
@@ -63,7 +63,7 @@ data class DriverMetricItem(
     val collected: Double = 0.0
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BusinessOverviewScreen(
     settings: AppSettingsEntity,
@@ -124,7 +124,7 @@ fun BusinessOverviewScreen(
         s
     }
 
-    // â”€â”€â”€ REAL DATA from FinancialCalculationEngine â”€â”€â”€
+    // ─── REAL DATA from FinancialCalculationEngine ───
     val summary = remember(jobs, expenses, withdrawals, payments, scope) {
         FinancialCalculationEngine.calculateSummary(jobs, expenses, withdrawals, scope, payments)
     }
@@ -141,9 +141,10 @@ fun BusinessOverviewScreen(
         }
     }
 
-    val selectedMemberLabel = if (selectedMemberFilter == "All") "All" else
+    val selectedMemberLabel = if (selectedMemberFilter == "All") (if (isTamil) "அனைவரும்" else "All") else
         partnerBreakdowns.firstOrNull { it.partnerUid == selectedMemberFilter }?.partnerName
-            ?: workspaceMembers.firstOrNull { it.uid == selectedMemberFilter && it.workspaceId == settings.workspaceId }?.displayName ?: "Unattributed"
+            ?: workspaceMembers.firstOrNull { it.uid == selectedMemberFilter && it.workspaceId == settings.workspaceId }?.displayName
+            ?: if (isTamil) "அடையாளம் கிடைக்கவில்லை" else "Unattributed"
     val displayedJobs = remember(scopedJobs, selectedMemberFilter) {
         if (selectedMemberFilter == "All") scopedJobs else scopedJobs.filter {
             it.financialAttributionUid.ifBlank { it.entryForUid } == selectedMemberFilter
@@ -151,12 +152,12 @@ fun BusinessOverviewScreen(
     }
 
     // Date display text for top selector pill
-    val dateSelectorText = remember(selectedMode, selectedDateMillis, selectedYear, selectedMonth) {
+    val dateSelectorText = remember(selectedMode, selectedDateMillis, selectedYear, selectedMonth, isTamil) {
         when (selectedMode) {
-            FinancialScopeMode.OVERALL -> if (isTamil) "à®…à®©à¯ˆà®¤à¯à®¤à¯à®®à¯" else "Overall"
+            FinancialScopeMode.OVERALL -> if (isTamil) "அனைத்தும்" else "Overall"
             FinancialScopeMode.DAILY -> formatDate(selectedDateMillis)
             FinancialScopeMode.MONTHLY -> {
-                val months = if (isTamil) listOf("à®œà®©", "à®ªà®¿à®ªà¯", "à®®à®¾à®°à¯à®šà¯", "à®à®ªà¯", "à®®à¯‡", "à®œà¯‚à®©à¯", "à®œà¯‚à®²à¯ˆ", "à®†à®•", "à®šà¯†à®ªà¯", "à®…à®•à¯", "à®¨à®µ", "à®Ÿà®¿à®š")
+                val months = if (isTamil) listOf("ஜன", "பிப்", "மார்ச்", "ஏப்", "மே", "ஜூன்", "ஜூலை", "ஆக", "செப்", "அக்", "நவ", "டிச")
                 else listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
                 "${months.getOrElse(selectedMonth - 1) { "Sep" }} $selectedYear"
             }
@@ -176,9 +177,9 @@ fun BusinessOverviewScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             contentPadding = PaddingValues(top = 10.dp, bottom = 100.dp)
         ) {
-            // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            // 1. TOP BAR DATE FILTER â€” matches reference: single Overall pill, no duplicate header
-            // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ─────────────────────────────────────────────────────────────
+            // 1. TOP BAR DATE FILTER — matches reference: single Overall pill, no duplicate header
+            // ─────────────────────────────────────────────────────────────
             item {
                 Row(
                     modifier = Modifier
@@ -236,7 +237,7 @@ fun BusinessOverviewScreen(
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        text = if (isTamil) "à®…à®©à¯ˆà®¤à¯à®¤à¯à®®à¯" else "Overall",
+                                        text = if (isTamil) "அனைத்தும்" else "Overall",
                                         fontWeight = if (selectedMode == FinancialScopeMode.OVERALL) FontWeight.Bold else FontWeight.Medium,
                                         fontSize = 13.5.sp,
                                         color = if (selectedMode == FinancialScopeMode.OVERALL) Color(0xFF15803D) else Color(0xFF0F172A)
@@ -244,7 +245,7 @@ fun BusinessOverviewScreen(
                                 },
                                 leadingIcon = {
                                     Text(
-                                        text = "â‚¹",
+                                        text = "₹",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 16.sp,
                                         color = Color(0xFF15803D),
@@ -266,7 +267,7 @@ fun BusinessOverviewScreen(
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        text = if (isTamil) "à®¤à®¿à®©à®šà®°à®¿" else "Day",
+                                        text = if (isTamil) "தினசரி" else "Day",
                                         fontWeight = if (selectedMode == FinancialScopeMode.DAILY) FontWeight.Bold else FontWeight.Medium,
                                         fontSize = 13.5.sp,
                                         color = if (selectedMode == FinancialScopeMode.DAILY) Color(0xFF15803D) else Color(0xFF0F172A)
@@ -290,7 +291,7 @@ fun BusinessOverviewScreen(
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        text = if (isTamil) "à®®à®¾à®¤à®¾à®¨à¯à®¤à®¿à®°" else "Month",
+                                        text = if (isTamil) "மாதாந்திர" else "Month",
                                         fontWeight = if (selectedMode == FinancialScopeMode.MONTHLY) FontWeight.Bold else FontWeight.Medium,
                                         fontSize = 13.5.sp,
                                         color = if (selectedMode == FinancialScopeMode.MONTHLY) Color(0xFF15803D) else Color(0xFF0F172A)
@@ -314,7 +315,7 @@ fun BusinessOverviewScreen(
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        text = if (isTamil) "à®µà®°à¯à®Ÿà®¾à®¨à¯à®¤à®¿à®°" else "Year",
+                                        text = if (isTamil) "வருடாந்திர" else "Year",
                                         fontWeight = if (selectedMode == FinancialScopeMode.YEARLY) FontWeight.Bold else FontWeight.Medium,
                                         fontSize = 13.5.sp,
                                         color = if (selectedMode == FinancialScopeMode.YEARLY) Color(0xFF15803D) else Color(0xFF0F172A)
@@ -338,9 +339,9 @@ fun BusinessOverviewScreen(
                 }
             }
 
-            // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            // 2. SIX COMPACT SUMMARY CARDS (2 Columns x 3 Rows) â€” ALL REAL DATA
-            // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ─────────────────────────────────────────────────────────────
+            // 2. SIX COMPACT SUMMARY CARDS (2 Columns x 3 Rows) — ALL REAL DATA
+            // ─────────────────────────────────────────────────────────────
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     // Row 1: Total Recorded & Total Collected
@@ -348,11 +349,11 @@ fun BusinessOverviewScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Card 1: Total Recorded â€” from FinancialCalculationEngine.calculateSummary
+                        // Card 1: Total Recorded — from FinancialCalculationEngine.calculateSummary
                         OverviewSummaryCard(
-                            title = if (isTamil) "à®®à¯Šà®¤à¯à®¤ à®ªà®¤à®¿à®µà¯" else "Total Recorded",
+                            title = if (isTamil) "மொத்த பதிவு" else "Total Recorded",
                             amount = formatInr(summary.totalRecorded, settings.currency),
-                            subtitle = "${summary.jobCount} ${if (isTamil) "à®ªà®£à®¿à®•à®³à¯" else "Jobs"}",
+                            subtitle = "${summary.jobCount} ${if (isTamil) "பணிகள்" else "Jobs"}",
                             icon = Icons.Default.ConfirmationNumber,
                             iconBgColor = Color(0xFF16A34A),
                             cardBgColor = Color(0xFFF0FDF4),
@@ -360,9 +361,9 @@ fun BusinessOverviewScreen(
                             modifier = Modifier.weight(1f)
                         )
 
-                        // Card 2: Total Collected â€” from FinancialCalculationEngine (totalReceived = sum of amountReceived)
+                        // Card 2: Total Collected — from FinancialCalculationEngine (totalReceived = sum of amountReceived)
                         OverviewSummaryCard(
-                            title = if (isTamil) "à®®à¯Šà®¤à¯à®¤ à®µà®šà¯‚à®²à¯" else "Total Collected",
+                            title = if (isTamil) "மொத்த வசூல்" else "Total Collected",
                             amount = formatInr(summary.totalReceived, settings.currency),
                             subtitle = null,
                             icon = Icons.Default.Savings,
@@ -378,9 +379,9 @@ fun BusinessOverviewScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Card 3: Total Due â€” from FinancialCalculationEngine (sum of pending amounts)
+                        // Card 3: Total Due — from FinancialCalculationEngine (sum of pending amounts)
                         OverviewSummaryCard(
-                            title = if (isTamil) "à®®à¯Šà®¤à¯à®¤ à®ªà®¾à®•à¯à®•à®¿" else "Total Due",
+                            title = if (isTamil) "மொத்த பாக்கி" else "Total Due",
                             amount = formatInr(summary.totalDue, settings.currency),
                             subtitle = null,
                             icon = Icons.Default.PriorityHigh,
@@ -390,9 +391,9 @@ fun BusinessOverviewScreen(
                             modifier = Modifier.weight(1f)
                         )
 
-                        // Card 4: Available Business Balance â€” from FinancialCalculationEngine (received - expenses - withdrawals)
+                        // Card 4: Available Business Balance — from FinancialCalculationEngine (received - expenses - withdrawals)
                         OverviewSummaryCard(
-                            title = if (isTamil) "à®•à®¿à®Ÿà¯ˆà®•à¯à®•à¯à®®à¯ à®‡à®°à¯à®ªà¯à®ªà¯" else "Available Business\nBalance",
+                            title = if (isTamil) "கிடைக்கும் இருப்பு" else "Available Business\nBalance",
                             amount = formatInr(summary.availableBalance, settings.currency),
                             subtitle = null,
                             icon = Icons.Default.AccountBalanceWallet,
@@ -403,16 +404,16 @@ fun BusinessOverviewScreen(
                         )
                     }
 
-                    // Row 3: Expenses & Partner Withdrawals â€” clickable action cards
+                    // Row 3: Expenses & Partner Withdrawals — clickable action cards
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Card 5: Expenses â€” REAL total from FinancialCalculationEngine
+                        // Card 5: Expenses — REAL total from FinancialCalculationEngine
                         OverviewActionCard(
-                            title = if (isTamil) "à®šà¯†à®²à®µà¯à®•à®³à¯" else "Expenses",
+                            title = if (isTamil) "செலவுகள்" else "Expenses",
                             amount = formatInr(summary.totalExpenses, settings.currency),
-                            subtitle = if (isTamil) "à®šà¯†à®²à®µà¯à®•à®³à¯ˆà®ªà¯ à®ªà®¾à®°à¯à®•à¯à®• à®¤à®Ÿà¯à®Ÿà®µà¯à®®à¯" else "Tap to view expenses",
+                            subtitle = if (isTamil) "செலவுகளைப் பார்க்க தட்டவும்" else "Tap to view expenses",
                             icon = Icons.Default.ReceiptLong,
                             iconBgColor = Color(0xFFEF4444),
                             cardBgColor = Color(0xFFFEF2F2),
@@ -423,11 +424,11 @@ fun BusinessOverviewScreen(
                             modifier = Modifier.weight(1f)
                         )
 
-                        // Card 6: Partner Withdrawals â€” REAL total from FinancialCalculationEngine
+                        // Card 6: Partner Withdrawals — REAL total from FinancialCalculationEngine
                         OverviewActionCard(
-                            title = if (isTamil) "à®ªà®™à¯à®•à¯à®¤à®¾à®°à®°à¯ à®Žà®Ÿà¯à®ªà¯à®ªà¯à®•à®³à¯" else "Partner Withdrawals",
+                            title = if (isTamil) "பங்குதாரர் எடுப்புகள்" else "Partner Withdrawals",
                             amount = formatInr(summary.totalWithdrawals, settings.currency),
-                            subtitle = if (isTamil) "à®Žà®Ÿà¯à®ªà¯à®ªà¯à®•à®³à¯ˆà®ªà¯ à®ªà®¾à®°à¯à®•à¯à®• à®¤à®Ÿà¯à®Ÿà®µà¯à®®à¯" else "Tap to view withdrawals",
+                            subtitle = if (isTamil) "எடுப்புகளைப் பார்க்க தட்டவும்" else "Tap to view withdrawals",
                             icon = Icons.Default.ArrowDownward,
                             iconBgColor = Color(0xFF7C3AED),
                             cardBgColor = Color(0xFFF5F3FF),
@@ -441,9 +442,9 @@ fun BusinessOverviewScreen(
                 }
             }
 
-            // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            // 3. DRIVER / OPERATOR EARNINGS CHART â€” REAL partner breakdown data
-            // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ─────────────────────────────────────────────────────────────
+            // 3. DRIVER / OPERATOR EARNINGS CHART — REAL partner breakdown data
+            // ─────────────────────────────────────────────────────────────
             item {
                 Card(
                     shape = RoundedCornerShape(18.dp),
@@ -452,7 +453,7 @@ fun BusinessOverviewScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
-                        // Title row â€” matches reference: chart icon + title/subtitle + Working Metric Dropdown
+                        // Title row — matches reference: chart icon + title/subtitle + Working Metric Dropdown
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -471,16 +472,16 @@ fun BusinessOverviewScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Column {
                                     Text(
-                                        text = if (isTamil) "à®‡à®¯à®•à¯à®•à¯à®¨à®°à¯ / à®†à®ªà®°à¯‡à®Ÿà¯à®Ÿà®°à¯ à®µà®°à¯à®µà®¾à®¯à¯" else "Driver / Operator Earnings",
+                                        text = if (isTamil) "இயக்குநர் / ஆபரேட்டர் வருவாய்" else "Driver / Operator Earnings",
                                         fontSize = 14.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF0F172A)
                                     )
                                     Text(
                                         text = when (selectedChartMetric) {
-                                            OverviewChartMetric.AMOUNT -> if (isTamil) "à®’à®µà¯à®µà¯Šà®°à¯ à®‡à®¯à®•à¯à®•à¯à®¨à®°à®¿à®©à¯ à®ªà®¤à®¿à®µà¯ à®šà¯†à®¯à¯à®¯à®ªà¯à®ªà®Ÿà¯à®Ÿ à®¤à¯Šà®•à¯ˆ" else "Total recorded amount by each driver/operator"
-                                            OverviewChartMetric.HOURS -> if (isTamil) "à®’à®µà¯à®µà¯Šà®°à¯ à®‡à®¯à®•à¯à®•à¯à®¨à®°à®¿à®©à¯ à®µà¯‡à®²à¯ˆ à®¨à¯‡à®°à®®à¯" else "Total hours worked by each driver/operator"
-                                            OverviewChartMetric.JOBS -> if (isTamil) "à®’à®µà¯à®µà¯Šà®°à¯ à®‡à®¯à®•à¯à®•à¯à®¨à®°à®¿à®©à¯ à®ªà®£à®¿à®•à®³à¯ à®Žà®£à¯à®£à®¿à®•à¯à®•à¯ˆ" else "Total jobs completed by each driver/operator"
+                                            OverviewChartMetric.AMOUNT -> if (isTamil) "ஒவ்வொரு இயக்குநரின் பதிவு செய்யப்பட்ட தொகை" else "Total recorded amount by each driver/operator"
+                                            OverviewChartMetric.HOURS -> if (isTamil) "ஒவ்வொரு இயக்குநரின் வேலை நேரம்" else "Total hours worked by each driver/operator"
+                                            OverviewChartMetric.JOBS -> if (isTamil) "ஒவ்வொரு இயக்குநரின் பணிகள் எண்ணிக்கை" else "Total jobs completed by each driver/operator"
                                         },
                                         fontSize = 11.sp,
                                         color = Color(0xFF64748B),
@@ -540,7 +541,7 @@ fun BusinessOverviewScreen(
                                                 when (metric) {
                                                     OverviewChartMetric.AMOUNT -> {
                                                         Text(
-                                                            text = "â‚¹",
+                                                            text = "₹",
                                                             fontWeight = FontWeight.Bold,
                                                             fontSize = 15.sp,
                                                             color = Color(0xFF15803D),
@@ -587,11 +588,11 @@ fun BusinessOverviewScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // Controls: Show Expenses Toggle & Legend â€” matches reference layout
-                        Row(
+                        // Controls: Show Expenses Toggle & Legend — matches reference layout
+                        FlowRow(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             // Legend dots
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -604,9 +605,9 @@ fun BusinessOverviewScreen(
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     text = when (selectedChartMetric) {
-                                        OverviewChartMetric.AMOUNT -> if (isTamil) "à®ªà®£à®¿à®¤à¯ à®¤à¯Šà®•à¯ˆ" else "Job Amount"
-                                        OverviewChartMetric.HOURS -> if (isTamil) "à®µà¯‡à®²à¯ˆ à®¨à¯‡à®°à®®à¯" else "Working Hours"
-                                        OverviewChartMetric.JOBS -> if (isTamil) "à®ªà®£à®¿à®•à®³à¯" else "Job Count"
+                                        OverviewChartMetric.AMOUNT -> if (isTamil) "பணித் தொகை" else "Job Amount"
+                                        OverviewChartMetric.HOURS -> if (isTamil) "வேலை நேரம்" else "Working Hours"
+                                        OverviewChartMetric.JOBS -> if (isTamil) "பணிகள்" else "Job Count"
                                     },
                                     fontSize = 10.5.sp,
                                     color = Color(0xFF475569)
@@ -622,7 +623,7 @@ fun BusinessOverviewScreen(
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
-                                        text = if (isTamil) "à®šà¯†à®²à®µà¯à®•à®³à¯ (à®®à¯Šà®¤à¯à®¤à®®à¯)" else "Expenses (Overall)",
+                                        text = if (isTamil) "செலவுகள் (மொத்தம்)" else "Expenses (Overall)",
                                         fontSize = 10.5.sp,
                                         color = Color(0xFF475569)
                                     )
@@ -636,7 +637,7 @@ fun BusinessOverviewScreen(
                                     modifier = Modifier.clickable { isExpenseVisible = !isExpenseVisible }
                                 ) {
                                     Text(
-                                        text = if (isTamil) "à®šà¯†à®²à®µà¯ˆà®•à¯ à®•à®¾à®Ÿà¯à®Ÿà¯" else "Show Expenses",
+                                        text = if (isTamil) "செலவைக் காட்டு" else "Show Expenses",
                                         fontSize = 11.sp,
                                         color = Color(0xFF64748B),
                                         fontWeight = FontWeight.Medium
@@ -666,7 +667,7 @@ fun BusinessOverviewScreen(
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        // Responsive Bar Chart â€” REAL data
+                        // Responsive Bar Chart — REAL data
                         DriverEarningsBarChart(
                             partnerBreakdowns = businessOverviewChartMembers(partnerBreakdowns, workspaceMembers, currentUid, settings.workspaceId),
                             workspaceMembers = workspaceMembers,
@@ -698,9 +699,9 @@ fun BusinessOverviewScreen(
                 }
             }
 
-            // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            // 4. RECORDS SECTION â€” REAL job records filtered by person/scope
-            // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ─────────────────────────────────────────────────────────────
+            // 4. RECORDS SECTION — REAL job records filtered by person/scope
+            // ─────────────────────────────────────────────────────────────
             item {
                 Card(
                     shape = RoundedCornerShape(18.dp),
@@ -709,7 +710,7 @@ fun BusinessOverviewScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
-                        // Records Header Row â€” matches reference: list icon + title/subtitle + person pill
+                        // Records Header Row — matches reference: list icon + title/subtitle + person pill
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -725,15 +726,15 @@ fun BusinessOverviewScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Column {
                                     Text(
-                                        text = if (isTamil) "à®ªà®¤à®¿à®µà¯à®•à®³à¯" else "Records",
+                                        text = if (isTamil) "பதிவுகள்" else "Records",
                                         fontSize = 15.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF0F172A)
                                     )
                                     Text(
                                         text = if (isTamil) {
-                                            if (selectedMemberFilter == "All") "à®…à®©à¯ˆà®¤à¯à®¤à¯ à®ªà®¤à®¿à®µà¯à®•à®³à¯ˆà®¯à¯à®®à¯ à®•à®¾à®Ÿà¯à®Ÿà¯à®•à®¿à®±à®¤à¯"
-                                            else "$selectedMemberLabel-à®•à¯à®•à®¾à®© à®ªà®¤à®¿à®µà¯à®•à®³à¯"
+                                            if (selectedMemberFilter == "All") "அனைத்து பதிவுகளையும் காட்டுகிறது"
+                                            else "$selectedMemberLabel-க்கான பதிவுகள்"
                                         } else {
                                             "Showing records for $selectedMemberLabel"
                                         },
@@ -743,7 +744,7 @@ fun BusinessOverviewScreen(
                                 }
                             }
 
-                            // Person Dropdown Pill â€” matches reference
+                            // Person Dropdown Pill — matches reference
                             Surface(
                                 shape = RoundedCornerShape(16.dp),
                                 color = Color(0xFFF0FDF4),
@@ -775,7 +776,7 @@ fun BusinessOverviewScreen(
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        // Real Records List â€” each record is a REAL JobEntryEntity
+                        // Real Records List — each record is a REAL JobEntryEntity
                         if (displayedJobs.isEmpty()) {
                             Box(
                                 modifier = Modifier
@@ -784,7 +785,7 @@ fun BusinessOverviewScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = if (isTamil) "à®ªà®¤à®¿à®µà¯à®•à®³à¯ à®Žà®¤à¯à®µà¯à®®à¯ à®‡à®²à¯à®²à¯ˆ" else "No records found",
+                                    text = if (isTamil) "பதிவுகள் எதுவும் இல்லை" else "No records found",
                                     fontSize = 13.sp,
                                     color = Color(0xFF94A3B8)
                                 )
@@ -812,7 +813,7 @@ fun BusinessOverviewScreen(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 modifier = Modifier.weight(1f)
                                             ) {
-                                                // Tractor icon in light green badge â€” matches reference
+                                                // Tractor icon in light green badge — matches reference
                                                 Box(
                                                     modifier = Modifier
                                                         .size(38.dp)
@@ -878,9 +879,9 @@ fun BusinessOverviewScreen(
             }
         }
 
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // 5. PERSON SELECTOR MODAL WITH SEARCH â€” REAL members from app data
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ─────────────────────────────────────────────────────────────
+        // 5. PERSON SELECTOR MODAL WITH SEARCH — REAL members from app data
+        // ─────────────────────────────────────────────────────────────
         if (showPersonSelectorDialog) {
             val allMembersList = remember(partnerBreakdowns, workspaceMembers, settings.workspaceId) {
                 listOf("All" to "All") + (workspaceMembers.filter { it.uid.isNotBlank() && it.workspaceId == settings.workspaceId }
@@ -900,9 +901,9 @@ fun BusinessOverviewScreen(
             )
         }
 
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // 6. HIGH-LEVEL DATE PICKER DIALOGS (Day, Month, Year) â€” Image 2 Panels 3, 4, 5
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ─────────────────────────────────────────────────────────────
+        // 6. HIGH-LEVEL DATE PICKER DIALOGS (Day, Month, Year) — Image 2 Panels 3, 4, 5
+        // ─────────────────────────────────────────────────────────────
         if (showDayPicker) {
             DayPickerDialog(
                 initialDateMillis = selectedDateMillis,
@@ -946,9 +947,9 @@ fun BusinessOverviewScreen(
             )
         }
 
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // 7. EXISTING JOB DETAILS POPUP â€” reuses existing CustomerSummaryPopup
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ─────────────────────────────────────────────────────────────
+        // 7. EXISTING JOB DETAILS POPUP — reuses existing CustomerSummaryPopup
+        // ─────────────────────────────────────────────────────────────
         selectedJobForDetail?.let { selected -> jobs.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { job ->
             CustomerSummaryPopup(
                 job = job,
@@ -963,7 +964,7 @@ fun BusinessOverviewScreen(
                     if (job.customerPhone.isNotBlank()) {
                         openDialer(context, job.customerPhone)
                     } else {
-                        Toast.makeText(context, if (isTamil) "à®¤à¯Šà®²à¯ˆà®ªà¯‡à®šà®¿ à®Žà®£à¯ à®‡à®²à¯à®²à¯ˆ" else "No phone number available", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, if (isTamil) "தொலைபேசி எண் இல்லை" else "No phone number available", Toast.LENGTH_SHORT).show()
                     }
                 },
                 onShareWhatsApp = {
@@ -985,9 +986,9 @@ fun BusinessOverviewScreen(
     }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // COMPONENT: OVERVIEW SUMMARY CARD (TOP 4 CARDS)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun OverviewSummaryCard(
     title: String,
@@ -1061,9 +1062,9 @@ private fun OverviewSummaryCard(
     }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // COMPONENT: OVERVIEW ACTION CARD (EXPENSES & WITHDRAWALS)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun OverviewActionCard(
     title: String,
@@ -1330,7 +1331,7 @@ private fun DriverEarningsBarChart(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Collected: ${formatInr(item.collected, currency)}",
+                                    text = "${if (isTamil) "வசூல்" else "Collected"}: ${formatInr(item.collected, currency)}",
                                     fontSize = 9.sp,
                                     color = Color(0xFF64748B)
                                 )
@@ -1345,7 +1346,7 @@ private fun DriverEarningsBarChart(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Due: ${formatInr(item.due, currency)}",
+                                    text = "${if (isTamil) "பாக்கி" else "Due"}: ${formatInr(item.due, currency)}",
                                     fontSize = 9.sp,
                                     color = Color(0xFF64748B)
                                 )
@@ -1357,8 +1358,8 @@ private fun DriverEarningsBarChart(
         }
     }
 }
-// COMPONENT: PERSON SELECTOR MODAL WITH SEARCH â€” searches REAL member data
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// COMPONENT: PERSON SELECTOR MODAL WITH SEARCH — searches REAL member data
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun PersonSelectorModal(
     members: List<Pair<String, String>>,
@@ -1368,9 +1369,12 @@ private fun PersonSelectorModal(
     onSelectMember: (String) -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
-    val filteredMembers = remember(members, searchQuery) {
+    val filteredMembers = remember(members, searchQuery, isTamil) {
         if (searchQuery.isBlank()) members
-        else members.filter { it.second.contains(searchQuery, ignoreCase = true) }
+        else members.filter {
+            val label = if (it.first == "All" && isTamil) "அனைவரும்" else it.second
+            label.contains(searchQuery, ignoreCase = true)
+        }
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -1388,7 +1392,7 @@ private fun PersonSelectorModal(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isTamil) "à®¨à®ªà®°à¯ˆà®¤à¯ à®¤à¯‡à®°à¯à®¨à¯à®¤à¯†à®Ÿà¯à®•à¯à®•à®µà¯à®®à¯" else "Select Person",
+                        text = if (isTamil) "நபரைத் தேர்ந்தெடுக்கவும்" else "Select Person",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF0F172A)
@@ -1400,11 +1404,11 @@ private fun PersonSelectorModal(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Search field â€” supports partial, case-insensitive search of REAL members
+                // Search field — supports partial, case-insensitive search of REAL members
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text(if (isTamil) "à®¨à®ªà®°à¯ˆà®¤à¯ à®¤à¯‡à®Ÿà¯à®™à¯à®•à®³à¯..." else "Search person...", fontSize = 13.sp) },
+                    placeholder = { Text(if (isTamil) "நபரைத் தேடுங்கள்..." else "Search person...", fontSize = 13.sp) },
                     leadingIcon = {
                         Icon(Icons.Default.Search, contentDescription = null, tint = Color(0xFF15803D), modifier = Modifier.size(18.dp))
                     },
@@ -1426,7 +1430,7 @@ private fun PersonSelectorModal(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Scrollable Member List â€” REAL members
+                // Scrollable Member List — REAL members
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1458,7 +1462,7 @@ private fun PersonSelectorModal(
                                     )
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Text(
-                                        text = member.second,
+                                        text = if (member.first == "All" && isTamil) "அனைவரும்" else member.second,
                                         fontSize = 14.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                         color = if (isSelected) Color(0xFF15803D) else Color(0xFF0F172A)
@@ -1482,9 +1486,9 @@ private fun PersonSelectorModal(
     }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// COMPONENT: DAY PICKER DIALOG â€” Image 2 Panel 3
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: DAY PICKER DIALOG — Image 2 Panel 3
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun DayPickerDialog(
     initialDateMillis: Long,
@@ -1504,9 +1508,9 @@ private fun DayPickerDialog(
     var chosenYear by remember { mutableStateOf(initialCal.get(Calendar.YEAR)) }
 
     val monthNamesEn = listOf("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
-    val monthNamesTa = listOf("à®œà®©à®µà®°à®¿", "à®ªà®¿à®ªà¯à®°à®µà®°à®¿", "à®®à®¾à®°à¯à®šà¯", "à®à®ªà¯à®°à®²à¯", "à®®à¯‡", "à®œà¯‚à®©à¯", "à®œà¯‚à®²à¯ˆ", "à®†à®•à®¸à¯à®Ÿà¯", "à®šà¯†à®ªà¯à®Ÿà®®à¯à®ªà®°à¯", "à®…à®•à¯à®Ÿà¯‹à®ªà®°à¯", "à®¨à®µà®®à¯à®ªà®°à¯", "à®Ÿà®¿à®šà®®à¯à®ªà®°à¯")
+    val monthNamesTa = listOf("ஜனவரி", "பிப்ரவரி", "மார்ச்", "ஏப்ரல்", "மே", "ஜூன்", "ஜூலை", "ஆகஸ்ட்", "செப்டம்பர்", "அக்டோபர்", "நவம்பர்", "டிசம்பர்")
     val dayHeadersEn = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
-    val dayHeadersTa = listOf("à®žà®¾", "à®¤à®¿", "à®šà¯†", "à®ªà¯", "à®µà®¿", "à®µà¯†", "à®š")
+    val dayHeadersTa = listOf("ஞா", "தி", "செ", "பு", "வி", "வெ", "ச")
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -1541,7 +1545,7 @@ private fun DayPickerDialog(
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = if (isTamil) "à®¨à®¾à®³à¯ˆà®¤à¯ à®¤à¯‡à®°à¯à®¨à¯à®¤à¯†à®Ÿà¯à®•à¯à®•à®µà¯à®®à¯" else "Select Day",
+                            text = if (isTamil) "நாளைத் தேர்ந்தெடுக்கவும்" else "Select Day",
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -1701,7 +1705,7 @@ private fun DayPickerDialog(
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF475569)),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(text = if (isTamil) "à®°à®¤à¯à®¤à¯ à®šà¯†à®¯à¯" else "Cancel", fontWeight = FontWeight.SemiBold)
+                            Text(text = if (isTamil) "ரத்து செய்" else "Cancel", fontWeight = FontWeight.SemiBold)
                         }
 
                         Spacer(modifier = Modifier.width(12.dp))
@@ -1718,7 +1722,7 @@ private fun DayPickerDialog(
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D)),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(text = if (isTamil) "à®ªà®¯à®©à¯à®ªà®Ÿà¯à®¤à¯à®¤à¯" else "Apply", color = Color.White, fontWeight = FontWeight.Bold)
+                            Text(text = if (isTamil) "பயன்படுத்து" else "Apply", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1727,9 +1731,9 @@ private fun DayPickerDialog(
     }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// COMPONENT: MONTH PICKER DIALOG â€” Image 2 Panel 4
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: MONTH PICKER DIALOG — Image 2 Panel 4
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun MonthPickerDialog(
     initialYear: Int,
@@ -1742,7 +1746,7 @@ private fun MonthPickerDialog(
     var chosenMonth by remember { mutableStateOf(initialMonth.coerceIn(1, 12)) }
 
     val monthNamesEn = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-    val monthNamesTa = listOf("à®œà®©", "à®ªà®¿à®ªà¯", "à®®à®¾à®°à¯à®šà¯", "à®à®ªà¯", "à®®à¯‡", "à®œà¯‚à®©à¯", "à®œà¯‚à®²à¯ˆ", "à®†à®•", "à®šà¯†à®ªà¯", "à®…à®•à¯", "à®¨à®µ", "à®Ÿà®¿à®š")
+    val monthNamesTa = listOf("ஜன", "பிப்", "மார்ச்", "ஏப்", "மே", "ஜூன்", "ஜூலை", "ஆக", "செப்", "அக்", "நவ", "டிச")
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -1777,7 +1781,7 @@ private fun MonthPickerDialog(
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = if (isTamil) "à®®à®¾à®¤à®¤à¯à®¤à¯ˆà®¤à¯ à®¤à¯‡à®°à¯à®¨à¯à®¤à¯†à®Ÿà¯à®•à¯à®•à®µà¯à®®à¯" else "Select Month",
+                            text = if (isTamil) "மாதத்தைத் தேர்ந்தெடுக்கவும்" else "Select Month",
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -1879,7 +1883,7 @@ private fun MonthPickerDialog(
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF475569)),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(text = if (isTamil) "à®°à®¤à¯à®¤à¯ à®šà¯†à®¯à¯" else "Cancel", fontWeight = FontWeight.SemiBold)
+                            Text(text = if (isTamil) "ரத்து செய்" else "Cancel", fontWeight = FontWeight.SemiBold)
                         }
 
                         Spacer(modifier = Modifier.width(12.dp))
@@ -1890,7 +1894,7 @@ private fun MonthPickerDialog(
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D)),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(text = if (isTamil) "à®ªà®¯à®©à¯à®ªà®Ÿà¯à®¤à¯à®¤à¯" else "Apply", color = Color.White, fontWeight = FontWeight.Bold)
+                            Text(text = if (isTamil) "பயன்படுத்து" else "Apply", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1899,9 +1903,9 @@ private fun MonthPickerDialog(
     }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// COMPONENT: YEAR PICKER DIALOG â€” Image 2 Panel 5
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: YEAR PICKER DIALOG — Image 2 Panel 5
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun YearPickerDialog(
     initialYear: Int,
@@ -1945,7 +1949,7 @@ private fun YearPickerDialog(
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = if (isTamil) "à®†à®£à¯à®Ÿà¯ˆà®¤à¯ à®¤à¯‡à®°à¯à®¨à¯à®¤à¯†à®Ÿà¯à®•à¯à®•à®µà¯à®®à¯" else "Select Year",
+                            text = if (isTamil) "ஆண்டைத் தேர்ந்தெடுக்கவும்" else "Select Year",
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -2047,7 +2051,7 @@ private fun YearPickerDialog(
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF475569)),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(text = if (isTamil) "à®°à®¤à¯à®¤à¯ à®šà¯†à®¯à¯" else "Cancel", fontWeight = FontWeight.SemiBold)
+                            Text(text = if (isTamil) "ரத்து செய்" else "Cancel", fontWeight = FontWeight.SemiBold)
                         }
 
                         Spacer(modifier = Modifier.width(12.dp))
@@ -2058,7 +2062,7 @@ private fun YearPickerDialog(
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D)),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(text = if (isTamil) "à®ªà®¯à®©à¯à®ªà®Ÿà¯à®¤à¯à®¤à¯" else "Apply", color = Color.White, fontWeight = FontWeight.Bold)
+                            Text(text = if (isTamil) "பயன்படுத்து" else "Apply", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -2208,7 +2212,7 @@ private fun MemberCircularDiagram(
             modifier = Modifier.padding(top = 2.dp)
         ) {
             Text(
-                text = data.role,
+                text = if (data.role.isBlank()) "" else com.example.data.auth.RoleUtils.getRoleDisplayName(data.role, isTamil),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 color = when(data.role.lowercase()) {
@@ -2253,7 +2257,7 @@ private fun MemberDetailBottomSheet(
                         color = Color(0xFF0F172A)
                     )
                     Text(
-                        text = data.role,
+                        text = if (data.role.isBlank()) "" else com.example.data.auth.RoleUtils.getRoleDisplayName(data.role, isTamil),
                         fontSize = 14.sp,
                         color = Color(0xFF64748B),
                         fontWeight = FontWeight.Medium

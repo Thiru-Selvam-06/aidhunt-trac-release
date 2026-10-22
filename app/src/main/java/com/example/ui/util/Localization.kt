@@ -21,22 +21,8 @@ object Localization {
             "Trailer" -> "டிரெய்லர்"
             "Payment Received" -> "கட்டணம் வரவு"
             "Other" -> "பிற வேலைகள்"
-            else -> {
-                // Check if starts with known base
-                when {
-                    workType.contains("Rotavator", ignoreCase = true) -> "ரோட்டாவேட்டர்"
-                    workType.contains("5 Claws", ignoreCase = true) -> "5 கலப்பை"
-                    workType.contains("9 Claws", ignoreCase = true) -> "9 கலப்பை"
-                    workType.contains("Loader", ignoreCase = true) -> "லோடர்"
-                    workType.contains("Plough", ignoreCase = true) -> "உழவு"
-                    workType.contains("Cultivator", ignoreCase = true) -> "கொத்துக்கலப்பை"
-                    workType.contains("Harvester", ignoreCase = true) -> "அறுவடை இயந்திரம்"
-                    workType.contains("Leveler", ignoreCase = true) -> "லெவலர்"
-                    workType.contains("Trailer", ignoreCase = true) -> "டிரெய்லர்"
-                    workType.contains("Payment", ignoreCase = true) -> "கட்டணம் வரவு"
-                    else -> workType
-                }
-            }
+            // Custom extension names are entered data, even when they contain a built-in name.
+            else -> workType
         }
     }
 

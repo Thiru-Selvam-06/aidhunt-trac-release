@@ -215,7 +215,7 @@ fun CustomerCreditDueTab(
     expenses: List<com.example.data.entity.ExpenseEntity> = emptyList()
 ) {
     val context = LocalContext.current
-    val isTamil = settings.language == "TA"
+    val isTamil = settings.language.equals("TA", ignoreCase = true)
     val coroutineScope = rememberCoroutineScope()
     val searchRequester = remember { BringIntoViewRequester() }
     val amountRequester = remember { BringIntoViewRequester() }
@@ -1191,7 +1191,7 @@ fun CustomerCreditDueCard(
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Text(
-                                    text = if (isTamil) "???????????????" else "PAID",
+                                    text = if (isTamil) "செலுத்தப்பட்டது" else "PAID",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = SuccessPaidGreen
@@ -1206,7 +1206,7 @@ fun CustomerCreditDueCard(
                             color = AlertDueRed
                         )
                         Text(
-                            text = if (isTamil) "??????" else "Due",
+                            text = if (isTamil) "நிலுவை" else "Due",
                             fontSize = 10.5.sp,
                             fontWeight = FontWeight.Medium,
                             color = AlertDueRed
@@ -1219,7 +1219,7 @@ fun CustomerCreditDueCard(
                             color = TextSecondaryDark
                         )
                         Text(
-                            text = if (isTamil) "?????? ?????" else "No Due",
+                            text = if (isTamil) "நிலுவை இல்லை" else "No Due",
                             fontSize = 10.5.sp,
                             fontWeight = FontWeight.Normal,
                             color = TextSecondaryDark
