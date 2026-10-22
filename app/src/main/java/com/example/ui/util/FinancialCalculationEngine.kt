@@ -65,7 +65,8 @@ data class PartnerShareInvestmentStatus(
     val totalToGet: Double = 0.0,
     val partnerUid: String = "",
     val phone: String = "",
-    val percentage: Double = 0.0
+    val percentage: Double = 0.0,
+    val businessFundedCost: Double = 0.0
 )
 
 object FinancialCalculationEngine {
@@ -196,6 +197,9 @@ object FinancialCalculationEngine {
         }
 
         // 5. Build PartnerShareInvestmentStatus for each participant
+        // Informational shared costs are neither personal investment nor an additional cash outflow.
+        val sharedBusinessCosts = equalMoneyShares(scopedExpenses.filter { it.paidBy.trim().equals("Business Paid", true) }
+            .sumOf { it.amount }, eligibleParticipants.map { it.uid })
         return participantsWithShares.map { participant ->
             val pName = participant.displayName
             val pRole = participant.role
@@ -267,7 +271,8 @@ object FinancialCalculationEngine {
                 totalToGet = totalToGet,
                 partnerUid = pUid,
                 phone = pPhone,
-                percentage = effectivePct
+                percentage = effectivePct,
+                businessFundedCost = sharedBusinessCosts[pUid] ?: 0.0
             )
         }
     }

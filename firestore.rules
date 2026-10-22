@@ -99,12 +99,24 @@ service cloud.firestore {
     }
     // Selected business collector is separate from the authenticated recorder (collectedByUid).
     // Legacy queued self-collections without collector* retain their existing authorization.
+    function initialBeneficiaryCollection(ws, data, uid) {
+      let source = get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(data.jobEntryId))).data;
+      return data.get('initialEntryCollection', false) == true &&
+        data.get('initialJobOperationId', '') != '' && source.operationId == data.initialJobOperationId &&
+        source.workspaceId == ws && source.createdByUid == request.auth.uid && source.actorUid == request.auth.uid &&
+        source.entryForUid == uid && source.isHistorical == false && source.get('isDeleted', false) == false &&
+        source.amountReceived == 0 && source.pendingAmount == source.totalAmount &&
+        source.actionTime == data.actionTime && data.createdAt == data.actionTime && data.collectedAt == data.actionTime;
+    }
     function validCollectionCollector(ws, data) {
       let uid = data.get('collectorUid', data.collectedByUid);
       let target = get(memberPath(ws, uid)).data;
       // The membership path is authoritative; older valid members have no redundant workspaceId.
-      return uid is string && active(ws, uid) && target.get('workspaceId', ws) == ws && target.role in ['OWNER', 'Owner', 'owner', 'PARTNER', 'Partner', 'partner'] &&
-        (owner(ws) || uid == request.auth.uid) &&
+      // Reuse the exact member document already read above: equivalent to active(ws, uid).
+      // Financial access is checked by the calling create rule before this predicate.
+      return uid is string && uid != '' && target is map && target.status in ['ACTIVE', 'active'] &&
+        target.get('workspaceId', ws) == ws && target.role in ['OWNER', 'Owner', 'owner', 'PARTNER', 'Partner', 'partner'] &&
+        (uid == request.auth.uid || initialBeneficiaryCollection(ws, data, uid) || owner(ws)) &&
         (!data.keys().hasAny(['collectorUid', 'collectorName', 'collectorRole']) ||
           (data.collectorUid == uid && data.collectorName == (target.get('displayName', null) == null ? '' : target.displayName) && data.collectorRole == target.role));
     }
@@ -251,12 +263,38 @@ service cloud.firestore {
     }
     function retainedExpenseSource(ws, data) {
       let jobId = data.get('relatedJobId', 0);
+      let source = getAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))).data;
       return jobId == 0 || (jobId is int && jobId > 0 &&
-        existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))) &&
-        getAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))).data.workspaceId == ws &&
-        getAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))).data.get('isDeleted', false) == false &&
-        unlockedEntry(ws, getAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))).data) &&
+        source is map && source.workspaceId == ws && source.get('isDeleted', false) == false &&
+        unlockedEntry(ws, source) &&
         !existsAfter(entryProofPath(ws, string(jobId))));
+    }
+    function validNewExpenseParties(ws, data) {
+      let isOwner = owner(ws);
+      let isSelf = data.expenseForUid == request.auth.uid;
+      let isLinked = !isOwner && !isSelf && linkedExpenseTarget(ws, data);
+      let payer = data.get('paidByUid', '');
+      return (isOwner || isSelf || isLinked) &&
+        ((data.get('paidBy', '') == 'Business Paid' && payer == '') ||
+         (data.get('paidBy', '') == 'I Paid' && payer is string && payer != '' &&
+          eligibleExpensePayer(ws, payer) &&
+          (payer == request.auth.uid || isOwner || (payer == data.expenseForUid && isLinked))));
+    }
+    // Funding identity is independent of the creator and the expense beneficiary.
+    // Old rows may retain their original fields; new or changed funding must be valid.
+    function validExpenseFunding(ws, data) {
+      let payer = data.get('paidByUid', '');
+      return (data.get('paidBy', '') == 'Business Paid' && payer == '') ||
+        (data.get('paidBy', '') == 'I Paid' && payer is string && payer != '' &&
+          eligibleExpensePayer(ws, payer) &&
+          (payer == request.auth.uid || owner(ws) ||
+            (payer == data.expenseForUid && linkedExpenseTarget(ws, data))));
+    }
+    function eligibleExpensePayer(ws, uid) {
+      let target = get(memberPath(ws, uid)).data;
+      return target is map && target.status in ['ACTIVE', 'active'] &&
+        target.get('workspaceId', ws) == ws &&
+        target.role in ['OWNER', 'Owner', 'owner', 'PARTNER', 'Partner', 'partner', 'OPERATOR', 'Operator', 'operator'];
     }
     match /users/{uid} { allow read, write: if signed() && request.auth.uid == uid; }
     // Directory is a server-maintained discovery aid, never authorization or OTP proof.
@@ -319,9 +357,10 @@ service cloud.firestore {
         allow create: if retainedExpenseSource(ws, request.resource.data) && envelope(ws) && finance(ws) && request.resource.data.createdByUid == request.auth.uid &&
           timedCreationTime() && request.resource.data.amount is number && request.resource.data.amount > 0 && request.resource.data.isDeleted == false &&
           active(ws, request.resource.data.expenseForUid) && request.resource.data.financialAttributionUid == request.resource.data.expenseForUid &&
-          (owner(ws) || request.resource.data.expenseForUid == request.auth.uid || linkedExpenseTarget(ws, request.resource.data));
+          validNewExpenseParties(ws, request.resource.data);
         allow update: if retainedExpenseSource(ws, request.resource.data) && envelope(ws) && original() && notDeleted() && activeRecord(ws, 'expenseForUid') &&
           request.resource.data.amount is number && request.resource.data.amount > 0 &&
+          (same(['paidBy', 'paidByUid', 'paidByPartner']) || validExpenseFunding(ws, request.resource.data)) &&
           same(['expenseForUid', 'financialAttributionUid']) && (owner(ws) || (partner(ws) && ownTimely()));
         allow delete: if (unlockedExpenseDelete(ws, resource.data) && deleteEnvelope() && activeRecord(ws, 'expenseForUid') && (owner(ws) || (partner(ws) && deleteTimely()))) ||
           compoundChildDelete(ws, resource.data.get('relatedJobId', 0), resource.data.get('createdByUid', ''), resource.data.get('createdAt', 0)) ||

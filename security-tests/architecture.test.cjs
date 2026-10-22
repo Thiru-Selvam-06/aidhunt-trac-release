@@ -81,11 +81,149 @@ test('Partner cannot create standalone expense for another member',async()=>{
    createdByRole:'PARTNER',createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),
    expenseForUid:uid.owner,financialAttributionUid:uid.owner,amount:100}));
 });
+// Android's nullable Room relationship must be normalized at the wire boundary.
+// These are independent synthetic expenses, not recovery of the three live actions.
+for (const actor of ['owner','partner']) for (const paidBy of ['I Paid','Business Paid'])
+ test(`standalone ${actor} ${paidBy}: null source denied, zero source accepted for separate 1/1/2 expenses`,async()=>{
+  const d=db(actor);
+  for (const [index,amount] of [1,1,2].entries()) {
+   const id=String(700+index);
+   const payload={...envelope(actor),id:Number(id),createdByUid:uid[actor],createdByRole:actor.toUpperCase(),
+    createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),
+    expenseForUid:uid[actor],financialAttributionUid:uid[actor],relatedJobId:null,amount,paidBy,
+    paidByUid:paidBy==='I Paid'?uid[actor]:'',paidByPartner:paidBy==='I Paid'?actor:'',
+    operationId:`standalone-${actor}-${paidBy}-${index}`};
+   await assertFails(setDoc(doc(d,path('expenses',id)),payload));
+   assert.equal((await getDoc(doc(d,path('expenses',id)))).exists(),false);
+   await assertSucceeds(setDoc(doc(d,path('expenses',id)),{...payload,relatedJobId:0}));
+   const confirmed=(await getDoc(doc(d,path('expenses',id)))).data();
+   for (const key of ['operationId','workspaceId','actorUid','createdByUid','expenseForUid','financialAttributionUid','paidBy','paidByUid','amount','createdAt','actionTime'])
+    assert.equal(confirmed[key],payload[key],key);
+   assert.equal(confirmed.relatedJobId,0);
+  }
+ });
+for (const actor of ['operator','outsider']) test(`standalone expense numeric source cannot grant ${actor} financial access`,async()=>{
+ await assertFails(setDoc(doc(db(actor),path('expenses','780')),{...envelope(actor),id:780,
+  createdByUid:uid[actor],createdByRole:actor.toUpperCase(),createdAt:now-1000,
+  authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),
+  expenseForUid:uid[actor],financialAttributionUid:uid[actor],relatedJobId:0,amount:900,paidBy:'Business Paid',paidByUid:''}));
+});
+for (const [name,fields] of [
+ ['foreign personal payer',{paidBy:'I Paid',paidByUid:'foreign-member'}],
+ ['missing personal payer',{paidBy:'I Paid',paidByUid:''}],
+ ['business funding with a personal payer',{paidBy:'Business Paid',paidByUid:uid.partner}],
+ ['unknown funding type',{paidBy:'Unknown',paidByUid:''}]
+]) test(`standalone financial attribution rejects ${name}`,async()=>{
+ await assertFails(setDoc(doc(db('partner'),path('expenses','790')),{...envelope(),id:790,
+  createdByUid:uid.partner,createdByRole:'PARTNER',createdAt:now-1000,
+  authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),
+  expenseForUid:uid.partner,financialAttributionUid:uid.partner,relatedJobId:0,amount:900,...fields}));
+});
+
+function fundedExpense(actor='partner', fields={}) {
+ return {...envelope(actor),id:791,createdByUid:uid[actor],createdByRole:actor.toUpperCase(),
+  createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),
+  expenseForUid:uid[actor],financialAttributionUid:uid[actor],relatedJobId:0,amount:900,
+  paidBy:'I Paid',paidByUid:uid[actor],paidByPartner:actor,...fields};
+}
+for (const actor of ['owner','partner']) test(`${actor} may change own valid funding without changing amount or creator`,async()=>{
+ const d=db(actor), ref=doc(d,path('expenses','791'));
+ await assertSucceeds(setDoc(ref,fundedExpense(actor)));
+ await assertSucceeds(updateDoc(ref,{paidBy:'Business Paid',paidByUid:'',paidByPartner:''}));
+ await assertSucceeds(updateDoc(ref,{paidBy:'I Paid',paidByUid:uid[actor],paidByPartner:actor}));
+ const result=(await getDoc(ref)).data();
+ assert.equal(result.amount,900);assert.equal(result.createdByUid,uid[actor]);assert.equal(result.createdAt,now-1000);
+});
+for (const [name,fields] of [
+ ['foreign payer',{paidByUid:'foreign-member'}],['missing payer',{paidByUid:''}],
+ ['unknown funding',{paidBy:'Unknown'}],['business with personal UID',{paidBy:'Business Paid'}],
+ ['another standalone member payer',{paidByUid:uid.other}]
+]) test(`funding edit rejects ${name} and preserves confirmed original`,async()=>{
+ const ref=doc(db('partner'),path('expenses','791'));
+ await assertSucceeds(setDoc(ref,fundedExpense()));
+ await assertFails(updateDoc(ref,fields));
+ const result=(await getDoc(ref)).data();assert.equal(result.paidBy,'I Paid');assert.equal(result.paidByUid,uid.partner);assert.equal(result.amount,900);
+});
+for (const [name,member] of [
+ ['removed',{role:'PARTNER',status:'REMOVED',workspaceId:ws}],
+ ['foreign workspace',{role:'PARTNER',status:'ACTIVE',workspaceId:'foreign'}],
+ ['unknown role',{role:'ADMINISTRATOR',status:'ACTIVE',workspaceId:ws}]
+]) test(`even Owner cannot select ${name} personal payer`,async()=>{
+ await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),path('members','invalid-payer')),member));
+ await assertFails(setDoc(doc(db('owner'),path('expenses','791')),fundedExpense('owner',{paidByUid:'invalid-payer'})));
+});
+test('Owner can record an active Partner personal payer separately from beneficiary',async()=>{
+ const ref=doc(db('owner'),path('expenses','791'));
+ await assertSucceeds(setDoc(ref,fundedExpense('owner',{paidByUid:uid.other,paidByPartner:'other'})));
+ const result=(await getDoc(ref)).data();assert.equal(result.paidByUid,uid.other);assert.equal(result.expenseForUid,uid.owner);assert.equal(result.createdByUid,uid.owner);
+});
+test('Owner keeps existing permission to record an active Operator personal payer',async()=>{
+ const ref=doc(db('owner'),path('expenses','791'));
+ await assertSucceeds(setDoc(ref,fundedExpense('owner',{paidByUid:uid.operator,paidByPartner:'operator',expenseForUid:uid.operator,financialAttributionUid:uid.operator})));
+ const result=(await getDoc(ref)).data();assert.equal(result.paidByUid,uid.operator);assert.equal(result.createdByUid,uid.owner);assert.equal(result.amount,900);
+});
+test('unchanged legacy funding survives amount edit; changing it requires valid identity',async()=>{
+ const legacy=fundedExpense(); delete legacy.paidBy; delete legacy.paidByUid; delete legacy.paidByPartner;
+ await seed('expenses',legacy,'791'); const ref=doc(db('partner'),path('expenses','791'));
+ await assertSucceeds(updateDoc(ref,{amount:901}));
+ await assertFails(updateDoc(ref,{paidBy:'I Paid',paidByUid:''}));
+ const result=(await getDoc(ref)).data();assert.equal(result.amount,901);assert.equal('paidByUid' in result,false);
+});
 test('Partner cannot add another member expense through a historical job',async()=>{
  await seed('entries',entry('partner',{entryForUid:uid.owner,financialAttributionUid:uid.owner,isHistorical:true}));
  await assertFails(setDoc(doc(db('partner'),path('expenses')),{...envelope(),id:1,createdByUid:uid.partner,
    createdByRole:'PARTNER',createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),
    expenseForUid:uid.owner,financialAttributionUid:uid.owner,relatedJobId:1,amount:100}));
+});
+
+async function initialReceipt({actor='partner',target='other',amount=900,total=1100,historical=false,sourceChange={},paymentChange={}}={}) {
+ const d=db(actor), batch=writeBatch(d), id='881';
+ const source=entry(actor,{entryForUid:uid[target],financialAttributionUid:uid[target],totalAmount:total,pendingAmount:total,
+  isHistorical:historical,...sourceChange});
+ await seed('entries',source);
+ const receipt={...envelope(actor),operationId:'initial-receipt-'+actor,id:Number(id),jobEntryId:1,customerId:2,amount,
+  collectedByUid:uid[actor],collectedByName:actor,collectedByRole:actor.toUpperCase(),collectorUid:uid[target],collectorName:'',
+  collectorRole:target==='owner'?'OWNER':'PARTNER',createdAt:now,collectedAt:now,status:'ACTIVE',paymentMethod:'Cash',
+  authorizationCreatedAt:Timestamp.fromMillis(now),serverReceivedAt:serverTimestamp(),allocationsJson:`[{"jobId":1,"amount":${amount}}]`,
+  initialEntryCollection:true,initialJobOperationId:source.operationId,...paymentChange};
+ batch.set(doc(d,path('collections',id)),receipt);
+ batch.update(doc(d,path('entries')),{...envelope(actor),operationId:receipt.operationId,collectionId:id,
+  amountReceived:amount,pendingAmount:total-amount});
+ return {commit:()=>batch.commit(),source,receipt,id};
+}
+for (const target of ['other','owner']) test(`Partner initial receipt follows Entry For ${target} and preserves recorder and exact due`,async()=>{
+ const action=await initialReceipt({target}); await assertSucceeds(action.commit());
+ const receipt=(await getDoc(doc(db('owner'),path('collections',action.id)))).data();
+ const source=(await getDoc(doc(db('owner'),path('entries')))).data();
+ assert.equal(receipt.collectorUid,uid[target]); assert.equal(receipt.collectedByUid,uid.partner);
+ assert.equal(receipt.actorUid,uid.partner); assert.equal(source.createdByUid,uid.partner);
+ assert.equal(source.entryForUid,uid[target]);assert.equal(source.amountReceived,900);assert.equal(source.pendingAmount,200);
+ assert.equal(source.createdAt,action.source.createdAt);assert.equal(receipt.operationId,action.receipt.operationId);
+});
+test('Owner historical initial collection keeps job creation date and selected collector',async()=>{
+ const original=now-3*86400000;
+ const action=await initialReceipt({actor:'owner',target:'other',historical:true,total:2000,amount:1200,
+  sourceChange:{createdAt:original,authorizationCreatedAt:Timestamp.fromMillis(original)}});
+ await assertSucceeds(action.commit());
+ const source=(await getDoc(doc(db('owner'),path('entries')))).data();
+ assert.equal(source.createdAt,original);assert.equal(source.amountReceived,1200);assert.equal(source.pendingAmount,800);
+ assert.equal((await getDoc(doc(db('owner'),path('collections',action.id)))).data().collectorUid,uid.other);
+});
+for (const [name,change] of [
+ ['missing initial marker',{paymentChange:{initialEntryCollection:false}}],
+ ['wrong original job operation',{paymentChange:{initialJobOperationId:'unrelated'}}],
+ ['later recorded action',{paymentChange:{actionTime:now-1}}],
+ ['another recorder job',{sourceChange:{createdByUid:uid.owner}}],
+ ['a different job beneficiary',{sourceChange:{entryForUid:uid.owner,financialAttributionUid:uid.owner}}],
+ ['an earlier paid balance',{sourceChange:{amountReceived:1,pendingAmount:1099}}],
+ ['historical Partner job',{historical:true}],
+ ['forged collector role',{paymentChange:{collectorRole:'OWNER'}}],
+ ['zero receipt',{amount:0}],['overpayment',{amount:1200}]
+]) test(`initial collection exception still denies ${name}`,async()=>{
+ const action=await initialReceipt(change); await assertFails(action.commit());
+ assert.equal((await getDoc(doc(db('owner'),path('collections',action.id)))).exists(),false);
+ const source=(await getDoc(doc(db('owner'),path('entries')))).data();
+ assert.equal(source.amountReceived,action.source.amountReceived);assert.equal(source.pendingAmount,action.source.pendingAmount);
 });
 test('accepted limitation: backdated offline action can arrive after deadline',async()=>{let record=entry('partner',{createdAt:now-53*3600000,authorizationCreatedAt:Timestamp.fromMillis(now-53*3600000),actionTime:now-48*3600000});await seed('entries',record);await assertSucceeds(updateDoc(doc(db('partner'),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
 test('offline action after deadline rejected',async()=>{let record=entry('partner',{createdAt:now-53*3600000,authorizationCreatedAt:Timestamp.fromMillis(now-53*3600000),actionTime:now-27*3600000});await seed('entries',record);await assertFails(updateDoc(doc(db('partner'),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
@@ -113,7 +251,8 @@ test('outsider cannot read or write workspace',async()=>{await seed('entries',en
 test('cross-workspace envelope rejected',async()=>assertFails(setDoc(doc(db('partner'),path('entries')),entry('partner',{workspaceId:'workspace-b'}))));
 test('removed membership denied',async()=>{await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),`workspaces/${ws}/members/${uid.partner}`),{status:'REMOVED'}));await assertFails(setDoc(doc(db('partner'),path('entries')),entry()));});
 test('Co-Owner never grants Owner authority',async()=>{await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),`workspaces/${ws}/members/${uid.partner}`),{role:'Co-Owner'}));await assertFails(setDoc(doc(db('partner'),path('entries')),entry('partner',{isHistorical:true})));});
-for(const role of ['partner','owner']) test(`${role} creates expense`,async()=>assertSucceeds(setDoc(doc(db(role),path('expenses')),{...envelope(role),id:1,createdByUid:uid[role],createdByRole:role,createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),expenseForUid:uid[role],financialAttributionUid:uid[role],amount:100})));
+// Same access expectation; a new expense now includes the approved valid funding contract.
+for(const role of ['partner','owner']) test(`${role} creates expense`,async()=>assertSucceeds(setDoc(doc(db(role),path('expenses')),{...envelope(role),id:1,createdByUid:uid[role],createdByRole:role,createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),expenseForUid:uid[role],financialAttributionUid:uid[role],amount:100,paidBy:'I Paid',paidByUid:uid[role]})));
 test('Partner edits and deletes own expense before deadline',async()=>{const record={...envelope(),id:1,createdByUid:uid.partner,createdByRole:'PARTNER',createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),expenseForUid:uid.partner,financialAttributionUid:uid.partner,amount:100};await seed('expenses',record);await assertSucceeds(updateDoc(doc(db('partner'),path('expenses')),{amount:200}));await assertSucceeds(updateDoc(doc(db('partner'),path('expenses')),{isDeleted:true,authorizationDeletedAt:serverTimestamp()}));});
 for(const collection of ['expenses','withdrawals','collections']) test(`Operator cannot read ${collection}`,async()=>{await seed(collection,{...envelope('owner')});await assertFails(getDoc(doc(db('operator'),path(collection))));});
 test('Operator cannot create asset',async()=>assertFails(setDoc(doc(db('operator'),path('tractors')),{...envelope('operator'),createdByUid:uid.operator,createdAt:now})));

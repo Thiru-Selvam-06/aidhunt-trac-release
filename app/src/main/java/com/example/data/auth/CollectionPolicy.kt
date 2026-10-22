@@ -41,6 +41,12 @@ object CollectionPolicy {
         eligibleCollectors(workspaceId, actorUid, owner, members).firstOrNull { it.uid == selectedUid.ifBlank { actorUid } }
             ?: throw SecurityException("Selected collector is not an eligible active workspace member")
 
+    /** Only the initial receipt follows Entry For; later customer collections retain their selection policy. */
+    fun requireInitialCollector(workspaceId: String, selectedUid: String, members: List<WorkspaceMember>): WorkspaceMember =
+        members.firstOrNull { it.workspaceId == workspaceId && it.uid == selectedUid && selectedUid.isNotBlank() &&
+            it.status.equals("ACTIVE", true) && RoleUtils.normalizeRole(it.role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER) }
+            ?: throw SecurityException("Initial collection requires an active business Partner as Entry For")
+
     data class Identity(val uid: String, val name: String, val role: String)
     private fun identity(ws: String, uid: String, name: String, role: String, members: List<WorkspaceMember>): Identity {
         val member = members.firstOrNull { it.workspaceId == ws && it.uid == uid && uid.isNotBlank() }

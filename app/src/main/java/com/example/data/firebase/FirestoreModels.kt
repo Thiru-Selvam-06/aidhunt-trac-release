@@ -539,7 +539,9 @@ fun ExpenseEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any?
     "description" to description,
     "addedByPartner" to addedByPartner,
     "dateTimestamp" to dateTimestamp,
-    "relatedJobId" to relatedJobId,
+    // The deployed Rules use numeric zero for an expense without a source Job.
+    // Keep Room's nullable relationship; normalize only the new serialized payload.
+    "relatedJobId" to (relatedJobId ?: 0L),
     "createdBy" to this.createdByUid,
     "createdByUid" to this.createdByUid,
     "createdByRole" to createdByRole,
@@ -570,7 +572,7 @@ fun expenseFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallba
         description = map["description"] as? String ?: "",
         addedByPartner = map["createdByName"] as? String ?: map["addedByPartner"] as? String ?: "Partner",
         dateTimestamp = (map["dateTimestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-        relatedJobId = (map["relatedJobId"] as? Number)?.toLong(),
+        relatedJobId = (map["relatedJobId"] as? Number)?.toLong()?.takeIf { it > 0 },
         isSynced = true,
         createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
         paidBy = map["paidBy"] as? String ?: "I Paid",

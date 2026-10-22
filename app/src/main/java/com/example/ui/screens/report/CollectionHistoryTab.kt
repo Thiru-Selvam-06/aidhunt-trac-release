@@ -930,7 +930,7 @@ private fun CollectionJobCard(
         com.example.ui.util.FinancialCalculationEngine.calculateSummary(listOf(it), emptyList(), emptyList(),
             com.example.ui.util.FinancialScope(workspaceId = it.workspaceId))
     } }
-    val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).apply {
+    val dateFormat = remember(isTamil) { SimpleDateFormat("dd MMM yyyy", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH).apply {
         timeZone = com.example.data.auth.CollectionPolicy.timeZone
     } }
     val identifierTag = group.jobId?.toString() ?: events.firstOrNull()?.id?.toString() ?: group.key
@@ -989,6 +989,11 @@ private fun CollectionJobCard(
             }
 
             // Created Date & Sync Status
+            if (job != null) Text(
+                text = RoleUtils.getEntryForDisplay(job, ownerName, workspaceMembers, partners, isTamil,
+                    com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers))
+                    ?: if (isTamil) "யாருக்காக: அடையாளம் கிடைக்கவில்லை" else "Entry For: Attribution unavailable",
+                fontSize = 11.sp, color = TextSecondaryDark, modifier = Modifier.testTag("collection_entry_for_$identifierTag"))
             Text(
                 text = "${if (isTamil) "உருவாக்கப்பட்டது" else "Created"}: ${job?.createdAt?.takeIf { it > 0 }?.let { dateFormat.format(Date(it)) } ?: "—"}",
                 fontSize = 11.sp,

@@ -20,8 +20,13 @@ object QueuedWriteConflict {
             else -> error("Unsupported conflict entity")
         }
         val changed = base.keys().asSequence().filter { it != "updatedAt" }.any { key ->
-            val left = base.opt(key).takeUnless { it == JSONObject.NULL }
-            val right = normalized[key]
+            val sourceKey = type == "EXPENSE" && key == "relatedJobId"
+            val originalValue = base.opt(key).takeUnless { it == JSONObject.NULL }
+            // Old immutable edit bases used null; absent-source null and wire zero mean the same thing.
+            // Read the raw server source so malformed/string links never normalize to an absent job.
+            val serverValue = if (sourceKey) current[key] else normalized[key]
+            val left = if (sourceKey && originalValue == null) 0L else originalValue
+            val right = if (sourceKey && serverValue == null) 0L else serverValue
             if (left is Number && right is Number) left.toString().toBigDecimal().compareTo(right.toString().toBigDecimal()) != 0
             else left != right
         }

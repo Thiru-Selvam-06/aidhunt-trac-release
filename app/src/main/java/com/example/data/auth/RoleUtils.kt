@@ -103,16 +103,19 @@ object RoleUtils {
         ownerName: String = "",
         workspaceMembers: List<WorkspaceMember> = emptyList(),
         partners: List<PartnerEntity> = emptyList(),
-        isTamil: Boolean = false
+        isTamil: Boolean = false,
+        hasBusinessPartnership: Boolean = false
     ): String? {
-        val entryForName = job.operatorName.trim()
-        if (entryForName.isBlank()) return null
+        val member = workspaceMembers.firstOrNull { it.uid == job.entryForUid && it.workspaceId == job.workspaceId && it.uid.isNotBlank() }
+        val entryForName = member?.displayName?.takeIf { it.isNotBlank() } ?: job.operatorName.trim()
+        if (entryForName.isBlank() || job.entryForUid.isBlank()) return null
 
-        val entryForRole = workspaceMembers.firstOrNull { it.uid == job.entryForUid }?.role?.let(::normalizeRole)
-            ?: partners.firstOrNull { it.firebaseUid.isNotBlank() && it.firebaseUid == job.entryForUid }?.role?.let(::normalizeRole)
+        val entryForRole = member?.role?.let(::normalizeRole)
+            ?: partners.firstOrNull { it.workspaceId == job.workspaceId && it.firebaseUid.isNotBlank() && it.firebaseUid == job.entryForUid }?.role?.let(::normalizeRole)
             ?: ""
 
-        val roleAndName = formatRoleAndName(entryForRole, entryForName, isTamil)
+        val displayRole = if (hasBusinessPartnership && entryForRole == ROLE_OWNER) ROLE_PARTNER else entryForRole
+        val roleAndName = formatRoleAndName(displayRole, entryForName, isTamil)
         val prefix = if (isTamil) "யாருக்காக" else "Entry For"
         return "$prefix: $roleAndName"
     }

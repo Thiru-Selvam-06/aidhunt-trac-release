@@ -1612,18 +1612,19 @@ class WorkspaceRepository(
         }
     }
 
-    private suspend fun enqueue(type: String, id: Long, payload: Map<String, Any?>, mutation: String = "UPSERT", expectedActorUid: String? = null, actionTime: Long = System.currentTimeMillis(), baseSnapshot: Map<String, Any?>? = null) {
+    private suspend fun enqueue(type: String, id: Long, payload: Map<String, Any?>, mutation: String = "UPSERT", expectedActorUid: String? = null, actionTime: Long = System.currentTimeMillis(), baseSnapshot: Map<String, Any?>? = null, operationId: String = java.util.UUID.randomUUID().toString()) {
         val wsId = payload["workspaceId"] as? String ?: throw SecurityException("Missing operation workspace")
         requireWorkspaceActor(wsId)
         val operationActor = getEffectiveActorUid().orEmpty()
         require(expectedActorUid == null || operationActor == expectedActorUid) { "Account changed before queuing deletion" }
         operations.supersedeReconciledRejections(wsId, operationActor, type, id)
-        operations.insert(PendingOperationEntity(java.util.UUID.randomUUID().toString(), wsId,
+        val command = PendingOperationEntity(operationId, wsId,
             operationActor, type, id, mutation, operations.nextSequence(), actionTime,
             org.json.JSONObject(payload).put("operationProtocolVersion", 2).apply {
                 if (type in setOf("JOB", "EXPENSE") && mutation == "UPSERT")
                     put("expectedBaseJson", baseSnapshot?.let { org.json.JSONObject(it).toString() } ?: "null")
-            }.toString()))
+            }.toString())
+        operations.insert(command)
     }
 
     private suspend fun reconcileRejectedOperation(op: PendingOperationEntity): Boolean {
@@ -1922,19 +1923,22 @@ class WorkspaceRepository(
         jobEntryDao.insertJob(localJob)
         com.example.data.auth.EntryFinancialMutationPolicy.requireAuthorized(verifiedActorRole, existingJob?.amountReceived, localJob.amountReceived)
         val entrySnapshot = if (existingJob == null && localJob.amountReceived > 0) localJob.copy(amountReceived = 0.0, pendingAmount = localJob.totalAmount) else localJob
-        enqueue("JOB", localJob.id, entrySnapshot.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid, baseSnapshot = existingJob?.toFirestoreMap())
+        val initialJobOperationId = java.util.UUID.randomUUID().toString()
+        enqueue("JOB", localJob.id, entrySnapshot.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid, baseSnapshot = existingJob?.toFirestoreMap(), operationId = initialJobOperationId)
         if (existingJob == null && localJob.amountReceived > 0) {
+            val initialCollector = com.example.data.auth.CollectionPolicy.requireInitialCollector(wsId, localJob.entryForUid, _activeWorkspaceMembers.value)
             val collection = PaymentEntity(id = IdGenerator.generateId(), workspaceId = wsId, jobEntryId = localJob.id,
                 customerId = customerId, customerName = localJob.customerName, tractorId = localJob.tractorId, tractorLabel = localJob.tractorLabel,
                 amount = localJob.amountReceived, collectedByUid = actorUid, collectedByName = currentActorName,
-                collectorUid = actorUid,
-                collectorName = _activeWorkspaceMembers.value.first { it.uid == actorUid && it.workspaceId == wsId }.displayName.orEmpty(),
-                collectorRole = _activeWorkspaceMembers.value.first { it.uid == actorUid && it.workspaceId == wsId }.role,
+                collectorUid = initialCollector.uid,
+                collectorName = initialCollector.displayName.orEmpty(),
+                collectorRole = initialCollector.role,
                 collectedByRole = verifiedActorRole, collectedAt = operationTime, createdAt = operationTime, isSynced = false,
                 allocationsJson = org.json.JSONArray().put(org.json.JSONObject().put("jobId", localJob.id).put("amount", localJob.amountReceived)).toString())
             paymentDao.insertPayment(collection)
             enqueue("PAYMENT", collection.id, collection.toFirestoreMap() + mapOf("entrySnapshotJson" to org.json.JSONObject(localJob.toFirestoreMap()).toString(),
-                "baseAmountReceived" to 0.0, "basePendingAmount" to localJob.totalAmount), expectedActorUid = operationActorUid, actionTime = operationTime)
+                "baseAmountReceived" to 0.0, "basePendingAmount" to localJob.totalAmount,
+                "initialEntryCollection" to true, "initialJobOperationId" to initialJobOperationId), expectedActorUid = operationActorUid, actionTime = operationTime)
         }
 
         val allExpensesToSave = mutableListOf<ExpenseEntity>()
