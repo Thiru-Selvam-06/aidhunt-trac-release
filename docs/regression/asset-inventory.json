@@ -60,6 +60,7 @@
     "app/src/test/java/com/example/CollectionVisibilityRegressionTest.kt",
     "app/src/test/java/com/example/CompleteRegressionPipelineTest.kt",
     "app/src/test/java/com/example/CustomerDeletionDialogTest.kt",
+    "app/src/test/java/com/example/CustomerIdentityEditingTest.kt",
     "app/src/test/java/com/example/EntryAcknowledgementDependenciesTest.kt",
     "app/src/test/java/com/example/EntryCreationTimestampPersistenceTest.kt",
     "app/src/test/java/com/example/EntryDeletionReconciliationTest.kt",
@@ -128,6 +129,7 @@
   ],
   "instrumentation_tests": [
     "app/src/androidTest/java/com/example/CollectionFormDeviceTest.kt",
+    "app/src/androidTest/java/com/example/CustomerEditingDeviceTest.kt",
     "app/src/androidTest/java/com/example/DatabaseWorkspaceDeviceTest.kt",
     "app/src/androidTest/java/com/example/DeviceEmulatorIntegrationTest.kt",
     "app/src/androidTest/java/com/example/ExampleInstrumentedTest.kt",
@@ -164,6 +166,7 @@
   ],
   "rules_tests": [
     "security-tests/architecture.test.cjs",
+    "security-tests/customer-editing.test.cjs",
     "security-tests/listener-queries.test.cjs",
     "security-tests/phone-onboarding.test.cjs",
     "security-tests/purge-protocol.test.cjs",
