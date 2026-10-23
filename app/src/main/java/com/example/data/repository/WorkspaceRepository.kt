@@ -1391,13 +1391,16 @@ class WorkspaceRepository(
                 // Serialize the source rows and pending protection with deletion/acknowledgement.
                 val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("CUSTOMER", listenerWsId)
                 val unsyncedIds = customerDao.getUnsyncedCustomersForWorkspace(listenerWsId).map { it.id }.toSet()
+                val protectedProfileIds = operations.outstandingOperations(listenerWsId).filter {
+                    it.entityType == "CUSTOMER" && (it.state == "PENDING" || it.failureReason.contains("Local reconciliation pending"))
+                }.map { it.entityId }.toSet()
                 val retained = remoteCustomers.filterNot { it.id in pendingDeleteIds || it.id in confirmedDeletedIds }
                 val jobs = jobEntryDao.getJobsForWorkspaceOnce(listenerWsId)
                 val deletedSourceCustomers = operations.observe(listenerWsId).firstOrNull().orEmpty().filter {
                     it.entityType == "JOB" && it.mutationType == "DELETE" && it.state == "ACKNOWLEDGED"
                 }.mapNotNull { op -> org.json.JSONObject(op.payloadJson).optLong("customerId").takeIf { it > 0 } }.toSet()
                 for (customer in retained) {
-                    if (customer.id in unsyncedIds) continue
+                    if (customer.id in unsyncedIds && customer.id in protectedProfileIds) continue
                     // Empty-job legacy totals remain intact except where a source deletion was confirmed.
                     val source = if (customer.id in deletedSourceCustomers)
                         customer.copy(totalBilled = 0.0, totalPaid = 0.0, balanceDue = 0.0) else customer
@@ -1677,6 +1680,13 @@ class WorkspaceRepository(
     }
 
     private suspend fun acknowledge(op: PendingOperationEntity) {
+        // A listener can arrive while this profile is still pending and be intentionally ignored.
+        // Fetch the confirmed profile so a phone-only edit also receives another device's rename.
+        val confirmedProfile = if (op.entityType == "CUSTOMER" && op.mutationType == "UPSERT" &&
+            org.json.JSONObject(op.payloadJson).has(com.example.data.sync.CustomerProfileEdit.PAYLOAD_KEY))
+            firestoreRepository.getOperationRecordFromServer(op)?.let {
+                com.example.data.firebase.customerFromFirestoreMap(it, op.entityId, op.workspaceId)
+            } else null
         database.withTransaction {
             operations.acknowledge(op.operationId)
             if (op.mutationType == "DELETE") pendingDeleteManager.removePendingDelete(op.entityType, op.entityId, op.workspaceId)
@@ -1718,7 +1728,12 @@ class WorkspaceRepository(
                         com.example.data.sync.OperationDependencies.blocksEntryAcknowledgement(it, op.entityId)
                     }) jobEntryDao.markJobsSynced(op.workspaceId, listOf(op.entityId))
                     "EXPENSE" -> expenseDao.markExpensesSynced(op.workspaceId, listOf(op.entityId))
-                    "CUSTOMER" -> customerDao.markCustomersSynced(op.workspaceId, listOf(op.entityId))
+                    "CUSTOMER" -> if (confirmedProfile != null) {
+                        val stats = com.example.ui.util.FinancialCalculationEngine.calculateCustomerFinancials(confirmedProfile,
+                            jobEntryDao.getJobsForWorkspaceOnce(op.workspaceId))
+                        customerDao.insertCustomer(confirmedProfile.copy(totalBilled = stats.totalBilled,
+                            totalPaid = stats.totalPaid, balanceDue = stats.balanceDue, isSynced = true))
+                    } else customerDao.markCustomersSynced(op.workspaceId, listOf(op.entityId))
                     "WITHDRAWAL" -> withdrawalDao.markWithdrawalsSynced(op.workspaceId, listOf(op.entityId))
                     "PAYMENT" -> {
                         paymentDao.markPaymentsSynced(op.workspaceId, listOf(op.entityId))
@@ -1741,7 +1756,8 @@ class WorkspaceRepository(
     suspend fun saveJobEntry(
         job: JobEntryEntity,
         linkedExpense: ExpenseEntity? = null,
-        linkedExpenses: List<ExpenseEntity> = emptyList()
+        linkedExpenses: List<ExpenseEntity> = emptyList(),
+        createNewCustomer: Boolean = false
     ): Long {
         val operationActorUid = getEffectiveActorUid().orEmpty()
         val operationTime = System.currentTimeMillis()
@@ -1769,6 +1785,17 @@ class WorkspaceRepository(
             throw SecurityException("Operators cannot create expenses")
         }
         var customerId = job.customerId
+        if (createNewCustomer) {
+            require(verifiedActorRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR) { "Only Owner or Partner can create customers" }
+            require(customerId > 0 && job.customerName.isNotBlank()) { "Select the new customer identity before saving" }
+            if (customerDao.getCustomerById(wsId, customerId) == null) {
+                val profile = CustomerEntity(id = customerId, workspaceId = wsId, name = job.customerName.trim(),
+                    phone = com.example.ui.util.requireOptionalContactPhone(job.customerPhone), location = job.customerLocation.trim(),
+                    createdByUid = authenticatedUid, createdAt = operationTime, updatedAt = operationTime, isSynced = false)
+                customerDao.insertCustomer(profile)
+                enqueue("CUSTOMER", profile.id, profile.toFirestoreMap(), expectedActorUid = operationActorUid, actionTime = operationTime)
+            }
+        }
         if (customerId <= 0) {
             if (existingJob != null && existingJob.customerId > 0) {
                 customerId = existingJob.customerId
@@ -1801,6 +1828,11 @@ class WorkspaceRepository(
         }
         if (existingJob != null) {
             requireRecordMembersActive(existingJob.createdByUid, existingJob.entryForUid)
+            if (existingJob.customerId != customerId) {
+                require(verifiedActorRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR) { "Ask an Owner or Partner to reassign a customer" }
+                com.example.data.sync.JobCustomerReassignment.requireSafe(existingJob,
+                    paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty(), operations.outstandingOperations(wsId))
+            }
             if (!isOwner && existingJob.createdByUid.isNotBlank() && existingJob.createdByUid != actorUid) {
                 Log.w(TAG, "Security rejection: Non-owner ($currentActorName, uid=$actorUid) cannot edit another person's entry (${existingJob.createdByUid})")
                 throw SecurityException("Unauthorized: You can only edit your own entries")
@@ -1870,7 +1902,9 @@ class WorkspaceRepository(
             currentActorName
         }
 
-        val finalCustomerName = if (job.customerName.isNotBlank()) {
+        val currentCustomer = customerDao.getCustomerById(wsId, customerId)
+        val sameCustomer = existingJob?.customerId == customerId
+        val finalCustomerName = if (sameCustomer) existingJob!!.customerName else currentCustomer?.name ?: if (job.customerName.isNotBlank()) {
             job.customerName
         } else if (existingJob != null && existingJob.customerName.isNotBlank()) {
             existingJob.customerName
@@ -1880,7 +1914,7 @@ class WorkspaceRepository(
 
         val isHistorical = job.isHistorical
 
-        val finalCustomerPhone = com.example.ui.util.requireOptionalContactPhone(job.customerPhone)
+        val finalCustomerPhone = if (sameCustomer) existingJob!!.customerPhone else currentCustomer?.phone ?: com.example.ui.util.requireOptionalContactPhone(job.customerPhone)
 
         // Edited by attribution (Recorded when an existing entry is edited)
         val finalEditedByUid = if (existingJob != null) actorUid else ""
@@ -1905,6 +1939,7 @@ class WorkspaceRepository(
             customerId = customerId,
             customerName = finalCustomerName,
             customerPhone = finalCustomerPhone,
+            customerLocation = if (sameCustomer) existingJob!!.customerLocation else currentCustomer?.location ?: job.customerLocation,
             operatorName = finalOperator,
             addedByPartner = finalAddedBy,
             createdByUid = finalCreatedByUid,
@@ -2432,7 +2467,7 @@ class WorkspaceRepository(
         return result
     }
 
-    suspend fun updateCustomer(customer: CustomerEntity) {
+    suspend fun updateCustomer(customer: CustomerEntity, editBase: CustomerEntity? = null) {
         val operationActorUid = getEffectiveActorUid().orEmpty()
         val operationTime = System.currentTimeMillis()
         database.withTransaction {
@@ -2441,11 +2476,15 @@ class WorkspaceRepository(
             if (!com.example.data.auth.AuthorizationManager.canManageCustomers(isOwnerOfWorkspace(wsId), role)) throw SecurityException("Customer edits are forbidden")
             val original = customerDao.getCustomerById(_activeWorkspaceId.value.orEmpty(), customer.id) ?: throw SecurityException("Customer no longer exists")
             if (original.workspaceId != wsId || customer.workspaceId != wsId) throw SecurityException("Customer workspace mismatch")
-            val updated = customer.copy(createdByUid = original.createdByUid, createdAt = original.createdAt,
-                phone = com.example.ui.util.requireOptionalContactPhone(customer.phone), isSynced = false,
-                totalBilled = original.totalBilled, totalPaid = original.totalPaid, balanceDue = original.balanceDue)
+            val desired = customer.copy(name = if (customer.name == (editBase ?: original).name) customer.name else customer.name.trim(),
+                phone = com.example.ui.util.requireOptionalContactPhone(customer.phone))
+            val patch = com.example.data.sync.CustomerProfileEdit.capture(editBase ?: original, desired)
+            if (org.json.JSONObject(patch).length() == 0) return@withTransaction
+            val updated = com.example.data.sync.CustomerProfileEdit.apply(original, patch).copy(
+                isSynced = false, updatedAt = operationTime)
             customerDao.updateCustomer(updated)
-            enqueue("CUSTOMER", updated.id, updated.toFirestoreMap(), expectedActorUid = operationActorUid, actionTime = operationTime)
+            enqueue("CUSTOMER", updated.id, updated.toFirestoreMap() +
+                (com.example.data.sync.CustomerProfileEdit.PAYLOAD_KEY to patch), expectedActorUid = operationActorUid, actionTime = operationTime)
         }
         if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
     }
@@ -2507,8 +2546,12 @@ class WorkspaceRepository(
                 updatedAt = operationTime,
                 isSynced = false
             )
-            customerDao.updateCustomer(updated)
-            enqueue("CUSTOMER", updated.id, updated.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+            val patch = com.example.data.sync.CustomerProfileEdit.capture(existing, updated)
+            if (org.json.JSONObject(patch).length() > 0) {
+                customerDao.updateCustomer(updated)
+                enqueue("CUSTOMER", updated.id, updated.toFirestoreMap() +
+                    (com.example.data.sync.CustomerProfileEdit.PAYLOAD_KEY to patch), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+            }
             custId = existing.id
             customerEntity = updated
         } else {
@@ -2646,7 +2689,7 @@ class WorkspaceRepository(
                 val allocation = allocations.getJSONObject(i)
                 val job = jobEntryDao.getJobById(_activeWorkspaceId.value.orEmpty(), allocation.getLong("jobId")) ?: throw IllegalStateException("Collection source job is missing")
                 val amount = allocation.getDouble("amount")
-                require(job.workspaceId == wsId && job.customerId == original.customerId && amount > 0 && job.amountReceived >= amount) { "Invalid collection allocation" }
+                require(com.example.data.sync.JobCustomerReassignment.singleSource(original, job) && amount > 0 && job.amountReceived >= amount) { "Invalid or shared collection allocation; separate review required" }
                 val updated = job.copy(amountReceived = job.amountReceived - amount, pendingAmount = job.pendingAmount + amount, isSynced = false)
                 jobEntryDao.insertJob(updated); updates.add(updated); total += amount
             }
@@ -2660,6 +2703,7 @@ class WorkspaceRepository(
                 "baseAmountReceived" to (updated.amountReceived + original.amount),
                 "basePendingAmount" to (updated.pendingAmount - original.amount)), actionTime = operationTime, expectedActorUid = operationActorUid)
             recalculateCustomerStats(original.customerId)
+            if (updated.customerId != original.customerId) recalculateCustomerStats(updated.customerId, wsId)
         }
 
 

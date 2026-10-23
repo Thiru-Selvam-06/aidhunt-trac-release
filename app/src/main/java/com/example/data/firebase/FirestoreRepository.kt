@@ -700,6 +700,17 @@ class FirestoreRepository(
         queuedOperation: com.example.data.entity.PendingOperationEntity? = null
     ) {
         val firestore = db ?: throw IllegalStateException("Firestore is unavailable")
+        val originalCustomer = queuedOperation?.takeIf { it.entityType == "JOB" }?.let {
+            org.json.JSONObject(it.payloadJson).optString("expectedBaseJson").takeIf { base -> base.isNotBlank() && base != "null" }
+                ?.let { base -> org.json.JSONObject(base).optLong("customerId") }
+        }
+        val reassigning = originalCustomer != null && originalCustomer != (data["customerId"] as? Number)?.toLong()
+        // The job's version is checked again inside the transaction. A new collection changes
+        // its financial base; known receipt documents are also read transactionally below.
+        val receiptRefs = if (reassigning) firestore.collection("workspaces").document(queuedOperation!!.workspaceId)
+            .collection("collections").get(com.google.firebase.firestore.Source.SERVER).await().documents.filter {
+                com.example.data.sync.EntryDeletionPolicy.references(paymentFromFirestoreMap(it.data.orEmpty()), queuedOperation.entityId)
+            }.map { it.reference } else emptyList()
         firestore.runTransaction { transaction ->
             val existing = transaction.get(ref)
             val operationId = data["operationId"] as? String
@@ -712,6 +723,10 @@ class FirestoreRepository(
                     org.json.JSONObject(queuedOperation.payloadJson).optString("expectedBaseJson").takeIf { it.isNotBlank() },
                     existing.data, queuedOperation.entityId, queuedOperation.workspaceId)
             }
+            if (reassigning) {
+                val receipts = receiptRefs.mapNotNull { receipt -> transaction.get(receipt).data?.let { paymentFromFirestoreMap(it) } }
+                com.example.data.sync.JobCustomerReassignment.requireSafe(jobEntryFromFirestoreMap(existing.data.orEmpty()), receipts, emptyList())
+            }
             val payload = data.toMutableMap()
             payload.remove("operationProtocolVersion")
             payload.remove("authorizationCreatedAt")
@@ -720,9 +735,23 @@ class FirestoreRepository(
                 payload["authorizationCreatedAt"] = com.google.firebase.Timestamp(java.util.Date((data["createdAt"] as Number).toLong()))
                 payload["serverReceivedAt"] = com.google.firebase.firestore.FieldValue.serverTimestamp()
             } else {
+                // Room/UI may supply a fallback label for legacy records; it is not new provenance.
+                payload.remove("createdByRole")
+                existing.data?.get("createdByRole")?.let { payload["createdByRole"] = it }
                 existing.getTimestamp("authorizationCreatedAt")?.let { payload["authorizationCreatedAt"] = it }
                 existing.getString("authorizationTimeStatus")?.let { payload["authorizationTimeStatus"] = it }
                 existing.getTimestamp("serverReceivedAt")?.let { payload["serverReceivedAt"] = it }
+                if (queuedOperation?.entityType == "JOB") {
+                    val history = (existing.data?.get("customerReassignmentHistory") as? List<*>)?.toList().orEmpty()
+                    if (reassigning) {
+                        require(history.size < 1000) { "Customer reassignment audit needs separate archival review" }
+                        payload["customerReassignmentHistory"] = history + mapOf(
+                            "fromCustomerId" to originalCustomer, "toCustomerId" to data["customerId"],
+                            "actorUid" to queuedOperation.actorUid, "operationId" to queuedOperation.operationId,
+                            "actionTime" to queuedOperation.actionTime, "totalAmount" to existing.getDouble("totalAmount"),
+                            "amountReceived" to existing.getDouble("amountReceived"), "pendingAmount" to existing.getDouble("pendingAmount"))
+                    } else if (existing.contains("customerReassignmentHistory")) payload["customerReassignmentHistory"] = history
+                }
             }
             if (merge) transaction.set(ref, payload, SetOptions.merge()) else transaction.set(ref, payload)
             null
@@ -829,6 +858,7 @@ class FirestoreRepository(
         json.keys().forEach { key -> payload[key] = json.opt(key).takeUnless { it == org.json.JSONObject.NULL } }
         payload.remove("operationProtocolVersion")
         payload.remove("expectedBaseJson")
+        payload.remove(com.example.data.sync.CustomerProfileEdit.PAYLOAD_KEY)
         payload["protocolVersion"] = 2
         payload["operationType"] = op.mutationType
         payload["dependencies"] = (0 until dependencies.length()).map { index -> val item = dependencies.getJSONObject(index); mapOf("entityType" to item.getString("entityType"), "entityId" to item.getString("entityId")) }
@@ -904,6 +934,25 @@ class FirestoreRepository(
             }
             else require(existing.getString("operationId") == op.operationId) { "Delete belongs to another pending operation" }
             ref.delete().await()
+        } else if (op.entityType == "CUSTOMER") {
+            firestore.runTransaction { transaction ->
+                val existing = transaction.get(ref)
+                if (existing.getString("operationId") == op.operationId) return@runTransaction null
+                val patch = json.optString(com.example.data.sync.CustomerProfileEdit.PAYLOAD_KEY)
+                if (patch.isNotBlank()) {
+                    require(existing.exists() && existing.getString("workspaceId") == op.workspaceId && existing.getBoolean("isDeleted") != true) {
+                        "Customer no longer exists; original profile edit retained for review"
+                    }
+                    val changes = com.example.data.sync.CustomerProfileEdit.changes(patch, existing.data.orEmpty())
+                    // Updating only editable fields preserves immutable provenance, unrelated edits and totals.
+                    transaction.update(ref, changes + payload.filterKeys { it in setOf(
+                        "protocolVersion", "operationType", "dependencies", "operationId", "actorUid", "actionTime", "isDeleted", "updatedAt") })
+                } else {
+                    require(!existing.exists()) { "Customer edit base is unavailable; original action retained for review" }
+                    transaction.set(ref, payload)
+                }
+                null
+            }.await()
         } else if (op.entityType in setOf("JOB", "EXPENSE", "WITHDRAWAL")) {
             saveTimedDocument(ref, payload, queuedOperation = op)
         } else ref.set(payload).await()

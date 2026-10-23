@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "runnable": [
     "com.example.DeviceEmulatorIntegrationTest",
+    "com.example.CustomerEditingDeviceTest",
     "com.example.DatabaseWorkspaceDeviceTest",
     "com.example.CollectionFormDeviceTest",
     "com.example.ExampleInstrumentedTest",

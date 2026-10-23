@@ -525,9 +525,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // 5. Jobs scoped to active workspace
     @OptIn(ExperimentalCoroutinesApi::class)
-    val jobs: StateFlow<List<JobEntryEntity>> = combine(activeWorkspaceId, currentUserRole, authState) { wsId, role, state -> Triple(wsId, role, state) }.flatMapLatest { (target, role, state) ->
+    private val storedJobs: StateFlow<List<JobEntryEntity>> = combine(activeWorkspaceId, currentUserRole, authState) { wsId, role, state -> Triple(wsId, role, state) }.flatMapLatest { (target, role, state) ->
         if (target.isNullOrBlank() || state !is AuthState.Authenticated || !(role in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER, com.example.data.auth.RoleUtils.ROLE_OPERATOR))) MutableStateFlow(emptyList())
         else database.jobEntryDao().getJobsForWorkspace(target).map { records -> if (role == com.example.data.auth.RoleUtils.ROLE_OPERATOR) records.filter { !it.isHistorical && it.entryForUid.isNotBlank() } else records }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val jobs: StateFlow<List<JobEntryEntity>> = combine(storedJobs, customers) { rows, profiles ->
+        com.example.ui.util.CustomerIdentity.jobs(rows, profiles)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // 6. Expenses scoped to active workspace
@@ -862,6 +866,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         job: JobEntryEntity,
         linkedExpense: ExpenseEntity? = null,
         linkedExpenses: List<ExpenseEntity> = emptyList(),
+        createNewCustomer: Boolean = false,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
@@ -892,7 +897,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isSavingJob.value = true
         viewModelScope.launch {
             try {
-                workspaceRepository.saveJobEntry(job, linkedExpense, linkedExpenses)
+                workspaceRepository.saveJobEntry(job, linkedExpense, linkedExpenses, createNewCustomer)
                 clearNewEntryDraft()
                 _syncMessage.value = "Saved on this device; cloud sync pending"
                 _isSavingJob.value = false
@@ -1101,10 +1106,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateCustomer(customer: CustomerEntity, onSuccess: () -> Unit = {}) {
+    fun updateCustomer(customer: CustomerEntity, editBase: CustomerEntity? = null, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
             try {
-                workspaceRepository.updateCustomer(customer)
+                workspaceRepository.updateCustomer(customer, editBase)
                 onSuccess()
             } catch (e: Exception) {
                 val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code?.name ?: "SYNC_FAILED"
@@ -1114,7 +1119,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    val allPayments: StateFlow<List<PaymentEntity>> = cashPayments
+    val allPayments: StateFlow<List<PaymentEntity>> = combine(cashPayments, customers, jobs) { rows, profiles, sources ->
+        com.example.ui.util.CustomerIdentity.payments(rows, profiles, sources)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val checklistItems: StateFlow<List<ChecklistItemEntity>> = authorizedWorkspaceId.flatMapLatest { wsId ->
@@ -1608,7 +1615,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         pushUnsyncedToCloud()
     }
 
-    fun getJobsForCustomer(customerId: Long) = database.jobEntryDao().getJobsForCustomer(activeWorkspaceId.value.orEmpty(), customerId)
+    fun getJobsForCustomer(customerId: Long) = jobs.map { rows -> rows.filter { it.customerId == customerId } }
 
     // --- Firebase Authentication ---
 

@@ -51,7 +51,7 @@ object EntryDeletionPolicy {
             }
             val allocations = JSONArray(payment.allocationsJson)
             require(allocations.length() == 1 && allocations.getJSONObject(0).getString("jobId").toLongOrNull() == entry.id &&
-                payment.customerId == entry.customerId && payment.amount > 0 &&
+                payment.jobEntryId == entry.id && payment.customerId > 0 && payment.amount > 0 &&
                 kotlin.math.abs(allocations.getJSONObject(0).getDouble("amount") - payment.amount) < 0.01) {
                 "Shared or inconsistent Collection allocations need separate reconciliation"
             }

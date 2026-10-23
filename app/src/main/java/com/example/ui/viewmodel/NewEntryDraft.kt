@@ -44,6 +44,7 @@ data class NewEntryDraft(
     val customerPhoneInput: String = "",
     val customerLocationInput: String = "",
     val matchedCustomerId: Long = 0L,
+    val createNewCustomer: Boolean = false,
     val isDirectDurationMode: Boolean = true,
     val manualHoursInput: String = "",
     val manualMinutesInput: String = "",
@@ -73,8 +74,29 @@ data class NewEntryDraft(
     val isCustomerPhoneManuallyEdited: Boolean = false,
     val originalCustomerName: String? = null,
     val isCustomerNameManuallyEdited: Boolean = false,
-    val originalCustomerId: Long = 0L
+    val originalCustomerId: Long = 0L,
+    val originalJob: com.example.data.entity.JobEntryEntity? = null
 ) {
+    /** Reopening a minute/whole-rupee form must not round untouched historical values. */
+    fun retainUneditedWork(submitted: com.example.data.entity.JobEntryEntity): com.example.data.entity.JobEntryEntity {
+        val original = originalJob ?: return submitted
+        val initial = fromJobEntry(original)
+        val sameTime = isDirectDurationMode == initial.isDirectDurationMode && manualHoursInput == initial.manualHoursInput &&
+            manualMinutesInput == initial.manualMinutesInput && startHour == initial.startHour && startMinute == initial.startMinute &&
+            endHour == initial.endHour && endMinute == initial.endMinute && historicalDateMillis == initial.historicalDateMillis
+        val sameRate = hourlyRateInput == initial.hourlyRateInput
+        val sameBill = sameTime && sameRate && customWorkAmountInput == initial.customWorkAmountInput &&
+            isWorkAmountManuallyEdited == initial.isWorkAmountManuallyEdited && extraChargesInput == initial.extraChargesInput
+        val sameReceived = amountReceivedInput == initial.amountReceivedInput
+        val total = if (sameBill) original.totalAmount else submitted.totalAmount
+        val paid = if (sameReceived) original.amountReceived else submitted.amountReceived
+        return submitted.copy(startTimeMillis = if (sameTime) original.startTimeMillis else submitted.startTimeMillis,
+            endTimeMillis = if (sameTime) original.endTimeMillis else submitted.endTimeMillis,
+            durationMinutes = if (sameTime) original.durationMinutes else submitted.durationMinutes,
+            hourlyRate = if (sameRate) original.hourlyRate else submitted.hourlyRate,
+            totalAmount = total, amountReceived = paid, pendingAmount = if (sameBill && sameReceived) original.pendingAmount else total - paid)
+    }
+
     val formattedHistoricalDate: String
         get() = historicalDateMillis?.let {
             java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault()).format(java.util.Date(it))
@@ -194,6 +216,7 @@ data class NewEntryDraft(
                 originalCustomerName = job.customerName,
                 isCustomerNameManuallyEdited = false,
                 originalCustomerId = job.customerId,
+                originalJob = job,
                 customerLocationInput = job.customerLocation,
                 matchedCustomerId = job.customerId,
                 originalCreatedAt = job.createdAt,

@@ -82,6 +82,20 @@ service cloud.firestore {
         data.amountReceived >= 0 && data.pendingAmount is number && data.pendingAmount >= 0 &&
         data.totalAmount == data.amountReceived + data.pendingAmount;
     }
+    // Append-only evidence for future customer moves; pre-existing entries need no migration.
+    function validCustomerReassignment(before, after) {
+      let previous = before == null ? [] : before.get('customerReassignmentHistory', []);
+      let next = after.get('customerReassignmentHistory', []);
+      return previous is list && next is list &&
+        (before == null ? next.size() == 0 :
+          ((!('customerReassignmentHistory' in before) && !('customerReassignmentHistory' in after)) ||
+          (before.customerId == after.customerId ? next == previous :
+            (previous.size() < 1000 && next == previous.concat([{
+              'fromCustomerId': before.customerId, 'toCustomerId': after.customerId,
+              'actorUid': request.auth.uid, 'operationId': after.operationId, 'actionTime': after.actionTime,
+              'totalAmount': before.totalAmount, 'amountReceived': before.amountReceived, 'pendingAmount': before.pendingAmount
+            }])))));
+    }
     function reference(ws, collection, id) {
       // Reuse one lookup: a job can validate both Customer and Tractor plus a different beneficiary.
       let target = get(/databases/$(database)/documents/workspaces/$(ws)/$(collection)/$(string(id))).data;
@@ -145,7 +159,10 @@ service cloud.firestore {
       let before = get(path).data;
       let after = getAfter(path).data;
       let delta = reversal ? -request.resource.data.amount : request.resource.data.amount;
-      return unlockedEntry(ws, before) && before.workspaceId == ws && before.customerId == request.resource.data.customerId &&
+      // A receipt's customer is a historical snapshot; its immutable single-job link
+      // survives an authorized job reassignment. New collections still use the current customer.
+      return unlockedEntry(ws, before) && !customerLocked(ws, request.resource.data.customerId) && before.workspaceId == ws &&
+        (before.customerId == request.resource.data.customerId || (reversal && singleSourceCollectionData(request.resource.data))) &&
         before.get('isDeleted', false) == false && !memberPurging(ws, before.createdByUid) && !memberPurging(ws, before.entryForUid) &&
         after.collectionId == id && after.operationId == request.resource.data.operationId &&
         after.amountReceived == before.amountReceived + delta && after.pendingAmount == before.pendingAmount - delta &&
@@ -200,7 +217,8 @@ service cloud.firestore {
     }
     function validOwnedDeletionReceipt(ws, source, receipt) {
       return receipt.workspaceId == ws && receipt.collectedByUid == request.auth.uid && receipt.status == 'ACTIVE' &&
-        receipt.jobEntryId == source.id && receipt.customerId == source.customerId && receipt.amount is number && receipt.amount > 0;
+        receipt.jobEntryId == source.id && (receipt.customerId == source.customerId || singleSourceCollectionData(receipt)) &&
+        receipt.amount is number && receipt.amount > 0;
     }
     function ownedReceiptAmount(ws, source, ids, index) {
       return ids.size() <= index ? 0 : checkedReceiptAmount(ws, source,
@@ -330,14 +348,14 @@ service cloud.firestore {
         allow get: if finance(ws) || (operator(ws) && (!exists(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)) || resource.data.isHistorical == false));
         allow list: if finance(ws) || (operator(ws) && resource.data.isHistorical == false);
         allow create: if !customerLocked(ws, request.resource.data.customerId) && !exists(entryProofPath(ws, id)) && envelope(ws) && member(ws) && request.resource.data.createdByUid == request.auth.uid &&
-          timedCreationTime() && reference(ws, 'customers', request.resource.data.customerId) &&
+          timedCreationTime() && validCustomerReassignment(null, request.resource.data) && reference(ws, 'customers', request.resource.data.customerId) &&
           (request.resource.data.get('tractorId', 0) == 0 || reference(ws, 'tractors', request.resource.data.tractorId)) &&
           request.resource.data.isDeleted == false && request.resource.data.isHistorical is bool &&
           active(ws, request.resource.data.entryForUid) && request.resource.data.financialAttributionUid == request.resource.data.entryForUid &&
           validEntryAmounts(request.resource.data) && request.resource.data.amountReceived == 0 &&
           (owner(ws) || (!request.resource.data.isHistorical &&
             (partner(ws) || (operator(ws) && request.resource.data.entryForUid == request.auth.uid))));
-        allow update: if unlockedEntry(ws, resource.data) && !customerLocked(ws, request.resource.data.customerId) && envelope(ws) && !request.resource.data.isDeleted && notDeleted() && original() && same(['isHistorical', 'entryForUid', 'financialAttributionUid']) &&
+        allow update: if unlockedEntry(ws, resource.data) && !customerLocked(ws, request.resource.data.customerId) && envelope(ws) && !request.resource.data.isDeleted && notDeleted() && original() && validCustomerReassignment(resource.data, request.resource.data) && same(['isHistorical', 'entryForUid', 'financialAttributionUid']) &&
           (request.resource.data.customerId == resource.data.customerId || reference(ws, 'customers', request.resource.data.customerId)) &&
           (request.resource.data.amountReceived != resource.data.amountReceived
             ? (request.resource.data.get('purgeUid', '') != ''

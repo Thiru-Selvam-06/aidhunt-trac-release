@@ -378,6 +378,104 @@ class DeviceEmulatorIntegrationTest {
   }
  }
 
+ @Test(timeout=180000) fun pOfflineProfileEditSurvivesRoomReloadMergesIndependentPartnerEditAndConfirms()=runBlocking {
+  login("owner");val actor="device-owner";val db=AppDatabase.getInstance(context)
+  val authRepo=com.example.data.repository.AuthRepository.getInstance(context);authRepo.startListening()
+  val profile=kotlinx.coroutines.withTimeout(15000){authRepo.currentUserProfile.first{it?.uid==actor}}!!
+  val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db)
+  assertTrue(workspace.initializeForUser(profile).isSuccess)
+  val now=System.currentTimeMillis()
+  val id=workspace.saveJobEntry(com.example.data.entity.JobEntryEntity(workspaceId=ws,customerName="saga jothi $now",
+   operatorName="Partner",tractorId=3,tractorLabel="Disposable Tractor",workType="Rotavator",startTimeMillis=now-60000,
+   endTimeMillis=now,durationMinutes=1,totalAmount=1000.0,amountReceived=200.0,pendingAmount=800.0,
+   addedByPartner="Owner",createdAt=now,entryForUid="device-partner"))
+  workspace.pushUnsyncedToCloud(isOnline=true)
+  kotlinx.coroutines.withTimeout(60000){db.jobEntryDao().getJobsForWorkspace(ws).first{rows->rows.any{it.id==id && it.isSynced}}}
+  val originalJob=db.jobEntryDao().getJobById(ws,id)!!
+  val originalCustomer=db.customerDao().getCustomerById(ws,originalJob.customerId)!!
+  val originalReceipt=cloud.collection("workspaces/$ws/collections").whereEqualTo("jobEntryId",id).get(Source.SERVER).await().documents.single()
+  val originalCloud=cloud.document("workspaces/$ws/customers/${originalCustomer.id}").get(Source.SERVER).await().data!!
+  val app=com.google.firebase.FirebaseApp.initializeApp(context,com.google.firebase.FirebaseApp.getInstance().options,"customer-replica-"+now)!!
+  replicaApps.add(app)
+  val otherAuth=FirebaseAuth.getInstance(app).also{it.useEmulator("127.0.0.1",19099)}
+  val otherCloud=FirebaseFirestore.getInstance(app).also{it.useEmulator("127.0.0.1",18180)}
+  val desired=originalCustomer.copy(name="Saga Jothi $now")
+  val operation:PendingOperationEntity
+  try {
+   otherAuth.signInWithEmailAndPassword("partner@device.invalid","EmulatorOnly123!").await()
+   cloud.disableNetwork().await()
+   try {
+    workspace.updateCustomer(desired,originalCustomer)
+    operation=db.pendingOperationDao().observe(ws).first().last{it.entityType=="CUSTOMER" && it.entityId==originalCustomer.id}
+    assertEquals("PENDING",operation.state);assertTrue(JSONObject(operation.payloadJson).has(CustomerProfileEdit.PAYLOAD_KEY))
+    assertEquals(desired.name,db.customerDao().getCustomerById(ws,originalCustomer.id)!!.name)
+    assertEquals(originalJob,db.jobEntryDao().getJobById(ws,id))
+    val reopened=androidx.room.Room.databaseBuilder(context,AppDatabase::class.java,db.openHelper.databaseName!!).build()
+    try {assertEquals(operation,reopened.pendingOperationDao().getOperation(operation.operationId));
+     assertEquals(desired.name,reopened.customerDao().getCustomerById(ws,originalCustomer.id)!!.name)} finally {reopened.close()}
+    otherCloud.document("workspaces/$ws/customers/${originalCustomer.id}").update(mapOf(
+     "phone" to "9876543210","actorUid" to "device-partner","operationId" to "independent-phone-$now",
+     "actionTime" to System.currentTimeMillis(),"protocolVersion" to 2,"operationType" to "UPSERT","dependencies" to emptyList<Any>(),"isDeleted" to false)).await()
+   } finally {cloud.enableNetwork().await()}
+   workspace.pushUnsyncedToCloud(isOnline=true)
+   kotlinx.coroutines.withTimeout(60000){db.pendingOperationDao().observe(ws).first{rows->rows.any{it.operationId==operation.operationId && it.state=="ACKNOWLEDGED"}}}
+   val confirmed=cloud.document("workspaces/$ws/customers/${originalCustomer.id}").get(Source.SERVER).await()
+   assertEquals(desired.name,confirmed.getString("name"));assertEquals("9876543210",confirmed.getString("phone"))
+   for(key in listOf("createdAt","createdByUid","createdByRole","authorizationCreatedAt","serverReceivedAt","authorizationTimeStatus"))
+    assertEquals(key,originalCloud[key],confirmed.data!![key])
+   assertEquals(confirmed.data,otherCloud.document(confirmed.reference.path).get(Source.SERVER).await().data)
+   val room=db.customerDao().getCustomerById(ws,originalCustomer.id)!!
+   assertTrue(room.isSynced);assertEquals(desired.name,room.name);assertEquals("9876543210",room.phone)
+   assertEquals(800.0,com.example.ui.util.FinancialCalculationEngine.calculateCustomerFinancials(room,listOf(originalJob)).balanceDue,0.0)
+   assertEquals(originalReceipt.data,cloud.document(originalReceipt.reference.path).get(Source.SERVER).await().data)
+   assertEquals(originalJob.customerName,cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().getString("customerName"))
+   FirestoreRepository(context).applyPendingOperation(operation)
+   assertEquals(confirmed.data,cloud.document(confirmed.reference.path).get(Source.SERVER).await().data)
+   assertEquals(operation.payloadJson,db.pendingOperationDao().getOperation(operation.operationId)!!.payloadJson)
+  } finally {cloud.enableNetwork().await();otherCloud.terminate().await()}
+ }
+
+ @Test(timeout=180000) fun qOfflinePaidReassignmentKeepsReceiptAndAllowsAuthorizedReversal()=runBlocking {
+  login("owner");val db=AppDatabase.getInstance(context);val authRepo=com.example.data.repository.AuthRepository.getInstance(context);authRepo.startListening()
+  val profile=kotlinx.coroutines.withTimeout(15000){authRepo.currentUserProfile.first{it?.uid=="device-owner"}}!!
+  val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db);assertTrue(workspace.initializeForUser(profile).isSuccess)
+  val now=System.currentTimeMillis()
+  val id=workspace.saveJobEntry(com.example.data.entity.JobEntryEntity(workspaceId=ws,customerName="Source move $now",operatorName="Owner",
+   tractorId=3,tractorLabel="Disposable Tractor",workType="Rotavator",startTimeMillis=now-60000,endTimeMillis=now,durationMinutes=1,
+   totalAmount=1000.0,amountReceived=200.0,pendingAmount=800.0,addedByPartner="Owner",createdAt=now,entryForUid="device-owner"))
+  workspace.pushUnsyncedToCloud(isOnline=true)
+  kotlinx.coroutines.withTimeout(60000){db.jobEntryDao().getJobsForWorkspace(ws).first{rows->rows.any{it.id==id && it.isSynced}}}
+  val original=db.jobEntryDao().getJobById(ws,id)!!
+  val receipt=cloud.collection("workspaces/$ws/collections").whereEqualTo("jobEntryId",id).get(Source.SERVER).await().documents.single()
+  val targetId=com.example.data.util.IdGenerator.generateId();val op:PendingOperationEntity
+  cloud.disableNetwork().await()
+  try {
+   workspace.saveJobEntry(original.copy(customerId=targetId,customerName="Target move $now"),createNewCustomer=true)
+   op=db.pendingOperationDao().observe(ws).first().last{it.entityType=="JOB" && it.entityId==id}
+   assertEquals("PENDING",op.state)
+   assertEquals(original.copy(customerId=targetId,customerName="Target move $now").totalAmount,db.jobEntryDao().getJobById(ws,id)!!.totalAmount,0.0)
+   assertEquals(800.0,db.customerDao().getCustomerById(ws,targetId)!!.balanceDue,0.0)
+   assertEquals(0.0,db.customerDao().getCustomerById(ws,original.customerId)!!.balanceDue,0.0)
+  } finally {cloud.enableNetwork().await()}
+  workspace.pushUnsyncedToCloud(isOnline=true)
+  kotlinx.coroutines.withTimeout(60000){db.pendingOperationDao().observe(ws).first{rows->rows.any{it.operationId==op.operationId && it.state=="ACKNOWLEDGED"}}}
+  val confirmed=cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await()
+  assertEquals(targetId,confirmed.getLong("customerId"));assertEquals(original.createdAt,confirmed.getLong("createdAt"))
+  assertEquals(original.createdByUid,confirmed.getString("createdByUid"));assertEquals(original.entryForUid,confirmed.getString("entryForUid"))
+  assertEquals(receipt.data,cloud.document(receipt.reference.path).get(Source.SERVER).await().data)
+  val audit=(confirmed.get("customerReassignmentHistory") as List<*>).single() as Map<*,*>
+  assertEquals(original.customerId,(audit["fromCustomerId"] as Number).toLong());assertEquals(targetId,(audit["toCustomerId"] as Number).toLong())
+  assertEquals(op.operationId,audit["operationId"])
+  FirestoreRepository(context).applyPendingOperation(op)
+  assertEquals(confirmed.data,cloud.document(confirmed.reference.path).get(Source.SERVER).await().data)
+  workspace.deletePayment(receipt.id.toLong());workspace.pushUnsyncedToCloud(isOnline=true)
+  kotlinx.coroutines.withTimeout(60000){db.paymentDao().getPaymentsForWorkspace(ws).first{rows->rows.any{it.id==receipt.id.toLong() && it.status=="REVERSED" && it.isSynced}}}
+  val reversed=cloud.document(receipt.reference.path).get(Source.SERVER).await()
+  assertEquals("REVERSED",reversed.getString("status"));assertEquals(receipt.getLong("customerId"),reversed.getLong("customerId"))
+  assertEquals(receipt.getDouble("amount"),reversed.getDouble("amount"))
+  assertEquals(1000.0,cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().getDouble("pendingAmount")!!,0.0)
+ }
+
  @Test(timeout=120000) fun oZeroInitialReceiptCreatesNoPaymentRowOrCommand()=runBlocking {
   login("partner");val actor="device-partner";val db=AppDatabase.getInstance(context)
   val authRepo=com.example.data.repository.AuthRepository.getInstance(context);authRepo.startListening()

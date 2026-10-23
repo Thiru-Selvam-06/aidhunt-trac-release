@@ -126,7 +126,8 @@ fun ReportScreen(
     onUpdatePartnerPercentages: (Map<String, Int>) -> Unit = {},
     profitShareAllocations: Map<String, Int> = emptyMap(),
     profitShareAllocationDetails: Map<String, com.example.data.firebase.ProfitShareAllocation> = emptyMap(),
-    onUpdateProfitShareAllocations: (Map<String, Int>, Map<String, com.example.data.firebase.ProfitShareAllocation>) -> Unit = { _, _ -> }
+    onUpdateProfitShareAllocations: (Map<String, Int>, Map<String, com.example.data.firebase.ProfitShareAllocation>) -> Unit = { _, _ -> },
+    onEditCustomerProfile: ((CustomerEntity, CustomerEntity, () -> Unit) -> Unit)? = null
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     Box(
@@ -242,6 +243,7 @@ fun ReportScreen(
                     customers = customers,
                     jobs = jobs,
                     onUpdateCustomer = onUpdateCustomer,
+                    onEditCustomerProfile = onEditCustomerProfile,
                     onRecordPayment = onRecordPayment,
                     onRecordPaymentWithCollector = onRecordPaymentWithCollector,
                     onEditJob = onEditJob,
