@@ -748,8 +748,11 @@ class FirestoreRepository(
                         payload["customerReassignmentHistory"] = history + mapOf(
                             "fromCustomerId" to originalCustomer, "toCustomerId" to data["customerId"],
                             "actorUid" to queuedOperation.actorUid, "operationId" to queuedOperation.operationId,
-                            "actionTime" to queuedOperation.actionTime, "totalAmount" to existing.getDouble("totalAmount"),
-                            "amountReceived" to existing.getDouble("amountReceived"), "pendingAmount" to existing.getDouble("pendingAmount"))
+                            // Rules compare the complete audit map, including Firestore numeric types.
+                            // JSON may have originally stored whole amounts as integers; do not convert
+                            // those immutable server values to Double while copying the audit.
+                            "actionTime" to queuedOperation.actionTime, "totalAmount" to existing.data?.get("totalAmount"),
+                            "amountReceived" to existing.data?.get("amountReceived"), "pendingAmount" to existing.data?.get("pendingAmount"))
                     } else if (existing.contains("customerReassignmentHistory")) payload["customerReassignmentHistory"] = history
                 }
             }
@@ -824,6 +827,7 @@ class FirestoreRepository(
     suspend fun getOperationRecordFromServer(op: com.example.data.entity.PendingOperationEntity): Map<String, Any?>? {
         val collection = when(op.entityType) {
             "JOB" -> "entries"; "EXPENSE" -> "expenses"; "WITHDRAWAL" -> "withdrawals"; "PAYMENT" -> "collections"
+            "CUSTOMER" -> "customers"
             else -> throw IllegalArgumentException("Unsupported recovery record")
         }
         val snapshot = (db ?: throw IllegalStateException("Firestore unavailable")).collection("workspaces")

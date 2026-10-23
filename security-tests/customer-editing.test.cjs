@@ -48,6 +48,53 @@ test('foreign workspace and forged actor remain denied',async()=>{
   await assertFails(updateDoc(ref(db('partner'),'customers','2'),{...command('partner','foreign'),workspaceId:'foreign',name:'Changed'}));
   await assertFails(updateDoc(ref(db('partner'),'customers','2'),{...command('owner','forged'),name:'Changed'}));
 });
+test('Android reassignment audit must copy exact server numeric types inside a read transaction',async()=>{
+  const legacy=process.env.CUSTOMER_EDIT_EXPECT_LEGACY_DENIAL==='1';
+  const database=db('owner'), job=ref(database,'entries','18'), receipt=ref(database,'collections','19');
+  await env.withSecurityRulesDisabled(async context=>{
+    const fixture=context.firestore();
+    await setDoc(ref(fixture,'entries','18'),{...command('owner','wire-create'),id:18,customerId:2,
+      createdByUid:'owner',createdByRole:'OWNER',createdAt:time,authorizationCreatedAt:Timestamp.fromMillis(time),
+      serverReceivedAt:Timestamp.fromMillis(time),authorizationTimeStatus:'CLIENT_ORIGINAL_V2',isHistorical:false,
+      entryForUid:'owner',financialAttributionUid:'owner',totalAmount:1000,amountReceived:200,pendingAmount:800});
+    await setDoc(ref(fixture,'collections','19'),{workspaceId:ws,jobEntryId:18,customerId:2,amount:200,status:'ACTIVE'});
+  });
+  // Unsigned emulator-only fixture identity; this never targets a production endpoint.
+  const encode=value=>Buffer.from(JSON.stringify(value)).toString('base64url');
+  const issued=Math.floor(Date.now()/1000);
+  const token=encode({alg:'none',typ:'JWT'})+'.'+encode({sub:'owner',user_id:'owner',aud:'demo-aidhunt-v16',
+    iss:'https://securetoken.google.com/demo-aidhunt-v16',iat:issued,exp:issued+3600})+'.';
+  const root='projects/demo-aidhunt-v16/databases/(default)/documents';
+  async function rpc(suffix,body) {
+    const response=await fetch(`http://127.0.0.1:18180/v1/${root}${suffix}`,{method:'POST',
+      headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)});
+    return {status:response.status,body:await response.json()};
+  }
+  for(const convertToDouble of [true,false]) {
+    const begun=await rpc(':beginTransaction',{});assert.equal(begun.status,200);
+    const transaction=begun.body.transaction;
+    const read=await rpc(':batchGet',{documents:[`${root}/${job.path}`,`${root}/${receipt.path}`],transaction});
+    assert.equal(read.status,200);
+    const source=read.body.find(item=>item.found?.name.endsWith('/entries/18')).found;
+    const fields=structuredClone(source.fields);
+    fields.customerId={integerValue:'3'};fields.operationId={stringValue:'wire-move'};
+    fields.actionTime={integerValue:String(time+1000)};
+    const audit={fromCustomerId:source.fields.customerId,toCustomerId:fields.customerId,actorUid:{stringValue:'owner'},
+      operationId:fields.operationId,actionTime:fields.actionTime};
+    for(const key of ['totalAmount','amountReceived','pendingAmount'])
+      audit[key]=convertToDouble?{doubleValue:Number(source.fields[key].integerValue)}:source.fields[key];
+    fields.customerReassignmentHistory={arrayValue:{values:[{mapValue:{fields:audit}}]}};
+    const committed=await rpc(':commit',{writes:[{update:{name:source.name,fields}}],transaction});
+    // The inspected baseline had no audit validator. Candidate policy rejects
+    // converted nested values while accepting an exact copy of server values.
+    const rejected=convertToDouble && !legacy;
+    assert.equal(committed.status,rejected?403:200,JSON.stringify(committed.body));
+    const confirmed=(await getDoc(job)).data();
+    assert.equal(confirmed.customerId,rejected?2:3);
+    assert.equal(confirmed.totalAmount,1000);assert.equal(confirmed.amountReceived,200);assert.equal(confirmed.pendingAmount,800);
+    assert.equal((await getDoc(receipt)).data().customerId,2);
+  }
+});
 test('single-source receipt retains history through reassignment and atomic reversal',async()=>{
   const database=db('owner'), job=ref(database,'entries','8'), receipt=ref(database,'collections','9');
   const original={...command('owner','job-create'),id:8,customerId:2,createdByUid:'owner',createdByRole:'OWNER',

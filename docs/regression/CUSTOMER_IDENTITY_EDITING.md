@@ -154,6 +154,18 @@ unverified until their retained operation and authorization context can be inspe
 
 ## Remaining limitations and release safeguards
 
+The mandatory Android-emulator run at `ccc8d21` exposed two additional defects
+before release. Profile patch writes reached the server but acknowledgement called
+an explicit server-read helper that did not yet support `CUSTOMER`. That helper now
+uses the existing workspace-scoped `customers` path. Paid reassignment copied the
+server's whole-number audit amounts using `getDouble`; Firestore Rules compare
+the complete audit map and reject the changed integer/double representation.
+A local REST transaction reproduced the rejection with converted values and
+accepted the exact original numeric types. The client now copies those raw values;
+the authorization validator and financial amounts are unchanged. The existing
+mandatory reconnect journeys retain every assertion, with an additional Rules
+wire-format regression. Final rerun results must be recorded separately.
+
 - No automatic duplicate/orphan cleanup. No current production-customer inventory
   was downloaded for this change; legacy duplicate/orphan counts are NOT VERIFIED.
 - Operators cannot read canonical financial customer profiles under existing
