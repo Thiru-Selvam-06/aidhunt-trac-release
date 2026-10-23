@@ -41,6 +41,13 @@ class DeviceEmulatorIntegrationTest {
   return try { kotlinx.coroutines.withTimeout(20000) { action() } }
   finally { android.util.Log.i("DEVICE_ROLE_TRACE", "END " + stage) }
  }
+ private suspend fun awaitCustomerCommand(db:AppDatabase, operation:PendingOperationEntity, stage:String) {
+  val rows=kotlinx.coroutines.withTimeout(60000){db.pendingOperationDao().observe(ws).first{rows->
+   rows.any{it.operationId==operation.operationId && it.state in setOf("ACKNOWLEDGED","REJECTED")}
+  }}
+  val actual=rows.single{it.operationId==operation.operationId}
+  assertEquals("$stage: ${actual.entityType} ${actual.operationId}; actor=${actual.actorUid}; ${actual.failureReason}","ACKNOWLEDGED",actual.state)
+ }
  private suspend fun deletionPayload(source:Map<String,Any?>):JSONObject {
   val entry=jobEntryFromFirestoreMap(source)
   val expenses=cloud.collection("workspaces/$ws/expenses").get(Source.SERVER).await().documents
@@ -417,8 +424,9 @@ class DeviceEmulatorIntegrationTest {
      "phone" to "9876543210","actorUid" to "device-partner","operationId" to "independent-phone-$now",
      "actionTime" to System.currentTimeMillis(),"protocolVersion" to 2,"operationType" to "UPSERT","dependencies" to emptyList<Any>(),"isDeleted" to false)).await()
    } finally {cloud.enableNetwork().await()}
-   workspace.pushUnsyncedToCloud(isOnline=true)
-   kotlinx.coroutines.withTimeout(60000){db.pendingOperationDao().observe(ws).first{rows->rows.any{it.operationId==operation.operationId && it.state=="ACKNOWLEDGED"}}}
+   val result=workspace.pushUnsyncedToCloud(isOnline=true)
+   android.util.Log.i("CUSTOMER_EDIT_TEST","profile reconnect: $result; "+db.pendingOperationDao().getOperation(operation.operationId))
+   awaitCustomerCommand(db,operation,"profile reconnect")
    val confirmed=cloud.document("workspaces/$ws/customers/${originalCustomer.id}").get(Source.SERVER).await()
    assertEquals(desired.name,confirmed.getString("name"));assertEquals("9876543210",confirmed.getString("phone"))
    for(key in listOf("createdAt","createdByUid","createdByRole","authorizationCreatedAt","serverReceivedAt","authorizationTimeStatus"))
@@ -463,8 +471,9 @@ class DeviceEmulatorIntegrationTest {
    assertEquals(originalExpenses,db.expenseDao().getExpensesForJob(ws,id))
    assertEquals(0.0,db.customerDao().getCustomerById(ws,original.customerId)!!.balanceDue,0.0)
   } finally {cloud.enableNetwork().await()}
-  workspace.pushUnsyncedToCloud(isOnline=true)
-  kotlinx.coroutines.withTimeout(60000){db.pendingOperationDao().observe(ws).first{rows->rows.any{it.operationId==op.operationId && it.state=="ACKNOWLEDGED"}}}
+  val result=workspace.pushUnsyncedToCloud(isOnline=true)
+  android.util.Log.i("CUSTOMER_EDIT_TEST","move reconnect: $result; "+db.pendingOperationDao().observe(ws).first().filter{it.entityId in setOf(id,targetId)})
+  awaitCustomerCommand(db,op,"move reconnect")
   val confirmed=cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await()
   assertEquals(targetId,confirmed.getLong("customerId"));assertEquals(original.createdAt,confirmed.getLong("createdAt"))
   assertEquals(original.createdByUid,confirmed.getString("createdByUid"));assertEquals(original.entryForUid,confirmed.getString("entryForUid"))
