@@ -439,22 +439,28 @@ class DeviceEmulatorIntegrationTest {
   login("owner");val db=AppDatabase.getInstance(context);val authRepo=com.example.data.repository.AuthRepository.getInstance(context);authRepo.startListening()
   val profile=kotlinx.coroutines.withTimeout(15000){authRepo.currentUserProfile.first{it?.uid=="device-owner"}}!!
   val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db);assertTrue(workspace.initializeForUser(profile).isSuccess)
+  for(paid in listOf(200.0,1000.0)) {
   val now=System.currentTimeMillis()
   val id=workspace.saveJobEntry(com.example.data.entity.JobEntryEntity(workspaceId=ws,customerName="Source move $now",operatorName="Owner",
    tractorId=3,tractorLabel="Disposable Tractor",workType="Rotavator",startTimeMillis=now-60000,endTimeMillis=now,durationMinutes=1,
-   totalAmount=1000.0,amountReceived=200.0,pendingAmount=800.0,addedByPartner="Owner",createdAt=now,entryForUid="device-owner"))
+   totalAmount=1000.0,amountReceived=paid,pendingAmount=1000.0-paid,addedByPartner="Owner",createdAt=now,entryForUid="device-owner"),
+   linkedExpenses=listOf(com.example.data.entity.ExpenseEntity(workspaceId=ws,expenseType="Diesel",amount=900.0,
+    tractorLabel="Disposable Tractor",addedByPartner="Owner",paidBy="Business Paid")))
   workspace.pushUnsyncedToCloud(isOnline=true)
   kotlinx.coroutines.withTimeout(60000){db.jobEntryDao().getJobsForWorkspace(ws).first{rows->rows.any{it.id==id && it.isSynced}}}
   val original=db.jobEntryDao().getJobById(ws,id)!!
+  val originalExpenses=db.expenseDao().getExpensesForJob(ws,id)
+  val expenseCloud=cloud.document("workspaces/$ws/expenses/${originalExpenses.single().id}").get(Source.SERVER).await().data!!
   val receipt=cloud.collection("workspaces/$ws/collections").whereEqualTo("jobEntryId",id).get(Source.SERVER).await().documents.single()
   val targetId=com.example.data.util.IdGenerator.generateId();val op:PendingOperationEntity
   cloud.disableNetwork().await()
   try {
-   workspace.saveJobEntry(original.copy(customerId=targetId,customerName="Target move $now"),createNewCustomer=true)
+   workspace.saveJobEntry(original.copy(customerId=targetId,customerName="Target move $now"),linkedExpenses=originalExpenses,createNewCustomer=true)
    op=db.pendingOperationDao().observe(ws).first().last{it.entityType=="JOB" && it.entityId==id}
    assertEquals("PENDING",op.state)
    assertEquals(original.copy(customerId=targetId,customerName="Target move $now").totalAmount,db.jobEntryDao().getJobById(ws,id)!!.totalAmount,0.0)
-   assertEquals(800.0,db.customerDao().getCustomerById(ws,targetId)!!.balanceDue,0.0)
+   assertEquals(1000.0-paid,db.customerDao().getCustomerById(ws,targetId)!!.balanceDue,0.0)
+   assertEquals(originalExpenses,db.expenseDao().getExpensesForJob(ws,id))
    assertEquals(0.0,db.customerDao().getCustomerById(ws,original.customerId)!!.balanceDue,0.0)
   } finally {cloud.enableNetwork().await()}
   workspace.pushUnsyncedToCloud(isOnline=true)
@@ -463,6 +469,7 @@ class DeviceEmulatorIntegrationTest {
   assertEquals(targetId,confirmed.getLong("customerId"));assertEquals(original.createdAt,confirmed.getLong("createdAt"))
   assertEquals(original.createdByUid,confirmed.getString("createdByUid"));assertEquals(original.entryForUid,confirmed.getString("entryForUid"))
   assertEquals(receipt.data,cloud.document(receipt.reference.path).get(Source.SERVER).await().data)
+  assertEquals(expenseCloud,cloud.document("workspaces/$ws/expenses/${originalExpenses.single().id}").get(Source.SERVER).await().data)
   val audit=(confirmed.get("customerReassignmentHistory") as List<*>).single() as Map<*,*>
   assertEquals(original.customerId,(audit["fromCustomerId"] as Number).toLong());assertEquals(targetId,(audit["toCustomerId"] as Number).toLong())
   assertEquals(op.operationId,audit["operationId"])
@@ -474,6 +481,7 @@ class DeviceEmulatorIntegrationTest {
   assertEquals("REVERSED",reversed.getString("status"));assertEquals(receipt.getLong("customerId"),reversed.getLong("customerId"))
   assertEquals(receipt.getDouble("amount"),reversed.getDouble("amount"))
   assertEquals(1000.0,cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().getDouble("pendingAmount")!!,0.0)
+  }
  }
 
  @Test(timeout=120000) fun oZeroInitialReceiptCreatesNoPaymentRowOrCommand()=runBlocking {

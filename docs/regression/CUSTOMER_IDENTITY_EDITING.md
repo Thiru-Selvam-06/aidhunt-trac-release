@@ -27,6 +27,9 @@ operations, merge production, or distribute a new APK.
 4. The old job selector could apply another customer's latest hourly rate while
    editing a job. Reopening the existing minute/whole-rupee form could also round
    untouched source times/rates/amounts. A relationship-only edit must retain them.
+   The form also regenerated linked-expense descriptions/dates even when only the
+   customer changed. It now retains the captured expense history, and the repository
+   does not queue an unchanged linked Expense as a new expense edit.
 5. The deployed Rules permit an authorized customer reassignment, but require an
    existing receipt's immutable customer ID to equal the job's current customer ID
    during reversal. Partner compound deletion has the same assumption. A paid move
@@ -142,7 +145,7 @@ dependency, workflow bypass or optional replacement test is added.
 | JOB-003/010/013 | Stable explicit new ID, actual repository transaction, pending operation dependencies and idempotent replay. |
 | JOB-004/005 | Unicode/case search, no automatic merge, explicit selection. |
 | JOB-006/007 | Partial/full payment policies, original receipts unchanged, actual partial receipt reversal and Rules checks. |
-| JOB-009 | Existing linked-expense pipeline retained and existing mandatory integration coverage preserved; dedicated move-with-expense evidence must also be checked. |
+| JOB-009 | Partial/fully paid actual-repository moves with a linked business expense; its exact server fields and local history must remain unchanged. |
 | JOB-011/012 | Existing role/deadline restrictions and shared-allocation blocking. |
 
 Execution results are recorded separately in the final engineering report. A test

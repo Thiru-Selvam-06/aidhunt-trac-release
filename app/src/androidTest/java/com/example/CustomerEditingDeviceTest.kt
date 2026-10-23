@@ -15,7 +15,8 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class CustomerEditingDeviceTest {
     @get:Rule val compose = createComposeRule()
-    private val original=CustomerEntity(id=7,workspaceId="stage",name="saga jothi",phone="9876543210",location="Village")
+    private val original=CustomerEntity(id=7,workspaceId="stage",name="saga jothi",phone="9876543210",location="Village",
+        totalBilled=1000.0,totalPaid=200.0,balanceDue=800.0)
     private var saved:Pair<CustomerEntity,CustomerEntity>?=null
     private var acknowledge:(()->Unit)?=null
     private fun show(tamil:Boolean=false) {

@@ -134,4 +134,13 @@ class CustomerIdentityEditingTest {
             println("CUSTOMER_IDENTITY_PERFORMANCE size=$size elapsedMs=${(System.nanoTime()-start)/1000000}")
         }
     }
+    @Test fun reassignmentFormPreservesLinkedExpenseHistoryAndOnlyAppliesExpenseIntent() {
+        val original=ExpenseEntity(id=80,workspaceId="a",expenseType="Diesel",amount=900.0,tractorLabel="Tractor",
+            addedByPartner="Original Recorder",dateTimestamp=123456,createdAt=123450,createdByUid="original-recorder",
+            paidBy="Business Paid",relatedJobId=10,description="Original evidence")
+        val draft=NewEntryDraft.fromJobEntry(job(),listOf(original))
+        val generated=original.copy(description="Expense for new customer's job",dateTimestamp=999999,createdAt=999999,addedByPartner="Other")
+        assertEquals(listOf(original),draft.retainExpenseHistory(listOf(generated)))
+        assertEquals(listOf(original.copy(amount=950.0)),draft.retainExpenseHistory(listOf(generated.copy(amount=950.0))))
+    }
 }

@@ -733,7 +733,8 @@ fun NewEntryScreen(
                     )
                 }
 
-                onSaveJob(draft.retainUneditedWork(job), allLinkedExpenses.firstOrNull(), allLinkedExpenses)
+                val retainedExpenses = draft.retainExpenseHistory(allLinkedExpenses)
+                onSaveJob(draft.retainUneditedWork(job), retainedExpenses.firstOrNull(), retainedExpenses)
             }
         )
     } else {

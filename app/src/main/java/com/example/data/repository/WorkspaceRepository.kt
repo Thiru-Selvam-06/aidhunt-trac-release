@@ -2006,6 +2006,10 @@ class WorkspaceRepository(
         val savedExpensesList = mutableListOf<ExpenseEntity>()
         for (exp in distinctExpenses) {
             val originalExpense = existingLinkedExpenses.firstOrNull { it.id == exp.id }
+            if (originalExpense != null && exp.copy(isSynced = originalExpense.isSynced) == originalExpense) {
+                savedExpensesList.add(originalExpense)
+                continue // An unchanged linked Expense is not an expense edit or a new financial command.
+            }
             if (originalExpense != null) {
                 if (originalExpense.workspaceId != wsId || !com.example.data.auth.AuthorizationManager.canEditExpense(originalExpense, isOwner, currentUid = actorUid, role = verifiedActorRole))
                     throw SecurityException("A linked expense cannot be edited by this member")

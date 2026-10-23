@@ -75,8 +75,15 @@ data class NewEntryDraft(
     val originalCustomerName: String? = null,
     val isCustomerNameManuallyEdited: Boolean = false,
     val originalCustomerId: Long = 0L,
-    val originalJob: com.example.data.entity.JobEntryEntity? = null
+    val originalJob: com.example.data.entity.JobEntryEntity? = null,
+    val originalLinkedExpenses: List<com.example.data.entity.ExpenseEntity> = emptyList()
 ) {
+    fun retainExpenseHistory(submitted: List<com.example.data.entity.ExpenseEntity>): List<com.example.data.entity.ExpenseEntity> =
+        submitted.map { edit -> originalLinkedExpenses.firstOrNull { it.id == edit.id }?.let { original ->
+            original.copy(expenseType = edit.expenseType, amount = edit.amount, paidBy = edit.paidBy,
+                paidByPartner = edit.paidByPartner, paidByUid = edit.paidByUid)
+        } ?: edit }
+
     /** Reopening a minute/whole-rupee form must not round untouched historical values. */
     fun retainUneditedWork(submitted: com.example.data.entity.JobEntryEntity): com.example.data.entity.JobEntryEntity {
         val original = originalJob ?: return submitted
@@ -217,6 +224,7 @@ data class NewEntryDraft(
                 isCustomerNameManuallyEdited = false,
                 originalCustomerId = job.customerId,
                 originalJob = job,
+                originalLinkedExpenses = linkedExpenses,
                 customerLocationInput = job.customerLocation,
                 matchedCustomerId = job.customerId,
                 originalCreatedAt = job.createdAt,
