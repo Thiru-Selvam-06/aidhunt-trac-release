@@ -266,8 +266,8 @@ WorkManager constraint, financial assertion, timeout or upload path is bypassed.
 The endpoint has two mandatory Node tests, uses existing dependencies, and exits
 with the wrapper. This verifies automatic scheduling against local Firebase, not
 real mobile internet or production endpoint reachability. That distinction remains
-part of physical-device verification. The new fixture still needs its own full CI
-run before its results can be called passing.
+part of physical-device verification. Both complete fixture runs passed at 6211caa;
+see `CUSTOMER_IDENTITY_EDITING_RESULTS.md` for exact revisions, counts and limits.
 
 Automated physical-device testing: NOT TESTED. No phone/ADB instrumentation was
 performed for this change. Android-emulator tests must be reported separately.
