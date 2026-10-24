@@ -249,6 +249,26 @@ review the trigger root (`cloudflare`), cf-compatible preview command and isolat
 preview bindings/secrets before approving any trigger change. Do not blindly add
 an empty Wrangler preview block or reuse customer resources for branch previews.
 
+The corrected clock journeys passed in PR run 40058678646 at head 048c78e:
+1,134 JUnit cases, including all 30 API 35 Android-emulator cases, with no failures,
+errors or skips. The independent push run 40058675979 still timed out in case l.
+Its retained customer/job/payment/expense were all PENDING with zero attempts;
+membership verification returned HTTP 200. Android's external Google network
+validation probes failed, leaving the real WorkManager CONNECTED constraint unmet
+even though the loopback Firebase emulators were reachable. This is a separate
+CI-network fixture failure, not another demonstrated financial authorization denial.
+
+The disposable GitHub emulator now uses a loopback-only synthetic HTTP 204 endpoint
+for its connectivity probe. `scripts/run_device_ci_network.sh` refuses non-GitHub,
+non-demo, credential-file or non-emulator environments before changing any emulator
+setting. The first instrumentation case asserts actual VALIDATED capability; no
+WorkManager constraint, financial assertion, timeout or upload path is bypassed.
+The endpoint has two mandatory Node tests, uses existing dependencies, and exits
+with the wrapper. This verifies automatic scheduling against local Firebase, not
+real mobile internet or production endpoint reachability. That distinction remains
+part of physical-device verification. The new fixture still needs its own full CI
+run before its results can be called passing.
+
 Automated physical-device testing: NOT TESTED. No phone/ADB instrumentation was
 performed for this change. Android-emulator tests must be reported separately.
 

@@ -46,6 +46,12 @@ class DeviceEmulatorIntegrationTest {
    runBlocking(kotlinx.coroutines.Dispatchers.IO){
     runCatching{kotlinx.coroutines.withTimeout(10000){
      val db=AppDatabase.getInstance(context)
+     val cm=context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+     val caps=cm.getNetworkCapabilities(cm.activeNetwork)
+     evidence.put("activeNetworkValidated",caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)==true)
+     evidence.put("workers",org.json.JSONArray().apply{androidx.work.WorkManager.getInstance(context).getWorkInfosByTagFlow("trac-ledger-sync").first().forEach{
+      put(JSONObject().put("id",it.id.toString()).put("state",it.state.name).put("attempts",it.runAttemptCount))
+     }})
      evidence.put("operations",org.json.JSONArray().apply{
       db.pendingOperationDao().observe(ws).first().filter{it.state!="ACKNOWLEDGED"}.forEach{op->
        val payload=JSONObject(op.payloadJson)
@@ -116,6 +122,9 @@ class DeviceEmulatorIntegrationTest {
  }
  @Test(timeout = 90000) fun aRoleReadsAndWorkspaceIsolation()=runBlocking {
   assertEquals("com.aistudio.aidhunttrac.cedlir.devicetest",context.packageName)
+  val cm=context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+  assertTrue("Disposable emulator network must be validated for the real WorkManager constraint",
+   cm.getNetworkCapabilities(cm.activeNetwork)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)==true)
   for(role in listOf("owner","partner","operator")) {
    tracedRoleRead(role + ":login") { login(role) }
    assertFalse(tracedRoleRead(role + ":extensions") { cloud.collection("workspaces/$ws/extensions").get(Source.SERVER).await() }.isEmpty)

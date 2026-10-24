@@ -543,6 +543,7 @@
     "cloudflare/firestore-rest.test.mjs",
     "cloudflare/google-auth.test.mjs",
     "cloudflare/operations.test.mjs",
+    "functions/device-network-fixture.test.js",
     "functions/entry-deletion-emulator.test.js",
     "functions/entry-deletion-http.test.js",
     "functions/entry-deletion-policy.test.js",

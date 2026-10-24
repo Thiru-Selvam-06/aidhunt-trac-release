@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const groups={
  backend:['cloudflare/operations.test.mjs','cloudflare/google-auth.test.mjs','cloudflare/firestore-rest.test.mjs',
- 'functions/invitation-policy.test.js','functions/entry-deletion-policy.test.js',
+ 'functions/invitation-policy.test.js','functions/entry-deletion-policy.test.js','functions/device-network-fixture.test.js',
  'functions/entry-deletion-http.test.js','functions/migration/legacy-timestamps.test.js'],
  rules:['security-tests/architecture.test.cjs','security-tests/customer-editing.test.cjs','security-tests/listener-queries.test.cjs',
  'security-tests/phone-onboarding.test.cjs','security-tests/workspace-discovery.test.cjs',
