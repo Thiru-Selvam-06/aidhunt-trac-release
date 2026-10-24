@@ -17,6 +17,8 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /** Runs production repository/protocol code on Android against demo Emulators only.
  * The test class does not itself establish whether Android is an emulator or physical hardware.
@@ -35,6 +37,48 @@ class DeviceEmulatorIntegrationTest {
  private val auth=FirebaseAuth.getInstance()
  private val cloud=FirebaseFirestore.getInstance()
  private val ws="ws_device_test"
+ // Synthetic, demo-only evidence. Never log tokens or alter/retry a failed operation.
+ @org.junit.Rule @JvmField val failureEvidence=object:org.junit.rules.TestWatcher(){
+  override fun failed(error:Throwable,description:org.junit.runner.Description){
+   if(!BuildConfig.DEVICE_TEST || com.google.firebase.FirebaseApp.getInstance().options.projectId!=FirebaseEnvironment.DEMO_PROJECT)return
+   val evidence=JSONObject().put("test",description.methodName).put("deviceTime",System.currentTimeMillis())
+    .put("authenticatedUid",auth.currentUser?.uid).put("error",error.toString())
+   runBlocking(kotlinx.coroutines.Dispatchers.IO){
+    runCatching{kotlinx.coroutines.withTimeout(10000){
+     val db=AppDatabase.getInstance(context)
+     evidence.put("operations",org.json.JSONArray().apply{
+      db.pendingOperationDao().observe(ws).first().filter{it.state!="ACKNOWLEDGED"}.forEach{op->
+       val payload=JSONObject(op.payloadJson)
+       put(JSONObject().put("id",op.operationId).put("entity",op.entityType).put("entityId",op.entityId)
+        .put("actor",op.actorUid).put("workspace",op.workspaceId).put("state",op.state).put("attempts",op.attempts)
+        .put("actionTime",op.actionTime).put("reason",op.failureReason).put("identity",JSONObject().apply{
+         for(key in listOf("createdAt","createdByUid","createdByRole","entryForUid","customerId","tractorId","jobEntryId","relatedJobId"))
+          if(payload.has(key))put(key,payload.get(key))
+        }))
+      }
+     })
+     val user=auth.currentUser?:return@withTimeout
+     val token=user.getIdToken(false).await()
+     evidence.put("tokenUid",token.claims["user_id"]?:token.claims["sub"])
+     val before=System.currentTimeMillis()
+     val request=okhttp3.Request.Builder().url("http://127.0.0.1:18180/v1/projects/${FirebaseEnvironment.DEMO_PROJECT}/databases/(default)/documents:batchGet")
+      .header("Authorization","Bearer ${token.token}")
+      .post(JSONObject().put("documents",org.json.JSONArray().put("projects/${FirebaseEnvironment.DEMO_PROJECT}/databases/(default)/documents/workspaces/$ws/members/${user.uid}"))
+       .toString().toRequestBody("application/json".toMediaType())).build()
+     okhttp3.OkHttpClient.Builder().callTimeout(5,java.util.concurrent.TimeUnit.SECONDS).build().newCall(request).execute().use{response->
+      val after=System.currentTimeMillis()
+      evidence.put("serverRead",JSONObject().put("deviceBefore",before).put("deviceAfter",after).put("httpStatus",response.code).apply{
+       if(response.isSuccessful){val rows=org.json.JSONArray(response.body!!.string());val row=rows.getJSONObject(0)
+        put("readTime",row.optString("readTime"));val fields=row.optJSONObject("found")?.optJSONObject("fields")
+        put("memberRole",fields?.optJSONObject("role")?.optString("stringValue"));put("memberStatus",fields?.optJSONObject("status")?.optString("stringValue"))}
+      })
+     }
+    }}.onFailure{evidence.put("diagnosticError",it.toString())}
+   }
+   context.openFileOutput("synthetic-sync-diagnostics.jsonl",android.content.Context.MODE_APPEND).bufferedWriter().use{it.appendLine(evidence.toString())}
+   android.util.Log.e("DEVICE_SYNC_EVIDENCE",evidence.toString())
+  }
+ }
  private suspend fun login(role:String){check(BuildConfig.DEVICE_TEST);check(com.google.firebase.FirebaseApp.getInstance().options.projectId==FirebaseEnvironment.DEMO_PROJECT);auth.signInWithEmailAndPassword(role+"@device.invalid","EmulatorOnly123!").await();assertEquals("device-"+role,auth.currentUser!!.uid)}
  private suspend fun <T> tracedRoleRead(stage: String, action: suspend () -> T): T {
   android.util.Log.i("DEVICE_ROLE_TRACE", "START " + stage)
@@ -47,6 +91,14 @@ class DeviceEmulatorIntegrationTest {
   }}
   val actual=rows.single{it.operationId==operation.operationId}
   assertEquals("$stage: ${actual.entityType} ${actual.operationId}; actor=${actual.actorUid}; ${actual.failureReason}","ACKNOWLEDGED",actual.state)
+ }
+ private suspend fun awaitSyncedJob(db:AppDatabase,id:Long,stage:String){
+  kotlinx.coroutines.withTimeout(60000){while(true){
+   val rejected=db.pendingOperationDao().observe(ws).first().filter{it.entityType=="JOB" && it.entityId==id && it.state=="REJECTED"}
+   assertTrue("$stage: retained job rejection: $rejected",rejected.isEmpty())
+   if(db.jobEntryDao().getJobById(ws,id)?.isSynced==true)return@withTimeout
+   kotlinx.coroutines.delay(100)
+  }}
  }
  private suspend fun deletionPayload(source:Map<String,Any?>):JSONObject {
   val entry=jobEntryFromFirestoreMap(source)
@@ -397,7 +449,7 @@ class DeviceEmulatorIntegrationTest {
    endTimeMillis=now,durationMinutes=1,totalAmount=1000.0,amountReceived=200.0,pendingAmount=800.0,
    addedByPartner="Owner",createdAt=now,entryForUid="device-partner"))
   workspace.pushUnsyncedToCloud(isOnline=true)
-  kotlinx.coroutines.withTimeout(60000){db.jobEntryDao().getJobsForWorkspace(ws).first{rows->rows.any{it.id==id && it.isSynced}}}
+  awaitSyncedJob(db,id,"initial profile job")
   val originalJob=db.jobEntryDao().getJobById(ws,id)!!
   val originalCustomer=db.customerDao().getCustomerById(ws,originalJob.customerId)!!
   val originalReceipt=cloud.collection("workspaces/$ws/collections").whereEqualTo("jobEntryId",id).get(Source.SERVER).await().documents.single()
@@ -455,7 +507,7 @@ class DeviceEmulatorIntegrationTest {
    linkedExpenses=listOf(com.example.data.entity.ExpenseEntity(workspaceId=ws,expenseType="Diesel",amount=900.0,
     tractorLabel="Disposable Tractor",addedByPartner="Owner",paidBy="Business Paid")))
   workspace.pushUnsyncedToCloud(isOnline=true)
-  kotlinx.coroutines.withTimeout(60000){db.jobEntryDao().getJobsForWorkspace(ws).first{rows->rows.any{it.id==id && it.isSynced}}}
+  awaitSyncedJob(db,id,"initial reassignment job")
   val original=db.jobEntryDao().getJobById(ws,id)!!
   val originalExpenses=db.expenseDao().getExpensesForJob(ws,id)
   val expenseCloud=cloud.document("workspaces/$ws/expenses/${originalExpenses.single().id}").get(Source.SERVER).await().data!!

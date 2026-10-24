@@ -138,6 +138,18 @@ jobs:
         with:
           name: backend-${{ matrix.suite }}
           path: ci-reports/
+  worker-build:
+    name: Staging Worker build only (no deployment)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm, cache-dependency-path: 'cloudflare/package-lock.json'}
+      - run: npm ci --prefix cloudflare
+      - name: Validate existing cf and Vite project from its own directory
+        working-directory: cloudflare
+        run: npm run build
   device-integration:
     name: Compose controls, Room and representative Android-backend journeys
     runs-on: ubuntu-latest
@@ -171,9 +183,10 @@ jobs:
           path: |
             app/build/outputs/androidTest-results/
             app/build/reports/androidTests/
+            ci-reports/device-sync/
   aggregate:
     name: Regression results and release gate
-    needs: [inventory, static-checks, android-tests, backend, device-integration]
+    needs: [inventory, static-checks, android-tests, backend, worker-build, device-integration]
     if: always()
     runs-on: ubuntu-latest
     steps:

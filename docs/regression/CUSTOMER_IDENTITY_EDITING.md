@@ -189,6 +189,31 @@ wire-format regression. Final rerun results must be recorded separately.
 
 ## Physical-device verification — NOT TESTED
 
+### Follow-up verification after 7c12a1f
+
+The required PR run 40010088695 passed all 1,123 JUnit cases, including all 28
+Android API 35 cases. The earlier same-source push run 40009468083 failed four
+Android cases; a passing run does not establish that their intermittent cause is
+fixed. The original failed requests did not retain enough evidence to distinguish
+server-time, request identity, or another policy condition.
+
+The mandatory device suite now records demo-only failure evidence: original
+queued operation IDs, actors, workspace, timestamps, states and selected identity
+fields, plus current Auth/token UID, read-only server readTime and membership.
+Tokens, customer names and phone numbers are not exported. The CI artifact also
+retains emulator Rules evaluation coverage and host/guest clock observations.
+Initial profile/move setup reports an actual retained job rejection rather than
+waiting for a generic timeout. No application retry behavior or Rules changed.
+
+The separate Cloudflare build failed because its existing trigger runs Wrangler
+preview from repository root, while this repository's existing cf/Vite project
+is in `cloudflare/`. An explicit `npm run build` now invokes the existing `cf build`
+there, and a required Linux CI job validates it without deployment or credentials.
+The cloud trigger has not been changed. After local build verification, separately
+review the trigger root (`cloudflare`), cf-compatible preview command and isolated
+preview bindings/secrets before approving any trigger change. Do not blindly add
+an empty Wrangler preview block or reuse customer resources for branch previews.
+
 Automated physical-device testing: NOT TESTED. No phone/ADB instrumentation was
 performed for this change. Android-emulator tests must be reported separately.
 
