@@ -600,7 +600,7 @@ class DeviceEmulatorIntegrationTest {
   assertFalse(cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().exists())
   assertFalse(cloud.document("workspaces/$ws/collections/${receipt.id}").get(Source.SERVER).await().exists())
  }
- @Test(timeout=90000) fun sSmallFutureClockConfirmsOriginalJobExactlyOnce()=runBlocking {
+ @Test(timeout=90000) fun sSmallFutureClockConfirmsOriginalJobExactlyOnce():Unit=runBlocking {
   login("owner");val actor="device-owner";val db=AppDatabase.getInstance(context)
   val authRepo=com.example.data.repository.AuthRepository.getInstance(context);authRepo.startListening()
   val profile=kotlinx.coroutines.withTimeout(15000){authRepo.currentUserProfile.first{it?.uid==actor}}!!
@@ -627,5 +627,6 @@ class DeviceEmulatorIntegrationTest {
    assertEquals("Unrelated future job must stay pending", "PENDING",it.state)
    assertTrue(it.failureReason.contains("CLOCK_AHEAD"))
   }
+  Unit
  }
 }
