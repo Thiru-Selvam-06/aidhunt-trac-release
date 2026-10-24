@@ -14,8 +14,9 @@ capture_sync_evidence() {
  mkdir -p ci-reports/device-sync
  date -u +'%Y-%m-%dT%H:%M:%S.%NZ' > ci-reports/device-sync/host-time.txt
  adb shell date -u > ci-reports/device-sync/android-time.txt 2>&1 || true
- adb exec-out run-as com.aistudio.aidhunttrac.cedlir.devicetest cat files/synthetic-sync-diagnostics.jsonl \
-  > ci-reports/device-sync/synthetic-sync-diagnostics.jsonl 2>/dev/null || true
+ # Gradle uninstalls the synthetic app before its task returns; logcat survives.
+ adb logcat -d -s DEVICE_SYNC_EVIDENCE:I '*:S' \
+  > ci-reports/device-sync/synthetic-sync-diagnostics.log 2>/dev/null || true
  curl --fail --silent --show-error --max-time 10 \
   http://127.0.0.1:18180/emulator/v1/projects/demo-aidhunt-v16:ruleCoverage \
   > ci-reports/device-sync/rule-coverage.json || true

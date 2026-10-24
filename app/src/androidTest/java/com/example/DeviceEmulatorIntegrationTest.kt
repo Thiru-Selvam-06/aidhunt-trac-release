@@ -75,7 +75,6 @@ class DeviceEmulatorIntegrationTest {
      }
     }}.onFailure{evidence.put("diagnosticError",it.toString())}
    }
-   context.openFileOutput("synthetic-sync-diagnostics.jsonl",android.content.Context.MODE_APPEND).bufferedWriter().use{it.appendLine(evidence.toString())}
    android.util.Log.e("DEVICE_SYNC_EVIDENCE",evidence.toString())
   }
  }
@@ -94,7 +93,9 @@ class DeviceEmulatorIntegrationTest {
  }
  private suspend fun awaitSyncedJob(db:AppDatabase,id:Long,stage:String){
   kotlinx.coroutines.withTimeout(60000){while(true){
-   val rejected=db.pendingOperationDao().observe(ws).first().filter{it.entityType=="JOB" && it.entityId==id && it.state=="REJECTED"}
+   val customerId=db.jobEntryDao().getJobById(ws,id)?.customerId
+   val rejected=db.pendingOperationDao().observe(ws).first().filter{it.state=="REJECTED" &&
+    ((it.entityType=="JOB" && it.entityId==id) || (it.entityType=="CUSTOMER" && it.entityId==customerId))}
    assertTrue("$stage: retained job rejection: $rejected",rejected.isEmpty())
    if(db.jobEntryDao().getJobById(ws,id)?.isSynced==true)return@withTimeout
    kotlinx.coroutines.delay(100)
@@ -341,6 +342,7 @@ class DeviceEmulatorIntegrationTest {
     put("serverReceivedAt",com.google.firebase.firestore.FieldValue.serverTimestamp())
     put("totalAmount",500.0);put("amountReceived",0.0);put("pendingAmount",500.0);remove("collectionId")
    }
+   ServerActionTimeBarrier({FirestoreServerTime.read(ws,"device-partner",app)}).awaitEligible(now)
    otherCloud.document("workspaces/$ws/entries/$secondId").set(second).await()
    kotlinx.coroutines.withTimeout(15000){db.jobEntryDao().getJobsForWorkspace(ws).first{jobs->jobs.any{it.id==secondId}}}
    assertEquals("device-partner",db.jobEntryDao().getJobById(ws,secondId)!!.createdByUid)
@@ -472,9 +474,11 @@ class DeviceEmulatorIntegrationTest {
     val reopened=androidx.room.Room.databaseBuilder(context,AppDatabase::class.java,db.openHelper.databaseName!!).build()
     try {assertEquals(operation,reopened.pendingOperationDao().getOperation(operation.operationId));
      assertEquals(desired.name,reopened.customerDao().getCustomerById(ws,originalCustomer.id)!!.name)} finally {reopened.close()}
+    val independentActionTime=System.currentTimeMillis()
+    ServerActionTimeBarrier({FirestoreServerTime.read(ws,"device-partner",app)}).awaitEligible(independentActionTime)
     otherCloud.document("workspaces/$ws/customers/${originalCustomer.id}").update(mapOf(
      "phone" to "9876543210","actorUid" to "device-partner","operationId" to "independent-phone-$now",
-     "actionTime" to System.currentTimeMillis(),"protocolVersion" to 2,"operationType" to "UPSERT","dependencies" to emptyList<Any>(),"isDeleted" to false)).await()
+     "actionTime" to independentActionTime,"protocolVersion" to 2,"operationType" to "UPSERT","dependencies" to emptyList<Any>(),"isDeleted" to false)).await()
    } finally {cloud.enableNetwork().await()}
    val result=workspace.pushUnsyncedToCloud(isOnline=true)
    android.util.Log.i("CUSTOMER_EDIT_TEST","profile reconnect: $result; "+db.pendingOperationDao().getOperation(operation.operationId))
@@ -568,5 +572,60 @@ class DeviceEmulatorIntegrationTest {
   val source=cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await()
   assertEquals(0.0,source.getDouble("amountReceived")!!,0.0);assertEquals(1100.0,source.getDouble("pendingAmount")!!,0.0)
   assertEquals(0,cloud.collection("workspaces/$ws/collections").whereEqualTo("jobEntryId",id).get(Source.SERVER).await().size())
+ }
+ @Test(timeout=90000) fun rFutureClockPreservesPendingRoomJobAndBlocksOnlyItsPayment()=runBlocking {
+  login("owner");val actor="device-owner";val db=AppDatabase.getInstance(context)
+  val authRepo=com.example.data.repository.AuthRepository.getInstance(context);authRepo.startListening()
+  val profile=kotlinx.coroutines.withTimeout(15000){authRepo.currentUserProfile.first{it?.uid==actor}}!!
+  val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db);assertTrue(workspace.initializeForUser(profile).isSuccess)
+  val future=FirestoreServerTime.read(ws,actor)+3600000L;val id=com.example.data.util.IdGenerator.generateId()
+  val job=jobEntryFromFirestoreMap(cloud.document("workspaces/$ws/entries/50").get(Source.SERVER).await().data!!)
+   .copy(id=id,createdAt=future,totalAmount=700.0,amountReceived=0.0,pendingAmount=700.0,isSynced=false)
+  val op=PendingOperationEntity("future-clock-"+java.util.UUID.randomUUID(),ws,actor,"JOB",id,"UPSERT",db.pendingOperationDao().nextSequence(),future,
+   JSONObject(job.toFirestoreMap()).put("operationProtocolVersion",2).toString())
+  val receipt=com.example.data.entity.PaymentEntity(id=com.example.data.util.IdGenerator.generateId(),workspaceId=ws,jobEntryId=id,
+   customerId=job.customerId,customerName=job.customerName,amount=125.0,collectedByUid=actor,collectedByRole="OWNER",createdAt=future,collectedAt=future,isSynced=false)
+  db.jobEntryDao().insertJob(job);db.pendingOperationDao().insert(op);db.paymentDao().insertPayment(receipt)
+  val payment=PendingOperationEntity("future-payment-"+java.util.UUID.randomUUID(),ws,actor,"PAYMENT",receipt.id,"UPSERT",db.pendingOperationDao().nextSequence(),future,
+   JSONObject(receipt.toFirestoreMap()).put("operationProtocolVersion",2).toString())
+  db.pendingOperationDao().insert(payment)
+  workspace.pushUnsyncedToCloud(isOnline=true)
+  val pending=db.pendingOperationDao().getOperation(op.operationId)!!
+  assertEquals("PENDING",pending.state);assertTrue(pending.failureReason.contains("CLOCK_AHEAD"))
+  assertEquals(op.payloadJson,pending.payloadJson);assertEquals(op.actionTime,pending.actionTime)
+  assertEquals(job,db.jobEntryDao().getJobById(ws,id));assertEquals(receipt,db.paymentDao().getPaymentById(ws,receipt.id))
+  val blocked=db.pendingOperationDao().getOperation(payment.operationId)!!
+  assertEquals("PENDING",blocked.state);assertEquals(0,blocked.attempts);assertEquals(payment.payloadJson,blocked.payloadJson)
+  assertTrue(blocked.failureReason.contains("earlier related action"))
+  assertFalse(cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().exists())
+  assertFalse(cloud.document("workspaces/$ws/collections/${receipt.id}").get(Source.SERVER).await().exists())
+ }
+ @Test(timeout=90000) fun sSmallFutureClockConfirmsOriginalJobExactlyOnce()=runBlocking {
+  login("owner");val actor="device-owner";val db=AppDatabase.getInstance(context)
+  val authRepo=com.example.data.repository.AuthRepository.getInstance(context);authRepo.startListening()
+  val profile=kotlinx.coroutines.withTimeout(15000){authRepo.currentUserProfile.first{it?.uid==actor}}!!
+  val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db);assertTrue(workspace.initializeForUser(profile).isSuccess)
+  val future=FirestoreServerTime.read(ws,actor)+200L
+  val id=com.example.data.util.IdGenerator.generateId()
+  val job=jobEntryFromFirestoreMap(cloud.document("workspaces/$ws/entries/50").get(Source.SERVER).await().data!!)
+   .copy(id=id,createdAt=future,totalAmount=700.0,amountReceived=0.0,pendingAmount=700.0)
+  val op=PendingOperationEntity("small-clock-"+java.util.UUID.randomUUID(),ws,actor,"JOB",id,"UPSERT",db.pendingOperationDao().nextSequence(),future,
+   JSONObject(job.toFirestoreMap()).put("operationProtocolVersion",2).toString())
+  db.jobEntryDao().insertJob(job.copy(isSynced=false));db.pendingOperationDao().insert(op)
+  workspace.pushUnsyncedToCloud(isOnline=true);awaitCustomerCommand(db,op,"small clock original job")
+  val ref=cloud.document("workspaces/$ws/entries/$id");val first=ref.get(Source.SERVER).await()
+  assertEquals(op.operationId,first.getString("operationId"));assertEquals(future,first.getLong("createdAt"))
+  assertEquals(future,first.getLong("actionTime"));assertEquals(actor,first.getString("createdByUid"))
+  assertTrue(first.getTimestamp("serverReceivedAt")!!.toDate().time>=future)
+  assertEquals(700.0,first.getDouble("totalAmount")!!,0.0);assertEquals(0.0,first.getDouble("amountReceived")!!,0.0)
+  assertTrue(db.jobEntryDao().getJobById(ws,id)!!.isSynced)
+  val ack=db.pendingOperationDao().getOperation(op.operationId)!!
+  assertEquals(op.payloadJson,ack.payloadJson);assertEquals(future,ack.actionTime)
+  FirestoreRepository(context).applyPendingOperation(op);assertEquals(first.data,ref.get(Source.SERVER).await().data)
+  assertEquals(1,cloud.collection("workspaces/$ws/entries").whereEqualTo("operationId",op.operationId).get(Source.SERVER).await().size())
+  db.pendingOperationDao().observe(ws).first().firstOrNull{it.operationId.startsWith("future-clock-") }?.let{
+   assertEquals("Unrelated future job must stay pending", "PENDING",it.state)
+   assertTrue(it.failureReason.contains("CLOCK_AHEAD"))
+  }
  }
 }

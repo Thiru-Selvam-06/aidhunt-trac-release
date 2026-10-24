@@ -35,6 +35,7 @@ class FirestoreRepository(
     private val listenerHealth = CloudListenerHealth()
     val cloudListenerStates = listenerHealth.states
     private val listenerEpoch = java.util.concurrent.atomic.AtomicLong(0)
+    private val actionTimeBarriers = java.util.concurrent.ConcurrentHashMap<Pair<String, String>, com.example.data.sync.ServerActionTimeBarrier>()
 
     enum class PendingPartnerCleanupResult {
         DELETED,
@@ -856,6 +857,12 @@ class FirestoreRepository(
         }
         val json = org.json.JSONObject(op.payloadJson)
         if (json.optInt("operationProtocolVersion") != 2 || op.actionTime <= 0) throw WorkspaceUpgradeRequiredException()
+        // Server Rules reject even milliseconds of future skew. Confirm eligibility
+        // before the first mutation, retaining original IDs/times and rejected states.
+        actionTimeBarriers.getOrPut(op.workspaceId to op.actorUid) {
+            com.example.data.sync.ServerActionTimeBarrier({ FirestoreServerTime.read(op.workspaceId, op.actorUid) })
+        }.awaitEligible(op.actionTime)
+        if (com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != op.actorUid) throw WorkspaceSessionChangedException()
         val dependencies = org.json.JSONArray()
         com.example.data.sync.OperationDependencies.references(op).filter { it != (op.entityType to op.entityId) }.forEach { (type,id) -> dependencies.put(org.json.JSONObject().put("entityType",type).put("entityId",id.toString())) }
         val payload = mutableMapOf<String, Any?>()

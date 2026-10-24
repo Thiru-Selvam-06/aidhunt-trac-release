@@ -112,6 +112,8 @@ them before broadly sharing your app. If you'd like, I can help you harden these
 | --- | --- |
 | `data/sync/CustomerProfileEdit.kt` | Changed-field intent, idempotent merge, same-field conflict detection. |
 | `data/sync/JobCustomerReassignment.kt` | Single-job allocation and unresolved-payment safeguards. |
+| `data/sync/ServerActionTimeBarrier.kt` | Confirm server eligibility before writing without changing original timestamps. |
+| `data/firebase/FirestoreServerTime.kt` | Read-only scoped Firebase/Auth/App Check server readTime, with API 24/25 timestamp parsing. |
 | `ui/util/CustomerIdentity.kt` | Scoped current display projections and Unicode search. |
 | `data/repository/WorkspaceRepository.kt` | Atomic profile edits, explicit new identity, reassignment validation, safe acknowledgement/reconciliation and current-job reversal totals. |
 | `data/firebase/FirestoreRepository.kt` | Profile transaction/patch, protected provenance, cloud receipt checks and append-only reassignment audit. |
@@ -123,10 +125,14 @@ them before broadly sharing your app. If you'd like, I can help you harden these
 | `ui/screens/report/ReportScreen.kt`, `MainActivity.kt` | Forward the edit base and callback; truthful local-save wording. |
 | `firestore.rules` | Approved local single-source reversal/deletion correction and reassignment-audit validation. |
 | `CustomerIdentityEditingTest.kt` | Identity, conflicts, financial invariants, preserved snapshots and 100/1,000/10,000 customer projections. |
+| `ServerActionTimeBarrierTest.kt` | Small/large skew, stalled/unavailable clock, restart, strict UTC parsing and no invented server time. |
+| `OfflineSyncReliabilityTest.kt` | Room restart preserves a pending future-clock job and its dependent payment unchanged. |
 | `DeviceEmulatorIntegrationTest.kt` | Actual Android Room/repository/Auth/Firestore offline profile merge and paid reassignment/reversal journeys. |
 | `CustomerEditingDeviceTest.kt` | Mandatory English/Tamil dialog, validation and callback journey. |
 | `security-tests/customer-editing.test.cjs` | Reproduce old replacement denial, valid patching and paid-move policy behavior; negative authorization checks. |
 | `scripts/run_backend_suite.mjs`, `scripts/instrumentation-plan.json` | Make added tests mandatory in existing CI. |
+| `.github/workflows/android-ci.yml`, `scripts/run_device_ci.sh` | Required build-only Worker validation and retained demo-only authorization evidence. |
+| `cloudflare/package.json` | Build the existing cf/Vite project from its correct directory; no dependency or deployed setting changes. |
 | `docs/handbook/test-suite-inventory.json` | Updated source inventory; does not claim execution. |
 
 ## Acceptance and test evidence
@@ -193,17 +199,46 @@ wire-format regression. Final rerun results must be recorded separately.
 
 The required PR run 40010088695 passed all 1,123 JUnit cases, including all 28
 Android API 35 cases. The earlier same-source push run 40009468083 failed four
-Android cases; a passing run does not establish that their intermittent cause is
-fixed. The original failed requests did not retain enough evidence to distinguish
-server-time, request identity, or another policy condition.
+Android cases. Follow-up commit 24f4dc6 added diagnostics: its push run 40054802905
+passed, while PR run 40054806456 failed five Android cases. The retained Rules
+evaluations now prove the condition for that failed PR run:
+
+| Synthetic request | Original action ahead of actual Rules request.time |
+| --- | --- |
+| Fresh Owner job, case d | 101 ms |
+| Owner deletion guard, case e | 47 ms |
+| Cold-start job, case i | 88 ms |
+| Customer creation before profile journey p | 34 ms |
+| Customer creation before reassignment journey q | 31 ms |
+
+Request Auth UID and actor were both `device-owner`; active Owner membership was
+confirmed. The strict future-action predicate correctly denied these writes.
+Customer rejection blocked its dependent job/payment, causing setup timeouts.
+This proves the intermittent CI failure, not the unavailable historical phone
+operation. Its original payload and exact policy failure remain unverified.
+
+The client now checks a scoped membership batchGet's server readTime before a
+mutation, using its existing Firebase user token and available App Check token.
+It caches only a confirmed lower bound per actor/workspace, never a device-clock
+estimate. Skew up to two seconds waits once and reads again. Larger or persistent
+skew throws a transient CLOCK_AHEAD error: the original Room row/outbox remains
+PENDING, and related payments wait. No original timestamp/amount/ID changes, no
+probe document, no Rules relaxation, no schema migration and no automatic replay
+of previously REJECTED actions are introduced. The read adds at most one normal
+membership read per newly timed group of actions, plus a second after a small wait;
+older queued actions can reuse the confirmed bound. Network failures stay pending.
+Very large original future timestamps may require separately approved review;
+changing the phone's present clock cannot rewrite an already-recorded timestamp.
 
 The mandatory device suite now records demo-only failure evidence: original
 queued operation IDs, actors, workspace, timestamps, states and selected identity
 fields, plus current Auth/token UID, read-only server readTime and membership.
-Tokens, customer names and phone numbers are not exported. The CI artifact also
-retains emulator Rules evaluation coverage and host/guest clock observations.
+Compact operation diagnostics omit tokens, customer names and phone numbers. The
+separate Rules-coverage artifact contains demo fixture values and token claims,
+and is collected only by the guarded synthetic CI harness, never from live data.
+The artifact also retains host/guest clock observations.
 Initial profile/move setup reports an actual retained job rejection rather than
-waiting for a generic timeout. No application retry behavior or Rules changed.
+waiting for a generic timeout. Rules and rejected-action retry policy are unchanged.
 
 The separate Cloudflare build failed because its existing trigger runs Wrangler
 preview from repository root, while this repository's existing cf/Vite project
@@ -248,3 +283,7 @@ or explicitly authorized staging workspace and synthetic data, not customer mone
     phone, blank name and no translation of entered business/customer text.
 11. Save screenshots plus per-device operation status/IDs and approved read-only
     server evidence. Record PASS/FAIL only after each real scenario is executed.
+12. Record automatic date/time settings and any CLOCK_AHEAD warning. A clock wait
+    must retain the job and unchanged payment action; do not recreate it or edit its
+    timestamp. Test normal offline reconnect first; do not change production phone
+    clocks or recover a historical rejection as part of this checklist.

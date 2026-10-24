@@ -385,6 +385,12 @@
       "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
     },
     {
+      "source": "app/src/test/java/com/example/ServerActionTimeBarrierTest.kt",
+      "class": "com.example.ServerActionTimeBarrierTest",
+      "partition": "unit",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
       "source": "app/src/test/java/com/example/StandaloneExpenseConflictCompatibilityTest.kt",
       "class": "com.example.StandaloneExpenseConflictCompatibilityTest",
       "partition": "unit",

@@ -3537,6 +3537,7 @@ class WorkspaceRepository(
                         acknowledge(op); count++
                     } catch (e: kotlinx.coroutines.CancellationException) { throw e
                     } catch (e: Exception) {
+                        if (e is com.example.data.sync.ActionClockAheadException) syncStage = "SERVER_TIME"
                         if (e is com.example.data.firebase.WorkspaceAuthenticationRequiredException || e is com.example.data.firebase.WorkspaceSessionChangedException) authenticationMessage = e.message
                         if (e is com.example.data.firebase.WorkspaceBackendUnavailableException) backendMessage = e.message
                         val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code
