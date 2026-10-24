@@ -80,3 +80,31 @@ phone payload. Original Muniyappan/payment/expense failure details remain unveri
 
 No production records, phone storage or pending operations were modified. Keep the
 PR in draft until the remaining authorized staging/release checks are satisfied.
+
+## October 24 staging follow-up and candidate identity
+
+After explicit approval, only the development trigger's root directory, build command
+and preview command were corrected to `cloudflare`, `npm run build` and
+`npx cf previews deploy`. Hosted build `3aff5db2-1be7-4e71-a308-37a1a075abd8` at
+evidence commit `3f0ba42` passed and deployed branch preview
+`916dc385-16f7-4336-b371-6942b7a90101`. This supersedes the earlier hosted-build failure
+above; the original failure is retained as historical evidence.
+
+Preview URL: https://codex-customer-identity-editing-aidhunt-trac-trusted-staging.aidhuntinformatics.workers.dev
+
+Actual HTTP checks passed: health 200 with the expected project and credential
+presence true, unknown endpoint 404, unauthenticated operation 401. Runtime metadata
+confirms dedicated staging workspace `ws_cf_staging_20261015_login_a62e71`. No secret
+value was read or copied. The existing Worker's October 15 version
+`919ce27d-6562-449d-9392-a6d1eea5f0b0` remains deployed at 100%; production routing,
+Firestore Rules and real customer records are unchanged.
+
+Authenticated hosted financial journeys remain NOT TESTED because no current
+synthetic phone-OTP client session was available. Emulator results are separate.
+No live or historical rejected financial action was replayed.
+
+The next candidate is identified as **1.0.10 / versionCode 11** instead of reusing
+1.0.9 / 10. This changes release identity only, with no financial or authorization
+logic change. Its fresh build/signature and mandatory CI results must be recorded
+before distribution. Production Rules, customer APK distribution and main merge
+remain subject to explicit approval and the physical/staging acceptance gate.
