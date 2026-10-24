@@ -406,9 +406,9 @@ fun NewEntryScreen(
     val activeWsCustomers = remember(customers, settings.workspaceId) {
         val currentWs = settings.workspaceId.trim()
         if (currentWs.isNotBlank()) {
-            customers.filter { it.workspaceId.isBlank() || it.workspaceId == currentWs }
+            customers.filter { it.workspaceId == currentWs }
         } else {
-            customers
+            emptyList()
         }
     }
 
@@ -416,7 +416,7 @@ fun NewEntryScreen(
         val q = customerNameInput.trim()
         if (q.isNotEmpty() && matchedCustomerId == 0L) {
             activeWsCustomers
-                .filter { it.name.trim().contains(q, ignoreCase = true) }
+                .filter { com.example.ui.util.CustomerIdentity.matches(it.name, q) }
                 .distinctBy { it.id.takeIf { id -> id > 0L } ?: (it.name.trim().lowercase() + "_" + it.phone) }
         } else {
             emptyList()
@@ -437,11 +437,14 @@ fun NewEntryScreen(
         }
     }
 
+    val isCustomerSelectionInvalid = matchedCustomerId <= 0L &&
+        (draft.isEditingExistingEntry || nameSuggestions.isNotEmpty() || phoneSuggestions.isNotEmpty())
+
     val resolveRateForCustomer: (CustomerEntity) -> Double = { c ->
         // 1. Customer-specific rate from customer's latest local job
         val custRate = jobs.filter {
-            (it.customerId > 0L && it.customerId == c.id) ||
-            (c.name.isNotBlank() && it.customerName.trim().equals(c.name.trim(), ignoreCase = true))
+            it.workspaceId == c.workspaceId && ((it.customerId > 0L && it.customerId == c.id) ||
+            (it.customerId <= 0L && c.name.isNotBlank() && com.example.ui.util.CustomerIdentity.matches(it.customerName, c.name)))
         }.maxByOrNull { it.createdAt }?.hourlyRate?.takeIf { it > 0.0 }
 
         // 2. Tractor/default rate from tractor's latest local job
@@ -475,7 +478,8 @@ fun NewEntryScreen(
                 isCustomerPhoneManuallyEdited = true,
                 customerLocationInput = c.location,
                 matchedCustomerId = c.id,
-                hourlyRateInput = if (rateStr.isNotBlank()) rateStr else draft.hourlyRateInput
+                createNewCustomer = false,
+                hourlyRateInput = if (!draft.isEditingExistingEntry && rateStr.isNotBlank()) rateStr else draft.hourlyRateInput
             )
         )
         showSuggestions = false
@@ -637,17 +641,7 @@ fun NewEntryScreen(
                     customerNameInput.trim()
                 }
 
-                val resolvedCustomerId = if (draft.isEditingExistingEntry) {
-                    if (draft.matchedCustomerId > 0L) {
-                        draft.matchedCustomerId
-                    } else if (draft.originalCustomerId > 0L) {
-                        draft.originalCustomerId
-                    } else {
-                        0L
-                    }
-                } else {
-                    draft.matchedCustomerId
-                }
+                val resolvedCustomerId = draft.matchedCustomerId
 
                 val finalNotes = if (draft.isOldEntry) {
                     if (notes.isBlank()) {
@@ -739,7 +733,8 @@ fun NewEntryScreen(
                     )
                 }
 
-                onSaveJob(job, allLinkedExpenses.firstOrNull(), allLinkedExpenses)
+                val retainedExpenses = draft.retainExpenseHistory(allLinkedExpenses)
+                onSaveJob(draft.retainUneditedWork(job), retainedExpenses.firstOrNull(), retainedExpenses)
             }
         )
     } else {
@@ -1389,7 +1384,7 @@ fun NewEntryScreen(
                     OutlinedTextField(
                         value = customerNameInput,
                         onValueChange = {
-                            onUpdateDraft(draft.copy(customerNameInput = it, isCustomerNameManuallyEdited = true, matchedCustomerId = 0L))
+                            onUpdateDraft(draft.copy(customerNameInput = it, isCustomerNameManuallyEdited = true, matchedCustomerId = 0L, createNewCustomer = false))
                             showSuggestions = true
                         },
                         label = { Text(if (isTamil) "வாடிக்கையாளர் பெயர் *" else "Customer Name *", maxLines = 1) },
@@ -1429,6 +1424,22 @@ fun NewEntryScreen(
                         )
                     }
 
+                    if (matchedCustomerId > 0L) {
+                        Text(if (isTamil) "தேர்ந்தெடுக்கப்பட்ட வாடிக்கையாளர்: $customerNameInput" else "Selected customer: $customerNameInput",
+                            color = DeepSageGreen, fontSize = 12.sp, modifier = Modifier.testTag("entry_selected_customer"))
+                    } else if (customerNameInput.isNotBlank() && actorRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR) {
+                        TextButton(onClick = {
+                            onUpdateDraft(draft.copy(matchedCustomerId = com.example.data.util.IdGenerator.generateId(), createNewCustomer = true))
+                            showSuggestions = false
+                        }, modifier = Modifier.testTag("entry_create_customer")) {
+                            Text(if (isTamil) "புதிய வாடிக்கையாளரை உருவாக்கு" else "Create New Customer")
+                        }
+                        if (draft.isEditingExistingEntry || nameSuggestions.isNotEmpty()) Text(
+                            if (isTamil) "ஏற்கனவே உள்ள வாடிக்கையாளரைத் தேர்ந்தெடுக்கவும் அல்லது புதியவரை உருவாக்கவும். பெயரை மாற்ற வாடிக்கையாளர் விவரங்களைத் திருத்தவும்."
+                            else "Select an existing customer or create a new one. To rename this customer, use Edit Customer Details.",
+                            fontSize = 12.sp, color = TextSecondaryDark)
+                    }
+
                     // Customer Phone & Location (2-Column Row)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1436,6 +1447,7 @@ fun NewEntryScreen(
                     ) {
                         OutlinedTextField(
                             value = customerPhoneInput,
+                            readOnly = matchedCustomerId > 0L && !draft.createNewCustomer,
                             onValueChange = { input ->
                                 val digitsOnly = sanitizePhoneNumberForStorage(input)
                                 onUpdateDraft(draft.copy(customerPhoneInput = digitsOnly, isCustomerPhoneManuallyEdited = true))
@@ -1471,6 +1483,7 @@ fun NewEntryScreen(
 
                         OutlinedTextField(
                             value = customerLocationInput,
+                            readOnly = matchedCustomerId > 0L && !draft.createNewCustomer,
                             onValueChange = { onUpdateDraft(draft.copy(customerLocationInput = it)) },
                             label = { Text(if (isTamil) "ஊர் / இடம்" else "Village / Location", fontSize = 11.5.sp, maxLines = 1) },
                             leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null, tint = DeepSageGreen, modifier = Modifier.size(18.dp)) },
@@ -2182,7 +2195,7 @@ fun NewEntryScreen(
                             return@Button
                         }
                         val isFormValid = !isTractorInvalid &&
-                                !isCustomerNameInvalid &&
+                                !isCustomerNameInvalid && !isCustomerSelectionInvalid &&
                                 !isCustomerPhoneInvalid &&
                                 !isTimeInvalid &&
                                 !isWorkAmountInvalid &&
@@ -2197,6 +2210,7 @@ fun NewEntryScreen(
                             val errorMsg = when {
                                 isTractorInvalid -> if (isTamil) "டிராக்டரைத் தேர்வுசெய்க" else "Please select a tractor"
                                 isCustomerNameInvalid -> if (isTamil) "வாடிக்கையாளர் பெயர் தேவை" else "Customer name is required"
+                                isCustomerSelectionInvalid -> if (isTamil) "வாடிக்கையாளரைத் தேர்ந்தெடுக்கவும் அல்லது புதியவரை உருவாக்கவும்" else "Select an existing customer or choose Create New Customer"
                                 isCustomerPhoneInvalid -> if (isTamil) "முழுமையான தொலைபேசி எண்ணை உள்ளிடவும்" else "Please enter a complete phone number"
                                 isTimeInvalid -> if (isTamil) "வேலை நேரம் பூஜ்ஜியத்திற்கு மேல் இருக்க வேண்டும்" else "Work duration must be greater than 0"
                                 isWorkAmountInvalid -> if (isTamil) "வேலைத் தொகை பூஜ்ஜியத்திற்கு மேல் இருக்க வேண்டும்" else "Work amount must be greater than 0"

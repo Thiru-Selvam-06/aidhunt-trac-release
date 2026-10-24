@@ -33,7 +33,9 @@ class OfflineSyncReliabilityTest {
 
     @Test fun retainedJobPaymentSurviveReopen() = runBlocking {
         val context=ApplicationProvider.getApplicationContext<Context>()
-        val name="synthetic-offline-${java.util.UUID.randomUUID()}.db"
+        // Robolectric already provides a unique directory per test. Short file
+        // names keep native Windows SQLite below MAX_PATH without changing coverage.
+        val name="qa.db"
         fun open()=Room.databaseBuilder(context,AppDatabase::class.java,name).build()
         var db=open()
         val job=op();val payment=op("PAYMENT",2)
@@ -62,6 +64,33 @@ class OfflineSyncReliabilityTest {
             FirebaseFirestoreException.Code.DEADLINE_EXCEEDED,FirebaseFirestoreException.Code.RESOURCE_EXHAUSTED))
             assertFalse(SyncFailurePolicy.permanent(FirebaseFirestoreException("temporary",code)))
         assertTrue(SyncFailurePolicy.permanent(FirebaseFirestoreException("denied",FirebaseFirestoreException.Code.PERMISSION_DENIED)))
+    }
+    @Test fun clockWaitSurvivesRestart()=runBlocking {
+        val context=ApplicationProvider.getApplicationContext<Context>()
+        val name="qa.db"
+        fun open()=Room.databaseBuilder(context,AppDatabase::class.java,name).build()
+        var db=open();val job=op().copy(actionTime=10000);val payment=op("PAYMENT",2).copy(actionTime=10000)
+        val local=jobEntryFromFirestoreMap(snapshot()).copy(isSynced=false)
+        try {
+            db.pendingOperationDao().insert(job);db.pendingOperationDao().insert(payment);db.jobEntryDao().insertJob(local)
+            try{ServerActionTimeBarrier({1000L}).awaitEligible(job.actionTime);fail("Future action sent")}
+            catch(error:ActionClockAheadException){
+                assertFalse(SyncFailurePolicy.permanent(error))
+                db.pendingOperationDao().failed(job.operationId,"PENDING",error.message!!)
+            }
+            db.pendingOperationDao().waiting(payment.operationId,"Waiting for an earlier related action")
+            db.close();db=open()
+            assertEquals(local,db.jobEntryDao().getJobById(job.workspaceId,job.entityId))
+            val retained=db.pendingOperationDao().getOperation(job.operationId)!!
+            assertEquals(job.payloadJson,retained.payloadJson);assertEquals(job.actionTime,retained.actionTime)
+            assertEquals(job.actorUid,retained.actorUid);assertEquals("PENDING",retained.state)
+            assertTrue(retained.failureReason.contains("CLOCK_AHEAD"))
+            assertEquals("Pending Sync",RetainedActionDetails.status(retained))
+            val dependent=db.pendingOperationDao().getOperation(payment.operationId)!!
+            assertEquals(payment.payloadJson,dependent.payloadJson);assertEquals(0,dependent.attempts)
+            assertEquals(1,db.pendingOperationDao().unresolvedPredecessors(job.workspaceId,"JOB",job.entityId,2))
+            assertEquals(0,db.pendingOperationDao().rejectedPredecessors(job.workspaceId,"JOB",job.entityId,2))
+        }finally{db.close();context.deleteDatabase(name)}
     }
     @Test fun rejectedPaymentIsReviewAndOnlyDependentPendingActionsAreBlocked() {
         assertEquals("Needs Review", RetainedActionDetails.status(op("PAYMENT").copy(state="REJECTED",failureReason="PERMISSION_DENIED")))

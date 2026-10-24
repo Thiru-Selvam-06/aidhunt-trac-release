@@ -213,7 +213,8 @@ fun CustomerCreditDueTab(
     actorUid: String = "",
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     partners: List<com.example.data.entity.PartnerEntity> = emptyList(),
-    expenses: List<com.example.data.entity.ExpenseEntity> = emptyList()
+    expenses: List<com.example.data.entity.ExpenseEntity> = emptyList(),
+    onEditCustomerProfile: ((CustomerEntity, CustomerEntity, () -> Unit) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -329,9 +330,9 @@ fun CustomerCreditDueTab(
     ) {
         synchronizedCustomers.filter { c ->
             val matchesSearch = searchQuery.isBlank() ||
-                    c.name.contains(searchQuery, ignoreCase = true) ||
+                    com.example.ui.util.CustomerIdentity.matches(c.name, searchQuery) ||
                     c.phone.contains(searchQuery) ||
-                    c.location.contains(searchQuery, ignoreCase = true)
+                    com.example.ui.util.CustomerIdentity.matches(c.location, searchQuery)
             
             val hasActivity = c.totalBilled > 0.0 || c.totalPaid > 0.0
             val matchesStatus = when (selectedStatusFilter) {
@@ -916,9 +917,11 @@ fun CustomerCreditDueTab(
             }
         )
     }
-    // Dialog to Add or Edit Customer Phone Number
+    // A profile edit preserves identity and all financial relationships.
     customerToEditPhone?.let { customer ->
-        var phoneInput by remember { mutableStateOf(customer.phone) }
+        var nameInput by remember(customer.workspaceId, customer.id) { mutableStateOf(customer.name) }
+        var nameError by remember(customer.workspaceId, customer.id) { mutableStateOf(false) }
+        var phoneInput by remember(customer.workspaceId, customer.id) { mutableStateOf(customer.phone) }
         var phoneError by remember { mutableStateOf(false) }
         val phoneRequester = remember { BringIntoViewRequester() }
         val coroutineScope = rememberCoroutineScope()
@@ -926,13 +929,23 @@ fun CustomerCreditDueTab(
             onDismissRequest = { customerToEditPhone = null },
             title = {
                 Text(
-                    text = if (isTamil) (if (customer.phone.isBlank()) "கைபேசி எண் சேர்க்க" else "கைபேசி எண் திருத்த") else (if (customer.phone.isBlank()) "Add Phone Number" else "Edit Phone Number"),
+                    text = if (isTamil) "வாடிக்கையாளர் விவரங்களைத் திருத்து" else "Edit Customer Details",
                     fontWeight = FontWeight.Bold,
                     color = ForestGreenHeader
                 )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it; nameError = false },
+                        label = { Text(if (isTamil) "வாடிக்கையாளர் பெயர்" else "Customer Name") },
+                        singleLine = true,
+                        isError = nameError,
+                        supportingText = { if (nameError) Text(if (isTamil) "வாடிக்கையாளர் பெயர் தேவை" else "Customer name is required") },
+                        modifier = Modifier.fillMaxWidth().testTag("customer_profile_name"),
+                        shape = RoundedCornerShape(10.dp)
+                    )
                     Text(
                         text = if (isTamil) "வாடிக்கையாளர்: ${customer.name}" else "Customer: ${customer.name}",
                         fontSize = 14.sp,
@@ -974,24 +987,27 @@ fun CustomerCreditDueTab(
                 Button(
                     onClick = {
                         val sanitized = sanitizePhoneNumberForStorage(phoneInput)
-                        if (!com.example.ui.util.isOptionalContactPhoneValid(phoneInput)) {
+                        if (nameInput.isBlank()) {
+                            nameError = true
+                        } else if (!com.example.ui.util.isOptionalContactPhoneValid(phoneInput)) {
                             phoneError = true
                         } else {
                             val updatedCustomer = customer.copy(
+                                name = if (nameInput == customer.name) customer.name else nameInput.trim(),
                                 phone = sanitized,
                                 updatedAt = System.currentTimeMillis()
                             )
-                            onUpdateCustomer?.invoke(updatedCustomer)
-                            if (selectedCustomer?.id == customer.id) {
-                                selectedCustomer = updatedCustomer
+                            val onSaved = {
+                                if (selectedCustomer?.id == customer.id) selectedCustomer = updatedCustomer
+                                customerToEditPhone = null
                             }
-                            customerToEditPhone = null
-                            Toast.makeText(context, if (isTamil) "கைபேசி எண் $sanitized ஆக மாற்றப்பட்டது" else "Phone number updated to $sanitized", Toast.LENGTH_SHORT).show()
+                            if (onEditCustomerProfile != null) onEditCustomerProfile(customer, updatedCustomer, onSaved)
+                            else { onUpdateCustomer?.invoke(updatedCustomer); onSaved() }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = DeepSageGreen)
                 ) {
-                    Text(if (isTamil) "சேமி" else "Save Phone")
+                    Text(if (isTamil) "சேமி" else "Save")
                 }
             },
             dismissButton = {
@@ -1449,7 +1465,7 @@ fun CustomerDetailSheet(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Edit,
-                                    contentDescription = if (isTamil) "கைபேசி எண்ணைத் திருத்து" else "Edit Phone",
+                                    contentDescription = if (isTamil) "வாடிக்கையாளர் விவரங்களைத் திருத்து" else "Edit Customer Details",
                                     tint = DeepSageGreen,
                                     modifier = Modifier.size(14.dp)
                                 )

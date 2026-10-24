@@ -671,7 +671,13 @@ fun MainAppContent(
                                     },
                                     onUpdateCustomer = { customer ->
                                         viewModel.updateCustomer(customer) {
-                                            onShowToast(if (isTamil) "வாடிக்கையாளர் புதுப்பிக்கப்பட்டார்" else "Customer updated")
+                                            onShowToast(if (isTamil) "சாதனத்தில் சேமிக்கப்பட்டது; மேக ஒத்திசைவு நிலுவையில் உள்ளது" else "Saved on this device; cloud confirmation pending")
+                                        }
+                                    },
+                                    onEditCustomerProfile = { original, updated, onSaved ->
+                                        viewModel.updateCustomer(updated, original) {
+                                            onSaved()
+                                            onShowToast(if (isTamil) "சாதனத்தில் சேமிக்கப்பட்டது; மேக ஒத்திசைவு நிலுவையில் உள்ளது" else "Saved on this device; cloud confirmation pending")
                                         }
                                     },
                                     onRecordPayment = { customer, amount, dateMillis, method, note ->
@@ -870,6 +876,7 @@ fun MainAppContent(
                                             job = job,
                                             linkedExpense = linkedExpense,
                                             linkedExpenses = linkedExpenses,
+                                            createNewCustomer = draft.createNewCustomer,
                                             onSuccess = {
                                                 android.util.Log.d("TRAC_ENTRY", "SAVE_SUCCESS entryId=${job.id} -> NAVIGATE_HOME")
                                                 onShowToast(if (isTamil) "வேலைப் பதிவு வெற்றிகரமாகச் சேமிக்கப்பட்டது!" else "Job Entry saved successfully!")
