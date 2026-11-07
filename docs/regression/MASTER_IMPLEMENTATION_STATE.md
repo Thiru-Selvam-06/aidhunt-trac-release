@@ -57,6 +57,24 @@ history fields were checked but omitted from the proof's key allowlist. Both sid
 are now corrected; new Rules/deletion/full results must be recorded after execution.
 No assertion was removed and no financial expected amount was changed for a pass.
 
+Final local core run at source `0b02a84`: **686 Kotlin/Room cases, 686 pass,
+zero failures/errors/skips**; **310 Rules cases, 310 pass, zero skips**;
+**131 backend cases, 131 pass**; **110 Python harness cases, 110 pass**.
+The first backend rerun failed its CLI fixture because the default protected
+temporary directory is outside the migration tool's permitted output roots.
+The unchanged suite passed with a workspace-owned temporary directory.
+These are local JVM/Firestore-emulator/tooling results, not Android instrumentation
+or physical-device verification. Build/lint and current-branch GitHub gates must
+be recorded independently after completion.
+
+The five-receipt Partner deletion boundary originally hit Firestore's **1,000
+expression evaluation limit**, not a missing Owner privilege. Full proof checks
+are evaluated on immutable proof creation; the source deletion verifies matching
+guards once, and each child still requires the fresh proof, absent source and
+the same active role/creator/original-time restrictions. Caching the actor's role
+within each child check removes repeated equivalent evaluations. Five receipts
+remain supported; no financial limit or authorization assertion was removed.
+
 Audit history is never silently truncated. The current field implementation refuses
 further edits at 100 events or a 192KiB serialized history budget, retaining the
 existing record. Archival beyond this capacity remains an explicit limitation;
