@@ -67,6 +67,15 @@ These are local JVM/Firestore-emulator/tooling results, not Android instrumentat
 or physical-device verification. Build/lint and current-branch GitHub gates must
 be recorded independently after completion.
 
+The same source also passed `assembleDebug`, `lintDebug` and
+`compileDeviceTestAndroidTestKotlin`: lint has **102 warnings, zero errors**.
+Compilation does not count as running Android instrumentation. Production
+`google-services.json` was restored byte-for-byte after the isolated demo run
+(SHA-256 `a631361d4ab09d562294b7253978555decf25e6374245afb10f0bd99cde3c120`).
+Publishing is currently blocked by GitHub login: Git GUI initially selected
+Inbha-G, which lacks repository write permission; the repository-specific
+Thiru-Selvam-06 sign-in is awaiting the user. No current-branch CI pass is claimed.
+
 The five-receipt Partner deletion boundary originally hit Firestore's **1,000
 expression evaluation limit**, not a missing Owner privilege. Full proof checks
 are evaluated on immutable proof creation; the source deletion verifies matching
