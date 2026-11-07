@@ -225,7 +225,14 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
                     val error = runCatching { JSONObject(raw).optJSONObject("error") }.getOrNull()
                     if (error?.optString("status") in setOf("ABORTED", "FAILED_PRECONDITION", "ALREADY_EXISTS")) throw TransactionConflict()
                     if (response.code == 401) throw WorkspaceAuthenticationRequiredException()
-                    if (response.code == 403) throw SecurityException("Firebase rejected deletion during $method; verify the deployed deletion rules. Original data retained.")
+                    if (response.code == 403) {
+                        // Emulator explanations expose the exact evaluation budget/condition.
+                        // Never include that verbose diagnostic for a production project/origin.
+                        val detail = if (origin == "http://127.0.0.1:18180" && documentRoot.startsWith("projects/demo-"))
+                            error?.optString("message").orEmpty() else ""
+                        throw SecurityException("Firebase rejected deletion during $method; verify the deployed deletion rules. Original data retained." +
+                            if (detail.isBlank()) "" else " Emulator: $detail")
+                    }
                     error("Firebase deletion could not complete (${error?.optString("status") ?: response.code}); original action retained")
                 }
                 return raw

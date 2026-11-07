@@ -300,9 +300,13 @@ service cloud.firestore {
     }
     function compoundChildDelete(ws, jobId, creatorUid, createdAt) {
       let proof = getAfter(entryProofPath(ws, string(jobId))).data;
+      let actor = get(memberPath(ws, request.auth.uid)).data;
+      let activeActor = actor.status in ['ACTIVE', 'active'];
       return resource.data.workspaceId == ws && !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))) &&
         newDeletionProof(ws, string(jobId)) &&
-        (owner(ws) || (partner(ws) && creatorUid == request.auth.uid &&
+        ((activeActor && actor.role in ['OWNER', 'Owner', 'owner'] &&
+          get(/databases/$(database)/documents/workspaces/$(ws)).data.ownerUid == request.auth.uid) ||
+         (activeActor && actor.role in ['PARTNER', 'Partner', 'partner'] && creatorUid == request.auth.uid &&
           resource.data.get('authorizationTimeStatus', '') in ['CLIENT_ORIGINAL_V2', 'VERIFIED'] && createdAt is int && createdAt > 0 &&
           proof.actionTime >= createdAt && proof.actionTime - createdAt < 86400000));
     }
@@ -460,7 +464,8 @@ service cloud.firestore {
       }
       match /entryDeletionProofs/{id} {
         allow read: if finance(ws);
-        allow create: if finance(ws) && !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)) &&
+        // validDeletionProof already requires the same active Owner/Partner authority.
+        allow create: if !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)) &&
           validDeletionProof(ws, id, get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)).data) &&
           request.resource.data.keys().hasOnly(['workspaceId','recordId','actorUid','operationId','actionTime','protocolVersion',
             'sourceCreatedAt','customerId','sourceCreatorUid','sourceBeneficiaryUid','totalAmount','amountReceived','pendingAmount',
