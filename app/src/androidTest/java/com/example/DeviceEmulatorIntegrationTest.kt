@@ -638,4 +638,52 @@ class DeviceEmulatorIntegrationTest {
   }
   Unit
  }
+ @Test(timeout=180000) fun tPartnerOfflineEditsOwnerHistoricalJobWithoutChangingReceiptOrCreator()=runBlocking {
+  login("owner");val db=AppDatabase.getInstance(context)
+  val profiles=com.example.data.repository.AuthRepository.getInstance(context);profiles.startListening()
+  val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db)
+  var profile=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid=="device-owner"}}!!
+  assertTrue(workspace.initializeForUser(profile).isSuccess)
+  val now=System.currentTimeMillis()
+  val id=workspace.saveJobEntry(com.example.data.entity.JobEntryEntity(workspaceId=ws,customerName="Core historical $now",
+   operatorName="Owner",tractorId=3,tractorLabel="Disposable Tractor",workType="Rotavator",
+   startTimeMillis=now-60L*86400000,endTimeMillis=now-60L*86400000,durationMinutes=0,
+   totalAmount=2000.0,amountReceived=200.0,pendingAmount=1800.0,addedByPartner="Owner",createdAt=now,
+   entryForUid="device-owner",isHistorical=true))
+  workspace.pushUnsyncedToCloud();awaitSyncedJob(db,id,"core historical creation")
+  val original=cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().data!!
+  val receipt=cloud.collection("workspaces/$ws/collections").whereEqualTo("jobEntryId",id).get(Source.SERVER).await().documents.single()
+  val receiptBefore=receipt.data
+  login("partner")
+  profile=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid=="device-partner"}}!!
+  assertTrue(workspace.initializeForUser(profile).isSuccess)
+  val source=db.jobEntryDao().getJobById(ws,id)!!
+  cloud.disableNetwork().await()
+  val operation:PendingOperationEntity
+  try {
+   workspace.saveJobEntry(source.copy(notes="Partner correction"))
+   operation=db.pendingOperationDao().observeActor(ws,"device-partner").first().last{it.entityType=="JOB"&&it.entityId==id}
+   assertEquals("PENDING",operation.state)
+   assertEquals(1,JobEditAudit.read(db.jobEntryDao().getJobById(ws,id)!!.jobEditHistoryJson).size)
+  } finally {cloud.enableNetwork().await()}
+  workspace.pushUnsyncedToCloud();awaitCustomerCommand(db,operation,"partner historical edit")
+  val confirmed=cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().data!!
+  assertEquals("Partner correction",confirmed["notes"])
+  for(key in listOf("createdByUid","createdByRole","createdAt","entryForUid","financialAttributionUid","totalAmount","amountReceived","pendingAmount")) assertEquals(key,original[key],confirmed[key])
+  assertEquals(receiptBefore,receipt.reference.get(Source.SERVER).await().data)
+  val events=confirmed["jobEditHistory"] as List<*>
+  assertEquals(1,events.size);assertEquals(operation.operationId,(events[0] as Map<*,*>)["operationId"])
+  assertEquals("device-partner",confirmed["editedByUid"])
+  val replica=com.google.firebase.FirebaseApp.initializeApp(context,com.google.firebase.FirebaseApp.getInstance().options,"core-owner-replica-$now")!!
+  replicaApps.add(replica)
+  val ownerAuth=FirebaseAuth.getInstance(replica).also{it.useEmulator("127.0.0.1",19099)}
+  val ownerCloud=FirebaseFirestore.getInstance(replica).also{it.useEmulator("127.0.0.1",18180)}
+  ownerAuth.signInWithEmailAndPassword("owner@device.invalid","EmulatorOnly123!").await()
+  assertEquals(confirmed,ownerCloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().data)
+  assertEquals(receiptBefore,ownerCloud.document(receipt.reference.path).get(Source.SERVER).await().data)
+
+  assertEquals(1,JobEditAudit.read(db.jobEntryDao().getJobById(ws,id)!!.jobEditHistoryJson).size)
+  Unit
+ }
+
 }

@@ -20,6 +20,7 @@ object QueuedWriteConflict {
             else -> error("Unsupported conflict entity")
         }
         val changed = base.keys().asSequence().filter { it != "updatedAt" }.any { key ->
+            if (key == "jobEditHistory") return@any !JobEditAudit.equivalent(base.getJSONArray(key), org.json.JSONArray(normalized[key] as? List<*> ?: emptyList<Any>()))
             val sourceKey = type == "EXPENSE" && key == "relatedJobId"
             val originalValue = base.opt(key).takeUnless { it == JSONObject.NULL }
             // Old immutable edit bases used null; absent-source null and wire zero mean the same thing.

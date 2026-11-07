@@ -48,7 +48,8 @@ data class BreakdownPeriodGroup(
     val expenses: Double,
     val netMargin: Double,
     val jobs: List<JobEntryEntity>,
-    val expensesList: List<ExpenseEntity>
+    val expensesList: List<ExpenseEntity>,
+    val receipts: List<PaymentEntity> = emptyList()
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -78,166 +79,18 @@ fun BalanceSheetTab(
     // Track expanded state for breakdown cards by their unique key
     val expandedCards = remember { mutableStateMapOf<String, Boolean>() }
 
-    // Use passed parameters for overall totals (consistent with ViewModel/FinancialCalculationEngine)
-    // instead of recomputing locally which may use different filters
-    val totalSalesReceived = totalSales
-    val totalExpenseAmount = totalExpenses
-    val netProfitMargin = netBalance
-
-    // Grouping by Daily, Monthly, Yearly
-    val periodGroups = remember(jobs, expenses, selectedTabMode) {
-        val cal = Calendar.getInstance()
-        val dailyDateFmt = SimpleDateFormat("dd MMM yyyy (EEE)", Locale.ENGLISH)
-        val monthlyDateFmt = SimpleDateFormat("MMMM yyyy", Locale.ENGLISH)
-
-        when (selectedTabMode) {
-            BalanceSheetTabMode.DAILY -> {
-                val map = linkedMapOf<String, Triple<Long, MutableList<JobEntryEntity>, MutableList<ExpenseEntity>>>()
-                // Sort records descending by timestamp
-                jobs.sortedByDescending { if (it.startTimeMillis > 0) it.startTimeMillis else it.createdAt }.forEach { j ->
-                    val ts = if (j.startTimeMillis > 0) j.startTimeMillis else j.createdAt
-                    cal.timeInMillis = ts
-                    cal.set(Calendar.HOUR_OF_DAY, 0)
-                    cal.set(Calendar.MINUTE, 0)
-                    cal.set(Calendar.SECOND, 0)
-                    cal.set(Calendar.MILLISECOND, 0)
-                    val dayStart = cal.timeInMillis
-                    val key = dailyDateFmt.format(Date(dayStart))
-                    val entry = map.getOrPut(key) { Triple(dayStart, mutableListOf(), mutableListOf()) }
-                    entry.second.add(j)
-                }
-                expenses.sortedByDescending { if (it.dateTimestamp > 0) it.dateTimestamp else it.createdAt }.forEach { e ->
-                    val ts = if (e.dateTimestamp > 0) e.dateTimestamp else e.createdAt
-                    cal.timeInMillis = ts
-                    cal.set(Calendar.HOUR_OF_DAY, 0)
-                    cal.set(Calendar.MINUTE, 0)
-                    cal.set(Calendar.SECOND, 0)
-                    cal.set(Calendar.MILLISECOND, 0)
-                    val dayStart = cal.timeInMillis
-                    val key = dailyDateFmt.format(Date(dayStart))
-                    val entry = map.getOrPut(key) { Triple(dayStart, mutableListOf(), mutableListOf()) }
-                    entry.third.add(e)
-                }
-
-                // If empty, supply today's card
-                if (map.isEmpty()) {
-                    val now = System.currentTimeMillis()
-                    val key = dailyDateFmt.format(Date(now))
-                    map[key] = Triple(now, mutableListOf(), mutableListOf())
-                }
-
-                map.entries.sortedByDescending { it.value.first }.map { (dateLabel, data) ->
-                    val ledger = FinancialCalculationEngine.calculateSummary(data.second, data.third, emptyList(), FinancialScope())
-                    val sales = ledger.totalReceived
-                    val exp = ledger.totalExpenses
-                    BreakdownPeriodGroup(
-                        key = "day_$dateLabel",
-                        title = dateLabel,
-                        timestamp = data.first,
-                        sales = sales,
-                        expenses = exp,
-                        netMargin = sales - exp,
-                        jobs = data.second,
-                        expensesList = data.third
-                    )
-                }
-            }
-            BalanceSheetTabMode.MONTHLY -> {
-                val map = linkedMapOf<String, Triple<Long, MutableList<JobEntryEntity>, MutableList<ExpenseEntity>>>()
-                jobs.sortedByDescending { if (it.startTimeMillis > 0) it.startTimeMillis else it.createdAt }.forEach { j ->
-                    val ts = if (j.startTimeMillis > 0) j.startTimeMillis else j.createdAt
-                    cal.timeInMillis = ts
-                    cal.set(Calendar.DAY_OF_MONTH, 1)
-                    cal.set(Calendar.HOUR_OF_DAY, 0)
-                    cal.set(Calendar.MINUTE, 0)
-                    cal.set(Calendar.SECOND, 0)
-                    cal.set(Calendar.MILLISECOND, 0)
-                    val monthStart = cal.timeInMillis
-                    val key = monthlyDateFmt.format(Date(monthStart))
-                    val entry = map.getOrPut(key) { Triple(monthStart, mutableListOf(), mutableListOf()) }
-                    entry.second.add(j)
-                }
-                expenses.sortedByDescending { if (it.dateTimestamp > 0) it.dateTimestamp else it.createdAt }.forEach { e ->
-                    val ts = if (e.dateTimestamp > 0) e.dateTimestamp else e.createdAt
-                    cal.timeInMillis = ts
-                    cal.set(Calendar.DAY_OF_MONTH, 1)
-                    cal.set(Calendar.HOUR_OF_DAY, 0)
-                    cal.set(Calendar.MINUTE, 0)
-                    cal.set(Calendar.SECOND, 0)
-                    cal.set(Calendar.MILLISECOND, 0)
-                    val monthStart = cal.timeInMillis
-                    val key = monthlyDateFmt.format(Date(monthStart))
-                    val entry = map.getOrPut(key) { Triple(monthStart, mutableListOf(), mutableListOf()) }
-                    entry.third.add(e)
-                }
-
-                if (map.isEmpty()) {
-                    val now = System.currentTimeMillis()
-                    val key = monthlyDateFmt.format(Date(now))
-                    map[key] = Triple(now, mutableListOf(), mutableListOf())
-                }
-
-                map.entries.sortedByDescending { it.value.first }.map { (monthLabel, data) ->
-                    val ledger = FinancialCalculationEngine.calculateSummary(data.second, data.third, emptyList(), FinancialScope())
-                    val sales = ledger.totalReceived
-                    val exp = ledger.totalExpenses
-                    BreakdownPeriodGroup(
-                        key = "month_$monthLabel",
-                        title = monthLabel,
-                        timestamp = data.first,
-                        sales = sales,
-                        expenses = exp,
-                        netMargin = sales - exp,
-                        jobs = data.second,
-                        expensesList = data.third
-                    )
-                }
-            }
-            BalanceSheetTabMode.YEARLY -> {
-                val map = linkedMapOf<String, Triple<Long, MutableList<JobEntryEntity>, MutableList<ExpenseEntity>>>()
-                jobs.sortedByDescending { if (it.startTimeMillis > 0) it.startTimeMillis else it.createdAt }.forEach { j ->
-                    val ts = if (j.startTimeMillis > 0) j.startTimeMillis else j.createdAt
-                    cal.timeInMillis = ts
-                    val year = cal.get(Calendar.YEAR)
-                    val key = "Year $year"
-                    val entry = map.getOrPut(key) { Triple(ts, mutableListOf(), mutableListOf()) }
-                    entry.second.add(j)
-                }
-                expenses.sortedByDescending { if (it.dateTimestamp > 0) it.dateTimestamp else it.createdAt }.forEach { e ->
-                    val ts = if (e.dateTimestamp > 0) e.dateTimestamp else e.createdAt
-                    cal.timeInMillis = ts
-                    val year = cal.get(Calendar.YEAR)
-                    val key = "Year $year"
-                    val entry = map.getOrPut(key) { Triple(ts, mutableListOf(), mutableListOf()) }
-                    entry.third.add(e)
-                }
-
-                if (map.isEmpty()) {
-                    val now = System.currentTimeMillis()
-                    cal.timeInMillis = now
-                    val year = cal.get(Calendar.YEAR)
-                    val key = "Year $year"
-                    map[key] = Triple(now, mutableListOf(), mutableListOf())
-                }
-
-                map.entries.sortedByDescending { it.value.first }.map { (yearLabel, data) ->
-                    val ledger = FinancialCalculationEngine.calculateSummary(data.second, data.third, emptyList(), FinancialScope())
-                    val sales = ledger.totalReceived
-                    val exp = ledger.totalExpenses
-                    BreakdownPeriodGroup(
-                        key = "year_$yearLabel",
-                        title = yearLabel,
-                        timestamp = data.first,
-                        sales = sales,
-                        expenses = exp,
-                        netMargin = sales - exp,
-                        jobs = data.second,
-                        expensesList = data.third
-                    )
-                }
-            }
+    // Customer receipts are dated by their collection transaction, not by job work date.
+    val periodGroups = remember(payments, expenses, selectedTabMode, settings.workspaceId, isTamil) {
+        ReceiptPeriodReport.periods(settings.workspaceId, payments, expenses, selectedTabMode, isTamil).map { period ->
+            BreakdownPeriodGroup(period.key, period.title, period.timestamp, period.received, period.spent,
+                period.received - period.spent, emptyList(), period.expenses, period.payments)
         }
     }
+    val unknownReceived = ReceiptPeriodReport.undatedReceived(settings.workspaceId, payments, jobs)
+    val totalSalesReceived = FinancialCalculationEngine.roundMoney(periodGroups.sumOf { it.sales } + unknownReceived)
+    val totalExpenseAmount = FinancialCalculationEngine.roundMoney(expenses.filter { it.workspaceId == settings.workspaceId }.sumOf { it.amount })
+    val unknownExpenses = FinancialCalculationEngine.roundMoney(totalExpenseAmount - periodGroups.sumOf { it.expenses })
+    val netProfitMargin = totalSalesReceived - totalExpenseAmount
 
     // Auto-expand first item if none expanded yet
     LaunchedEffect(selectedTabMode, periodGroups) {
@@ -308,7 +161,7 @@ fun BalanceSheetTab(
                     )
                     Spacer(modifier = Modifier.width(5.dp))
                     Text(
-                        text = if (isTamil) "Export PDF" else "Export PDF",
+                        text = if (isTamil) "PDF ஏற்றுமதி" else "Export PDF",
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF0F172A)
@@ -344,7 +197,7 @@ fun BalanceSheetTab(
                     ) {
                         Column {
                             Text(
-                                text = if (isTamil) "விற்பனை வசூல்" else "Sales Received",
+                                text = if (isTamil) "பெறப்பட்ட தொகை" else "Amount Received",
                                 fontSize = 12.5.sp,
                                 color = Color(0xFF64748B)
                             )
@@ -383,7 +236,7 @@ fun BalanceSheetTab(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (isTamil) "நிகர லாபம் / விளிம்பு:" else "Net Profit / Margin:",
+                            text = if (isTamil) "நிகர இருப்பு:" else "Net Balance:",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF0F172A)
@@ -399,6 +252,9 @@ fun BalanceSheetTab(
             }
         }
 
+        if (unknownReceived != 0.0 || unknownExpenses != 0.0) item {
+            Text((if (isTamil) "தேதி தெரியாத பழைய வசூல் (மொத்தத்தில் மட்டும்): " else "Legacy receipts — date unknown (overall only): ") + formatInr(unknownReceived, settings.currency) + (if (isTamil) " · தேதி தெரியாத செலவுகள்: " else " · Undated expenses: ") + formatInr(unknownExpenses, settings.currency), fontSize = 12.sp)
+        }
         // 3. Section Title ("Daily Breakdown" / "Monthly Breakdown" / "Yearly Breakdown")
         item {
             Text(
@@ -487,7 +343,7 @@ fun BalanceSheetTab(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column {
-                                Text(if (isTamil) "விற்பனை" else "Sales", fontSize = 11.5.sp, color = Color(0xFF64748B))
+                                Text(if (isTamil) "பெறப்பட்ட தொகை" else "Amount Received", fontSize = 11.5.sp, color = Color(0xFF64748B))
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(formatInr(group.sales, settings.currency), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F9D58))
                             }
@@ -497,7 +353,7 @@ fun BalanceSheetTab(
                                 Text(formatInr(group.expenses, settings.currency), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFFDC2626))
                             }
                             Column(horizontalAlignment = Alignment.End) {
-                                Text(if (isTamil) "நிகர விளிம்பு" else "Net Margin", fontSize = 11.5.sp, color = Color(0xFF64748B))
+                                Text(if (isTamil) "நிகர இருப்பு" else "Net Balance", fontSize = 11.5.sp, color = Color(0xFF64748B))
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     formatInr(group.netMargin, settings.currency),
@@ -515,7 +371,7 @@ fun BalanceSheetTab(
                             Spacer(modifier = Modifier.height(10.dp))
 
                             Text(
-                                text = if (isTamil) "வேலைகள் & வசூல்கள்:" else "Jobs & Collections:",
+                                text = if (isTamil) "வசூல்கள் & செலவுகள்:" else "Collections & Expenses:",
                                 fontSize = 12.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF0F5132)
@@ -523,30 +379,30 @@ fun BalanceSheetTab(
 
                             Spacer(modifier = Modifier.height(8.dp))
 
-                            if (group.jobs.isEmpty() && group.expensesList.isEmpty()) {
+                            if (group.receipts.isEmpty() && group.expensesList.isEmpty()) {
                                 Text(
-                                    text = if (isTamil) "இந்த காலகட்டத்தில் பதிவுகள் எதுவும் இல்லை" else "• No jobs or collections recorded",
+                                    text = if (isTamil) "இந்த காலகட்டத்தில் பதிவுகள் எதுவும் இல்லை" else "No collections or expenses recorded",
                                     fontSize = 12.sp,
                                     color = Color(0xFF94A3B8),
                                     modifier = Modifier.padding(vertical = 4.dp)
                                 )
                             } else {
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    group.jobs.forEach { job ->
+                                    group.receipts.forEach { receipt ->
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            val implement = job.workType.ifBlank { "Rotavator" }
+                                            val implement = com.example.ui.util.JobAuditPresentation.date(receipt.collectedAt)
                                             Text(
-                                                text = "• ${job.customerName} ($implement)",
+                                                text = "• ${receipt.customerName} ($implement)",
                                                 fontSize = 12.5.sp,
                                                 color = Color(0xFF334155),
                                                 modifier = Modifier.weight(1f, fill = false)
                                             )
                                             Text(
-                                                text = "+${formatInr(job.amountReceived, settings.currency)}",
+                                                text = "+${formatInr(receipt.amount, settings.currency)}",
                                                 fontSize = 12.5.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = Color(0xFF0F9D58)
@@ -598,13 +454,14 @@ fun BalanceSheetTab(
                         balance = g.netMargin
                     )
                 }
+                val completeSummary = ReceiptPeriodReport.withUndated(periodSummary, unknownReceived, unknownExpenses, isTamil)
                 val file = PdfGeneratorHelper.generateBalanceSheetPdf(
                     context = context,
                     settings = settings,
                     totalSales = totalSalesReceived,
                     totalExpenses = totalExpenseAmount,
                     netBalance = netProfitMargin,
-                    periodSummary = periodSummary
+                    periodSummary = completeSummary
                 )
                 file?.let {
                     PdfGeneratorHelper.sharePdf(context, it, "Balance Sheet Report - ${settings.businessName}")
@@ -620,13 +477,14 @@ fun BalanceSheetTab(
                         balance = g.netMargin
                     )
                 }
+                val completeSummary = ReceiptPeriodReport.withUndated(periodSummary, unknownReceived, unknownExpenses, isTamil)
                 val file = PdfGeneratorHelper.generateBalanceSheetPdf(
                     context = context,
                     settings = settings,
                     totalSales = totalSalesReceived,
                     totalExpenses = totalExpenseAmount,
                     netBalance = netProfitMargin,
-                    periodSummary = periodSummary
+                    periodSummary = completeSummary
                 )
                 file?.let {
                     val displayName = "Balance_Sheet_${selectedTabMode.name}_${System.currentTimeMillis()}"

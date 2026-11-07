@@ -20,6 +20,36 @@ import java.util.Base64
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], application = android.app.Application::class)
 class FirebaseOnlyDeletionEmulatorTest {
+    @Test fun editedJobDeletionKeepsTheOriginalNestedAuditOnTheServer() = runBlocking {
+        val before=job()
+        val events=com.example.data.sync.JobEditAudit.append(emptyList<Any>(),before.toFirestoreMap(),before.toFirestoreMap()+mapOf("notes" to "edited"),"owner","edit-original",before.createdAt)
+        val source=before.copy(notes="edited",jobEditHistoryJson=JSONArray(events).toString())
+        seedCurrent(source)
+        service("owner").execute(op(source))
+        assertFalse(exists("entries",id));assertFalse(exists("collections",31));assertFalse(exists("expenses",32))
+        val proof=JSONObject(request("v1/${name("entryDeletionProofs",id)}","GET").second).getJSONObject("fields")
+        val kept=FirestoreValueCodec.decode(proof.getJSONObject("deletedJobEditHistory")) as List<*>
+        assertTrue(com.example.data.sync.JobEditAudit.equivalent(JSONArray(events),JSONArray(kept)))
+    }
+    @Test fun deletionRulesRejectDroppingTheJobEditHistory() {
+        val before=job(paid=0.0)
+        val events=com.example.data.sync.JobEditAudit.append(emptyList<Any>(),before.toFirestoreMap(),before.toFirestoreMap(),"owner","original-event",before.createdAt)
+        val source=before.copy(jobEditHistoryJson=JSONArray(events).toString())
+        seed(name("entries",id) to source.toFirestoreMap())
+        val proof=mapOf("workspaceId" to "ws_test","recordId" to id.toString(),"actorUid" to "owner","operationId" to "bad-delete","actionTime" to now,"protocolVersion" to 2,
+            "sourceCreatedAt" to source.createdAt,"customerId" to customerId,"sourceCreatorUid" to "owner","sourceBeneficiaryUid" to "partner","totalAmount" to 100.0,"amountReceived" to 0.0,"pendingAmount" to 100.0,"collectionIds" to emptyList<String>())
+        val writes=JSONArray().put(JSONObject().put("delete",name("entries",id))).put(update(name("entryDeletionProofs",id),proof))
+        val denied=request("v1/$root:commit",body=JSONObject().put("writes",writes),token=jwt("owner"))
+        assertEquals(denied.second,403,denied.first);assertTrue(exists("entries",id));assertFalse(exists("entryDeletionProofs",id))
+        // A JSON cache can represent 100.0 as 100; the deletion proof must copy the
+        // exact stored Firestore nested types, as the real transport does.
+        val stored=JSONObject(request("v1/${name("entries",id)}","GET").second).getJSONObject("fields")
+        val proofWrite=update(name("entryDeletionProofs",id),proof)
+        proofWrite.getJSONObject("update").getJSONObject("fields").put("deletedJobEditHistory",stored.getJSONObject("jobEditHistory"))
+        val allowed=JSONArray().put(JSONObject().put("delete",name("entries",id))).put(proofWrite)
+        val result=request("v1/$root:commit",body=JSONObject().put("writes",allowed),token=jwt("owner"))
+        assertEquals(result.second,200,result.first);assertFalse(exists("entries",id))
+    }
     private val origin = "http://127.0.0.1:18180"
     private val root = "projects/demo-aidhunt-v16/databases/(default)/documents"
     private val id = 3758959838990728744L
@@ -45,6 +75,8 @@ class FirebaseOnlyDeletionEmulatorTest {
         is Boolean -> JSONObject().put("booleanValue", value)
         is Int, is Long -> JSONObject().put("integerValue", value.toString())
         is Number -> JSONObject().put("doubleValue", value.toDouble())
+        is List<*> -> JSONObject().put("arrayValue", JSONObject().put("values", JSONArray().apply { value.forEach { put(typed(it)) } }))
+        is Map<*, *> -> JSONObject().put("mapValue", JSONObject().put("fields", JSONObject().apply { value.forEach { (key, item) -> put(key as String, typed(item)) } }))
         else -> error("Unsupported fixture")
     }
     private fun update(name: String, values: Map<String, Any?>) = JSONObject().put("update", JSONObject().put("name", name)

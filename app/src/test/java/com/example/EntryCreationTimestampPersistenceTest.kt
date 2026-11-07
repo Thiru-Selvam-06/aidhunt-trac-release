@@ -18,7 +18,7 @@ class EntryCreationTimestampPersistenceTest {
     @Test
     fun createdAtSurvivesDatabaseReopen() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val databaseName = "entry-timestamp-${UUID.randomUUID()}.db"
+        val databaseName = "et-${UUID.randomUUID().toString().take(8)}.db"
         val originalCreatedAt = 1_000_000L
         val entry = JobEntryEntity(
             id = 123L,

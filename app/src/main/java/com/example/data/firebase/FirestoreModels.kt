@@ -377,6 +377,7 @@ fun JobEntryEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any
     "id" to id,
     "workspaceId" to workspaceId,
     "isHistorical" to isHistorical,
+    "jobEditHistory" to com.example.data.sync.JobEditAudit.read(jobEditHistoryJson),
     "entryForUid" to entryForUid,
     "financialAttributionUid" to financialAttributionUid,
 
@@ -416,6 +417,12 @@ fun jobEntryFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallb
     return JobEntryEntity(
         id = id,
         isHistorical = map["isHistorical"] as? Boolean ?: false,
+        jobEditHistoryJson = when (val history = map["jobEditHistory"]) {
+            null -> "[]"
+            is org.json.JSONArray -> history.toString()
+            is List<*> -> if (history.isEmpty()) "[]" else org.json.JSONArray(history).toString()
+            else -> throw IllegalArgumentException("Invalid job edit history; original action retained")
+        },
         entryForUid = map["entryForUid"] as? String ?: "",
         financialAttributionUid = map["financialAttributionUid"] as? String ?: "",
         workspaceId = wsId,

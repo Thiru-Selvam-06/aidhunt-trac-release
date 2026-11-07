@@ -160,7 +160,7 @@ class RoomScopeTest {
             sqlite.version = 16
             sqlite.setTransactionSuccessful()
         } finally { sqlite.endTransaction(); db.close() }
-        val reopened = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_16_17, AppDatabase.MIGRATION_17_18, AppDatabase.MIGRATION_18_19).build()
+        val reopened = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_16_17, AppDatabase.MIGRATION_17_18, AppDatabase.MIGRATION_18_19, AppDatabase.MIGRATION_19_20).build()
         try {
             assertEquals(5000L, reopened.jobEntryDao().getJobById("a", 1)?.createdAt)
             reopened.jobEntryDao().insertJob(entry("b"))

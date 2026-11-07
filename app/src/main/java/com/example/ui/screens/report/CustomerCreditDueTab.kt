@@ -363,6 +363,7 @@ fun CustomerCreditDueTab(
             }
         }
     }
+    val rankedCustomers = com.example.ui.util.CustomerIdentity.ranked(filteredCustomers, searchQuery, isTamil)
     val totalOutstanding = filteredCustomers.map { com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(it.balanceDue) }.filter { it > 0.0 }.sum()
     fun showCustomDatePickers() {
         val cal = Calendar.getInstance()
@@ -829,7 +830,7 @@ fun CustomerCreditDueTab(
                 }
             }
         } else {
-            items(filteredCustomers, key = { it.id }) { customer ->
+            items(rankedCustomers, key = { it.id }) { customer ->
                 CustomerCreditDueCard(
                     customer = customer,
                     isTamil = isTamil,
@@ -1027,7 +1028,7 @@ fun CustomerCreditDueTab(
                 val file = PdfGeneratorHelper.generateBulkCustomerDuesPdf(
                     context = context,
                     settings = settings,
-                    customers = filteredCustomers
+                    customers = rankedCustomers
                 )
                 file?.let {
                     PdfGeneratorHelper.sharePdf(context, it, "Customer Credit Dues Report - ${settings.businessName}")
@@ -1037,7 +1038,7 @@ fun CustomerCreditDueTab(
                 val file = PdfGeneratorHelper.generateBulkCustomerDuesPdf(
                     context = context,
                     settings = settings,
-                    customers = filteredCustomers
+                    customers = rankedCustomers
                 )
                 file?.let {
                     val displayName = "Customer_Credit_Dues_${settings.businessName.ifBlank { "Business" }}"

@@ -776,7 +776,7 @@ fun JobEntryItemCard(
                                 modifier = Modifier.size(13.5.dp)
                             )
                             Text(
-                                text = com.example.ui.components.formatDate(job.startTimeMillis.takeIf { it > 0 } ?: job.createdAt),
+                                text = if (job.isHistorical) com.example.ui.util.JobAuditPresentation.date(job.startTimeMillis, isTamil) else com.example.ui.util.JobAuditPresentation.instant(job.createdAt, isTamil),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Normal,
                                 color = Color(0xFF4B5563)
@@ -802,6 +802,8 @@ fun JobEntryItemCard(
                             )
                         }
                     }
+                    Text(com.example.data.auth.RoleUtils.getCreatedByDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil),
+                        fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
 
@@ -1249,7 +1251,7 @@ fun CustomerSummaryPopup(
 
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = if (isTamil) "உருவாக்கியவர்" else "Created By",
+                                        text = if (isTamil) "உருவாக்கியவர்" else "Entry by",
                                         fontSize = 11.sp,
                                         color = Color(0xFF6B7280)
                                     )
@@ -1273,12 +1275,12 @@ fun CustomerSummaryPopup(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = if (isTamil) "யாருக்காக" else "Entry For",
+                                        text = if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator",
                                         fontSize = 11.sp,
                                         color = Color(0xFF6B7280)
                                     )
                                     Text(
-                                        text = entryForDisplay.removePrefix(if (isTamil) "யாருக்காக: " else "Entry For: "),
+                                        text = entryForDisplay.removePrefix(if (isTamil) "வேலை இயக்குபவர்: " else "Entry for Operator: "),
                                         fontSize = 12.5.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = Color(0xFF111827),
@@ -1421,6 +1423,24 @@ fun CustomerSummaryPopup(
                         }
                     }
 
+                    Text((if (isTamil) "பதிவு செய்த நேரம்: " else "Recorded in TRAC: ") +
+                        com.example.ui.util.JobAuditPresentation.instant(job.createdAt, isTamil), fontSize = 12.sp)
+                    if (job.editedByUid.isNotBlank()) Text((if (isTamil) "கடைசியாக திருத்திய நேரம்: " else "Last edited: ") +
+                        com.example.ui.util.JobAuditPresentation.instant(job.updatedAt, isTamil), fontSize = 12.sp)
+                    val history = runCatching { com.example.data.sync.JobEditAudit.read(job.jobEditHistoryJson) }.getOrDefault(emptyList())
+                    if (history.isNotEmpty()) {
+                        var showHistory by remember(job.id) { mutableStateOf(false) }
+                        TextButton(onClick = { showHistory = !showHistory }) { Text(if (isTamil) "திருத்த வரலாறு" else "Edit history") }
+                        if (showHistory) history.asReversed().forEach { event ->
+                            val editor = workspaceMembers.firstOrNull { it.uid == event["actorUid"] }?.displayName ?: (if (isTamil) "உறுப்பினர் விவரம் இல்லை" else "Member unavailable")
+                            val before = event["before"] as? Map<*, *> ?: emptyMap<Any, Any>()
+                            val after = event["after"] as? Map<*, *> ?: emptyMap<Any, Any>()
+                            Text(editor + " · " + com.example.ui.util.JobAuditPresentation.instant((event["actionTime"] as? Number)?.toLong() ?: 0L, isTamil), fontSize = 12.sp)
+                            before.keys.filter { it !in setOf("customerId", "tractorId") && before[it].toString() != after[it].toString() }.forEach { key ->
+                                Text(com.example.ui.util.JobAuditPresentation.field(key.toString(), isTamil) + ": " + com.example.ui.util.JobAuditPresentation.value(key.toString(), before[key], job.isHistorical, isTamil) + " → " + com.example.ui.util.JobAuditPresentation.value(key.toString(), after[key], job.isHistorical, isTamil), fontSize = 11.sp)
+                            }
+                        }
+                    }
                     // 5. SIMPLE METADATA ROWS (Date, Work Type, Notes)
                     Column(
                         modifier = Modifier
@@ -1440,7 +1460,7 @@ fun CustomerSummaryPopup(
                                 color = Color(0xFF6B7280)
                             )
                             Text(
-                                text = formatDate(job.startTimeMillis),
+                                text = com.example.ui.util.JobAuditPresentation.date(job.startTimeMillis, isTamil),
                                 fontSize = 12.5.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFF111827)

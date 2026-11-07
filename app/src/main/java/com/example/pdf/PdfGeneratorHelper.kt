@@ -676,7 +676,7 @@ object PdfGeneratorHelper {
         paint.color = Color.rgb(46, 125, 50)
         paint.textSize = 11f
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        canvas.drawText("TOTAL RECEIVED SALES: ${formatInr(totalSales)}", 45f, 125f, paint)
+        canvas.drawText("AMOUNT RECEIVED: ${formatInr(totalSales)}", 45f, 125f, paint)
 
         paint.color = Color.rgb(198, 40, 40)
         canvas.drawText("TOTAL EXPENSES: ${formatInr(totalExpenses)}", 45f, 145f, paint)
@@ -684,7 +684,7 @@ object PdfGeneratorHelper {
         val netColor = if (netBalance >= 0) Color.rgb(30, 77, 43) else Color.rgb(198, 40, 40)
         paint.color = netColor
         paint.textSize = 12f
-        canvas.drawText("NET PROFIT / BALANCE: ${formatInr(netBalance)}", 330f, 135f, paint)
+        canvas.drawText("NET BALANCE: ${formatInr(netBalance)}", 330f, 135f, paint)
 
         // Table
         var yPos = 180f
@@ -695,7 +695,7 @@ object PdfGeneratorHelper {
         paint.textSize = 9f
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         canvas.drawText("PERIOD / DATE", 35f, yPos + 15f, paint)
-        canvas.drawText("RECEIVED SALES", 200f, yPos + 15f, paint)
+        canvas.drawText("AMOUNT RECEIVED", 200f, yPos + 15f, paint)
         canvas.drawText("EXPENSES", 340f, yPos + 15f, paint)
         canvas.drawText("NET BALANCE", 460f, yPos + 15f, paint)
 

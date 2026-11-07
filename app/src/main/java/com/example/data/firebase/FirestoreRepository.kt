@@ -743,6 +743,9 @@ class FirestoreRepository(
                 existing.getString("authorizationTimeStatus")?.let { payload["authorizationTimeStatus"] = it }
                 existing.getTimestamp("serverReceivedAt")?.let { payload["serverReceivedAt"] = it }
                 if (queuedOperation?.entityType == "JOB") {
+                    payload["jobEditHistory"] = com.example.data.sync.JobEditAudit.append(
+                        (existing.data?.get("jobEditHistory") as? List<*>).orEmpty(), existing.data.orEmpty(), payload,
+                        queuedOperation.actorUid, queuedOperation.operationId, queuedOperation.actionTime)
                     val history = (existing.data?.get("customerReassignmentHistory") as? List<*>)?.toList().orEmpty()
                     if (reassigning) {
                         require(history.size < 1000) { "Customer reassignment audit needs separate archival review" }

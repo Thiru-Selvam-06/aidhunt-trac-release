@@ -1687,6 +1687,12 @@ class WorkspaceRepository(
             firestoreRepository.getOperationRecordFromServer(op)?.let {
                 com.example.data.firebase.customerFromFirestoreMap(it, op.entityId, op.workspaceId)
             } else null
+        // The server creates exact audit snapshots (legacy absent fields remain null).
+        // Read them back instead of keeping a locally normalized approximation.
+        val auditJobId = if (op.entityType == "JOB") op.entityId else if (op.entityType == "PAYMENT") org.json.JSONObject(op.payloadJson).optLong("jobEntryId") else 0L
+        val needsAuditRead = auditJobId > 0 && jobEntryDao.getJobById(op.workspaceId, auditJobId)?.jobEditHistoryJson?.let { it != "[]" } == true
+        val confirmedJob = if (needsAuditRead && op.mutationType == "UPSERT")
+            firestoreRepository.getEntryFromServer(op.workspaceId, auditJobId) else null
         database.withTransaction {
             operations.acknowledge(op.operationId)
             if (op.mutationType == "DELETE") pendingDeleteManager.removePendingDelete(op.entityType, op.entityId, op.workspaceId)
@@ -1726,7 +1732,8 @@ class WorkspaceRepository(
                 when (op.entityType) {
                     "JOB" -> if (operations.outstandingOperations(op.workspaceId).none {
                         com.example.data.sync.OperationDependencies.blocksEntryAcknowledgement(it, op.entityId)
-                    }) jobEntryDao.markJobsSynced(op.workspaceId, listOf(op.entityId))
+                    }) { if (confirmedJob != null) jobEntryDao.insertJob(confirmedJob.copy(isSynced = true))
+                        else jobEntryDao.markJobsSynced(op.workspaceId, listOf(op.entityId)) }
                     "EXPENSE" -> expenseDao.markExpensesSynced(op.workspaceId, listOf(op.entityId))
                     "CUSTOMER" -> if (confirmedProfile != null) {
                         val stats = com.example.ui.util.FinancialCalculationEngine.calculateCustomerFinancials(confirmedProfile,
@@ -1740,7 +1747,8 @@ class WorkspaceRepository(
                         val jobId = org.json.JSONObject(op.payloadJson).optLong("jobEntryId")
                         if (operations.outstandingOperations(op.workspaceId).none {
                             com.example.data.sync.OperationDependencies.blocksEntryAcknowledgement(it, jobId)
-                        }) jobEntryDao.markJobsSynced(op.workspaceId, listOf(jobId))
+                        }) { if (confirmedJob != null) jobEntryDao.insertJob(confirmedJob.copy(isSynced = true))
+                            else jobEntryDao.markJobsSynced(op.workspaceId, listOf(jobId)) }
                     }
                 }
             }
@@ -1833,7 +1841,7 @@ class WorkspaceRepository(
                 com.example.data.sync.JobCustomerReassignment.requireSafe(existingJob,
                     paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty(), operations.outstandingOperations(wsId))
             }
-            if (!isOwner && existingJob.createdByUid.isNotBlank() && existingJob.createdByUid != actorUid) {
+            if (verifiedActorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR && existingJob.createdByUid.isNotBlank() && existingJob.createdByUid != actorUid) {
                 Log.w(TAG, "Security rejection: Non-owner ($currentActorName, uid=$actorUid) cannot edit another person's entry (${existingJob.createdByUid})")
                 throw SecurityException("Unauthorized: You can only edit your own entries")
             }
@@ -1888,7 +1896,7 @@ class WorkspaceRepository(
         } else {
             verifiedActorRole
         }
-        val finalCreatedByRole = if (!isOwner && com.example.data.auth.RoleUtils.isOwner(candidateRole)) "Partner" else candidateRole
+        val finalCreatedByRole = existingJob?.createdByRole ?: candidateRole
         val finalOperator = if (existingJob == null) {
             _activeWorkspaceMembers.value.firstOrNull { it.uid == entryTarget && it.workspaceId == wsId }
                 ?.displayName.orEmpty().ifBlank { job.operatorName.ifBlank { currentActorName } }
@@ -1920,7 +1928,7 @@ class WorkspaceRepository(
         val finalEditedByUid = if (existingJob != null) actorUid else ""
         val finalEditedByName = if (existingJob != null) currentActorName else ""
         val finalEditedByRole = if (existingJob != null) resolvedDefaultRole else ""
-        val finalUpdatedAt = if (existingJob != null) System.currentTimeMillis() else 0L
+        val finalUpdatedAt = if (existingJob != null) operationTime else 0L
 
         val identitySafeJob = if (!isOwner && existingJob == null) {
             enforceEntryIdentity(
@@ -1933,7 +1941,8 @@ class WorkspaceRepository(
             job
         }
 
-        val localJob = identitySafeJob.copy(
+        val initialJobOperationId = java.util.UUID.randomUUID().toString()
+        var localJob = identitySafeJob.copy(
             id = safeJobId,
             workspaceId = wsId,
             customerId = customerId,
@@ -1955,10 +1964,13 @@ class WorkspaceRepository(
             financialAttributionUid = existingJob?.financialAttributionUid ?: identitySafeJob.entryForUid.ifBlank { actorUid },
             startTimeMillis = effectiveEntryStartTimeForEdit(existingJob, job)
         )
+        com.example.data.auth.EntryFinancialMutationPolicy.requireBalancedAmounts(localJob.totalAmount, localJob.amountReceived, localJob.pendingAmount)
+        if (existingJob != null) localJob = localJob.copy(jobEditHistoryJson = org.json.JSONArray(
+            com.example.data.sync.JobEditAudit.append(com.example.data.sync.JobEditAudit.read(existingJob.jobEditHistoryJson),
+                existingJob.toFirestoreMap(), localJob.toFirestoreMap(), actorUid, initialJobOperationId, operationTime)).toString())
         jobEntryDao.insertJob(localJob)
         com.example.data.auth.EntryFinancialMutationPolicy.requireAuthorized(verifiedActorRole, existingJob?.amountReceived, localJob.amountReceived)
         val entrySnapshot = if (existingJob == null && localJob.amountReceived > 0) localJob.copy(amountReceived = 0.0, pendingAmount = localJob.totalAmount) else localJob
-        val initialJobOperationId = java.util.UUID.randomUUID().toString()
         enqueue("JOB", localJob.id, entrySnapshot.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid, baseSnapshot = existingJob?.toFirestoreMap(), operationId = initialJobOperationId)
         if (existingJob == null && localJob.amountReceived > 0) {
             val initialCollector = com.example.data.auth.CollectionPolicy.requireInitialCollector(wsId, localJob.entryForUid, _activeWorkspaceMembers.value)

@@ -181,9 +181,9 @@ fun CollectionHistoryTab(
             val matchesSearch = if (searchQuery.isBlank()) {
                 true
             } else {
-                payment.customerName.contains(searchQuery, ignoreCase = true) ||
-                payment.collectorName.contains(searchQuery, ignoreCase = true) ||
-                payment.notes.contains(searchQuery, ignoreCase = true)
+                com.example.ui.util.CustomerIdentity.matches(payment.customerName, searchQuery) ||
+                com.example.ui.util.CustomerIdentity.matches(payment.collectorName, searchQuery) ||
+                com.example.ui.util.CustomerIdentity.matches(payment.notes, searchQuery)
             }
 
             val matchesMethod = when (selectedMethodFilter) {
@@ -226,7 +226,18 @@ fun CollectionHistoryTab(
 
     val totalCollected = filteredPayments.filter { it.status == "ACTIVE" }.sumOf { it.amount }
     val filteredGroups = filteredPayments.groupBy { it.groupKey }
-    val visibleJobHistory = jobHistory.filter { it.key in filteredGroups }
+    val visibleJobHistory = jobHistory.filter { it.key in filteredGroups }.let { groups ->
+        if (searchQuery.isBlank()) groups else {
+            val key = com.example.ui.util.CustomerIdentity.searchKey(searchQuery)
+            val collator = java.text.Collator.getInstance(if (isTamil) java.util.Locale("ta", "IN") else java.util.Locale.ENGLISH)
+            groups.sortedWith(Comparator { a, b ->
+                val an = a.job?.customerName.orEmpty(); val bn = b.job?.customerName.orEmpty()
+                val rank = (if (com.example.ui.util.CustomerIdentity.searchKey(an).startsWith(key)) 0 else 1)
+                    .compareTo(if (com.example.ui.util.CustomerIdentity.searchKey(bn).startsWith(key)) 0 else 1)
+                if (rank != 0) rank else collator.compare(an, bn)
+            })
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("collection_history_list"),

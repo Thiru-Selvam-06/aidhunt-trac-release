@@ -39,25 +39,40 @@ class ArchitectureIntegrationTest {
                     javaClass.classLoader!!.getResourceAsStream(fixture)!!.bufferedReader().useLines { lines ->
                         lines.filter { it.startsWith("CREATE ") }.forEach { db.execSQL(it.removeSuffix(";")) }
                     }
+                    if (version == 19) {
+                        AppDatabase.MIGRATION_17_18.migrate(db)
+                        AppDatabase.MIGRATION_18_19.migrate(db)
+                    }
                     row(db, "job_entries", mapOf("id" to 1L, "workspaceId" to "a", "createdAt" to 5000L, "createdByUid" to "actor", "totalAmount" to 50000.0, "pendingAmount" to 30000.0, "amountReceived" to 20000.0))
                     row(db, "tractors", mapOf("id" to 1L, "workspaceId" to "a", "createdByUid" to "actor", "createdByRole" to "PARTNER"))
-                    if (version == 17) row(db, "pending_operations", mapOf("operationId" to "saved-op", "workspaceId" to "a", "actorUid" to "actor", "sequence" to 1L, "entityId" to 1L, "state" to "PENDING", "payloadJson" to "{}"))
+                    if (version >= 17) {
+                        row(db, "pending_operations", mapOf("operationId" to "saved-op", "workspaceId" to "a", "actorUid" to "actor", "sequence" to 1L, "entityId" to 1L, "state" to "PENDING", "payloadJson" to "{}"))
+                        row(db, "pending_operations", mapOf("operationId" to "rejected-original", "workspaceId" to "a", "actorUid" to "actor", "sequence" to 2L, "entityId" to 1L, "entityType" to "PAYMENT", "mutationType" to "UPSERT", "actionTime" to 5001L, "state" to "REJECTED", "attempts" to 2L, "failureReason" to "PERMISSION_DENIED", "payloadJson" to "{\"amount\":200,\"jobEntryId\":1}"))
+                    }
                 }
                 override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = error("Fixture never upgrades")
             }).build())
         helper.writableDatabase; helper.close()
-        val db = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_12_13, AppDatabase.MIGRATION_13_14, AppDatabase.MIGRATION_14_15, AppDatabase.MIGRATION_15_16, AppDatabase.MIGRATION_16_17, AppDatabase.MIGRATION_17_18, AppDatabase.MIGRATION_18_19).build()
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_12_13, AppDatabase.MIGRATION_13_14, AppDatabase.MIGRATION_14_15, AppDatabase.MIGRATION_15_16, AppDatabase.MIGRATION_16_17, AppDatabase.MIGRATION_17_18, AppDatabase.MIGRATION_18_19, AppDatabase.MIGRATION_19_20).build()
         try {
             val entry = db.jobEntryDao().getJobById("a", 1)!!
             assertEquals(5000L, entry.createdAt); assertEquals(50000.0, entry.totalAmount, 0.0); assertEquals(30000.0, entry.pendingAmount, 0.0)
             assertEquals("actor", entry.createdByUid)
             if (version == 14) assertEquals("PARTNER", db.tractorDao().getTractorsForWorkspaceOnce("a").single().createdByRole)
-            else if (version == 17) assertEquals("saved-op", db.pendingOperationDao().nextBatch("a", "actor").single().operationId)
+            else if (version >= 17) {
+                assertEquals("saved-op", db.pendingOperationDao().nextBatch("a", "actor").single().operationId)
+                val rejected=db.pendingOperationDao().outstandingOperations("a").single { it.operationId == "rejected-original" }
+                assertEquals("REJECTED",rejected.state);assertEquals("actor",rejected.actorUid)
+                assertEquals(5001L,rejected.actionTime);assertEquals(2,rejected.attempts)
+                assertEquals("{\"amount\":200,\"jobEntryId\":1}",rejected.payloadJson)
+                assertEquals("[]",entry.jobEditHistoryJson)
+            }
         } finally { db.close(); context.deleteDatabase(name) }
     }
     @Test fun actualRelease14PreservesIdentityMoneyAndRoleSnapshot() = runBlocking { upgrade(14, "release-v14-schema.sql") }
     @Test fun release13SameVersionLineageUpgrades() = runBlocking { upgrade(13, "release-v14-schema.sql") }
     @Test fun knownLocal17PreservesPendingQueue() = runBlocking { upgrade(17, "local-v17-schema.sql") }
+    @Test fun fullVersion19SchemaPreservesMoneyPendingAndRejectedActionsAt20() = runBlocking { upgrade(19, "local-v17-schema.sql") }
     @Test fun rejectedDependencyDoesNotHideIndependentPendingCommands() = runBlocking {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).build()
         try {

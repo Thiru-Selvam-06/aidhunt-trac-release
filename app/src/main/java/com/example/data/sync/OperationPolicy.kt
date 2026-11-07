@@ -41,7 +41,7 @@ object OperationPolicy {
             linkedJob.workspaceId == op.workspaceId && linkedJob.createdByUid == op.actorUid &&
             linkedJob.entryForUid == target && !linkedJob.isHistorical
         val permitted = when (op.entityType) {
-            "JOB" -> owner || (!data.optBoolean("isHistorical") && (partner || operator) && creator == op.actorUid && (partner || target == op.actorUid) && timely)
+            "JOB" -> owner || (partner && op.mutationType == "UPSERT" && data.optString("expectedBaseJson").let { it.isNotBlank() && it != "null" }) || (!data.optBoolean("isHistorical") && (partner || operator) && creator == op.actorUid && (partner || target == op.actorUid) && timely)
             "EXPENSE" -> owner || (partner && creator == op.actorUid && (target == op.actorUid || matchingOwnJob) && timely)
             "WITHDRAWAL" -> owner || (partner && creator == op.actorUid && target == op.actorUid && timely)
             "TRACTOR", "EXTENSION" -> owner || (partner && creator == op.actorUid)

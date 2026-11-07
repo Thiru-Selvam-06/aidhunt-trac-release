@@ -100,7 +100,8 @@ object AuthorizationManager {
      * EDIT RULES:
      * - Requires account to be ACTIVE.
      * - OWNER: Can edit ANY entry without 24-hour restriction.
-     * - PARTNER / OPERATOR: Can edit ONLY their own UID-attributed entry AND ONLY within 24 HOURS of actual creation timestamp,
+     * - PARTNER: Can edit existing ordinary/historical entries across creators and dates.
+     * - OPERATOR: Can edit ONLY their own ordinary entry within 24 HOURS of creation,
      *   provided platform permission canEditEntry == true.
      */
     fun canEditEntry(
@@ -113,7 +114,8 @@ object AuthorizationManager {
     ): Boolean {
         val normalized = RoleUtils.normalizeRole(role)
         if (isOwner && (role.isBlank() || normalized == RoleUtils.ROLE_OWNER)) return true
-        if (normalized !in setOf(RoleUtils.ROLE_PARTNER, RoleUtils.ROLE_OPERATOR) || job.isHistorical) return false
+        if (normalized == RoleUtils.ROLE_PARTNER) return currentUid.isNotBlank() && job.createdByUid.isNotBlank()
+        if (normalized != RoleUtils.ROLE_OPERATOR || job.isHistorical) return false
         return currentUid.isNotBlank() && job.createdByUid == currentUid && within24Hours(job.createdAt, currentTimeMillis)
     }
 

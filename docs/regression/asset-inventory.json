@@ -15,6 +15,7 @@
     "app/src/main/java/com/example/ui/screens/report/CustomerDuesPartnerFilter.kt",
     "app/src/main/java/com/example/ui/screens/report/ExpensesTab.kt",
     "app/src/main/java/com/example/ui/screens/report/MemberFinancialData.kt",
+    "app/src/main/java/com/example/ui/screens/report/ReceiptPeriodReport.kt",
     "app/src/main/java/com/example/ui/screens/report/ReportScreen.kt",
     "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt"
   ],
@@ -59,6 +60,7 @@
     "app/src/test/java/com/example/CollectionPolicyTest.kt",
     "app/src/test/java/com/example/CollectionVisibilityRegressionTest.kt",
     "app/src/test/java/com/example/CompleteRegressionPipelineTest.kt",
+    "app/src/test/java/com/example/CoreEnhancementTest.kt",
     "app/src/test/java/com/example/CustomerDeletionDialogTest.kt",
     "app/src/test/java/com/example/CustomerIdentityEditingTest.kt",
     "app/src/test/java/com/example/EntryAcknowledgementDependenciesTest.kt",
@@ -104,6 +106,7 @@
     "app/src/test/java/com/example/RoomMigrationChainTest.kt",
     "app/src/test/java/com/example/RoomScopeTest.kt",
     "app/src/test/java/com/example/ScreenshotFollowupRegressionTest.kt",
+    "app/src/test/java/com/example/ServerActionTimeBarrierTest.kt",
     "app/src/test/java/com/example/StandaloneExpenseConflictCompatibilityTest.kt",
     "app/src/test/java/com/example/StandaloneExpenseWireTest.kt",
     "app/src/test/java/com/example/StartupAuthPresentationTest.kt",
@@ -139,6 +142,7 @@
     "app/src/androidTest/java/com/example/WorkspaceSelectionDeviceTest.kt"
   ],
   "backend_tests": [
+    "functions/device-network-fixture.test.js",
     "functions/entry-deletion-emulator.test.js",
     "functions/entry-deletion-http.test.js",
     "functions/entry-deletion-policy.test.js",

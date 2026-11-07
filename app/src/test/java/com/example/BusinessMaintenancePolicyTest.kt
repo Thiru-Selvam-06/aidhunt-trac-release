@@ -61,7 +61,7 @@ class BusinessMaintenancePolicyTest {
     @Test fun entryForDisplayResolvesExactWorkspaceBeneficiaryNotCreatorCollectorOrDuplicateNames() {
         val labels = members.map { it.copy(displayName = it.uid) }
         val source = job(1, "partner-b", 500.0)
-        assertEquals("Entry For: Partner — partner-b", RoleUtils.getEntryForDisplay(source, workspaceMembers = labels))
+        assertEquals("Entry for Operator: Partner — partner-b", RoleUtils.getEntryForDisplay(source, workspaceMembers = labels))
         assertEquals("owner", source.createdByUid)
         assertEquals("partner-b", source.entryForUid)
         assertNull(RoleUtils.getEntryForDisplay(source.copy(entryForUid = ""), workspaceMembers = labels))

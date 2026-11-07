@@ -182,7 +182,7 @@ class ClientDeliveryRequirementsTest {
     // Requirement 5: Partner Edit/Delete Authorization
     // -------------------------------------------------------------
     @Test
-    fun testPartner_canEditAndDelete_onlyOwnNewEntryJob_within24Hours() {
+    fun testPartner_editsAllExistingJobs_butDeletionRemainsOwnAndTimely() {
         val now = System.currentTimeMillis()
         val ownJobRecent = createJob(
             id = 10L,
@@ -220,7 +220,7 @@ class ClientDeliveryRequirementsTest {
             startTimeMillis = now - (25 * 3600 * 1000L),
             createdAt = now - (25 * 3600 * 1000L)
         )
-        assertFalse(
+        assertTrue(
             AuthorizationManager.canEditEntry(
                 job = ownJobOld,
                 isOwner = false,
@@ -246,7 +246,7 @@ class ClientDeliveryRequirementsTest {
             addedByPartner = "Partner Two",
             createdByUid = "partner_2"
         )
-        assertFalse(
+        assertTrue(
             AuthorizationManager.canEditEntry(
                 job = otherPartnerJob,
                 isOwner = false,

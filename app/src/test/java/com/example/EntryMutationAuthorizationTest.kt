@@ -57,8 +57,8 @@ class EntryMutationAuthorizationTest {
     }
 
     @Test
-    fun testPartnerCannotEditOwnEntryAfter24Hours() {
-        assertFalse(canEdit(job(), "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis + 1L))
+    fun testPartnerCanEditOwnEntryAfter24Hours() {
+        assertTrue(canEdit(job(), "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis + 1L))
     }
 
     @Test
@@ -72,8 +72,8 @@ class EntryMutationAuthorizationTest {
     }
 
     @Test
-    fun testPartnerCannotEditAnotherUsersEntry() {
-        assertFalse(canEdit(job(), "another-uid", RoleUtils.ROLE_PARTNER, createdAt + 1L))
+    fun testPartnerCanEditAnotherUsersEntry() {
+        assertTrue(canEdit(job(), "another-uid", RoleUtils.ROLE_PARTNER, createdAt + 1L))
     }
 
     @Test
@@ -142,15 +142,15 @@ class EntryMutationAuthorizationTest {
     @Test
     fun testMutationDeniedAtExactly24Hours() {
         val exactlyAtBoundary = createdAt + windowMillis
-        assertFalse(canEdit(job(), "partner-uid", RoleUtils.ROLE_PARTNER, exactlyAtBoundary))
+        assertTrue(canEdit(job(), "partner-uid", RoleUtils.ROLE_PARTNER, exactlyAtBoundary))
         assertFalse(canDelete(job(), "partner-uid", RoleUtils.ROLE_PARTNER, exactlyAtBoundary))
     }
 
     @Test
-    fun testLegacyEntryWithoutCreationTimeRequiresVerifiedMigration() {
+    fun testPartnerEditingDoesNotDependOnMissingLegacyCreationTime() {
         val legacyEntry = job(createdAtMillis = 0L, startTimeMillis = createdAt)
-        assertFalse(canEdit(legacyEntry, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis - 1L))
-        assertFalse(canEdit(legacyEntry, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
+        assertTrue(canEdit(legacyEntry, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis - 1L))
+        assertTrue(canEdit(legacyEntry, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
     }
 
     @Test
@@ -160,8 +160,8 @@ class EntryMutationAuthorizationTest {
         }
         val mappedEntry = jobEntryFromFirestoreMap(legacyMap)
 
-        assertFalse(canEdit(mappedEntry, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis - 1L))
-        assertFalse(canEdit(mappedEntry, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
+        assertTrue(canEdit(mappedEntry, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis - 1L))
+        assertTrue(canEdit(mappedEntry, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
     }
 
     @Test
@@ -183,7 +183,7 @@ class EntryMutationAuthorizationTest {
         assertEquals(createdAt, locallySaved.startTimeMillis)
         assertEquals(createdAt, pendingSyncPayload["startTimeMillis"])
         assertEquals(createdAt, synchronized.startTimeMillis)
-        assertFalse(canEdit(synchronized, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
+        assertTrue(canEdit(synchronized, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
     }
 
     @Test
@@ -196,13 +196,13 @@ class EntryMutationAuthorizationTest {
             effectiveEntryStartTimeForEdit(persistedEntry, submittedEdit)
         )
         assertEquals(createdAt, submittedEdit.createdAt)
-        assertFalse(canEdit(submittedEdit, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
+        assertTrue(canEdit(submittedEdit, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
     }
 
     @Test
     fun testRecentEditDoesNotResetCreationWindow() {
         val editedEntry = job().copy(updatedAt = createdAt + windowMillis - 1L)
-        assertFalse(canEdit(editedEntry, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
+        assertTrue(canEdit(editedEntry, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
     }
 
     @Test
@@ -217,7 +217,7 @@ class EntryMutationAuthorizationTest {
         assertTrue(canEdit(offlineEdit, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis - 1L))
         assertEquals(createdAt, offlineEdit.createdAt)
         assertEquals(createdAt, synchronized.createdAt)
-        assertFalse(canEdit(synchronized, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
+        assertTrue(canEdit(synchronized, "partner-uid", RoleUtils.ROLE_PARTNER, createdAt + windowMillis))
     }
 
     @Test

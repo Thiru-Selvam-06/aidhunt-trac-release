@@ -91,7 +91,7 @@ object RoleUtils {
     ): String {
         val (role, name) = resolveCreatorRoleAndName(job, ownerName, workspaceMembers, partners)
         val roleAndName = formatRoleAndName(role, name, isTamil)
-        val prefix = if (isTamil) "உருவாக்கியவர்" else "Created by"
+        val prefix = if (isTamil) "உருவாக்கியவர்" else "Entry by"
         return "$prefix: $roleAndName"
     }
 
@@ -116,7 +116,7 @@ object RoleUtils {
 
         val displayRole = if (hasBusinessPartnership && entryForRole == ROLE_OWNER) ROLE_PARTNER else entryForRole
         val roleAndName = formatRoleAndName(displayRole, entryForName, isTamil)
-        val prefix = if (isTamil) "யாருக்காக" else "Entry For"
+        val prefix = if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator"
         return "$prefix: $roleAndName"
     }
 

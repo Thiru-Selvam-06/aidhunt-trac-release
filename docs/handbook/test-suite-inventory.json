@@ -115,6 +115,12 @@
       "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
     },
     {
+      "source": "app/src/test/java/com/example/CoreEnhancementTest.kt",
+      "class": "com.example.CoreEnhancementTest",
+      "partition": "database",
+      "assertionStatus": "SOURCE INVENTORY ONLY; consult executed JUnit"
+    },
+    {
       "source": "app/src/test/java/com/example/CustomerDeletionDialogTest.kt",
       "class": "com.example.CustomerDeletionDialogTest",
       "partition": "compose",
