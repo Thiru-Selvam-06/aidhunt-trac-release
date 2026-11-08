@@ -142,7 +142,33 @@ class DeviceEmulatorIntegrationTest {
   val a=PendingOperationEntity("device-A-"+java.util.UUID.randomUUID(),ws,"device-partner","JOB",10,"UPSERT",db.pendingOperationDao().nextSequence(),origin+18*3600000,JSONObject(initial).put("operationProtocolVersion",2).put("expectedBaseJson",JSONObject(jobEntryFromFirestoreMap(initial).toFirestoreMap()).toString()).put("totalAmount",200.0).put("pendingAmount",200.0).toString());
   android.util.Log.i("DEVICE_TEST_STAGE","B offline Room enqueue");cloud.disableNetwork().await();db.pendingOperationDao().insert(a);db.jobEntryDao().insertJob(jobEntryFromFirestoreMap(JSONObject(a.payloadJson).let { j->j.keys().asSequence().associateWith { j.get(it) } }));assertEquals(a.actionTime,db.pendingOperationDao().nextBatch(ws,"device-partner").first{it.operationId==a.operationId}.actionTime);cloud.enableNetwork().await();android.util.Log.i("DEVICE_TEST_STAGE","B replay");repo.applyPendingOperation(a);repo.applyPendingOperation(a);db.pendingOperationDao().acknowledge(a.operationId);
   val confirmed=cloud.document("workspaces/$ws/entries/10").get(Source.SERVER).await().data!!;assertEquals(200.0,(confirmed["totalAmount"] as Number).toDouble(),0.0);assertEquals(a.operationId,confirmed["operationId"]);assertEquals(a.actionTime,(confirmed["actionTime"] as Number).toLong());
-  val b=a.copy(operationId="device-B-"+java.util.UUID.randomUUID(),sequence=db.pendingOperationDao().nextSequence(),actionTime=origin+26*3600000,payloadJson=JSONObject(a.payloadJson).put("expectedBaseJson",JSONObject(jobEntryFromFirestoreMap(confirmed).toFirestoreMap()).toString()).put("totalAmount",300.0).put("pendingAmount",300.0).toString());db.pendingOperationDao().insert(b);try{repo.applyPendingOperation(b);fail("Expired edit accepted")}catch(e:com.google.firebase.firestore.FirebaseFirestoreException){assertEquals(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,e.code);db.pendingOperationDao().failed(b.operationId,"REJECTED","Expired edit: original action exceeds 24 hours; local action retained")};android.util.Log.i("DEVICE_TEST_STAGE","B recovery");assertTrue(OfflineEntryRecovery.restore(db,b,confirmed,{true},{}));assertEquals(200.0,db.jobEntryDao().getJobById(ws,10)!!.totalAmount,0.0);assertEquals(200.0,(cloud.document("workspaces/$ws/entries/10").get(Source.SERVER).await().get("totalAmount") as Number).toDouble(),0.0);assertEquals(b.payloadJson,db.pendingOperationDao().observeActor(ws,"device-partner").first().first{it.operationId==b.operationId}.payloadJson);
+  // Approved policy: Partners may edit existing jobs beyond 24 hours. The original
+  // deadline still applies to Operators, whose rejected payload/recovery is tested below.
+  val b=a.copy(operationId="device-B-"+java.util.UUID.randomUUID(),sequence=db.pendingOperationDao().nextSequence(),actionTime=origin+26*3600000,payloadJson=JSONObject(a.payloadJson).put("expectedBaseJson",JSONObject(jobEntryFromFirestoreMap(confirmed).toFirestoreMap()).toString()).put("totalAmount",300.0).put("pendingAmount",300.0).toString())
+  db.pendingOperationDao().insert(b);repo.applyPendingOperation(b);repo.applyPendingOperation(b);db.pendingOperationDao().acknowledge(b.operationId)
+  val later=cloud.document("workspaces/$ws/entries/10").get(Source.SERVER).await().data!!
+  assertEquals(300.0,(later["totalAmount"] as Number).toDouble(),0.0)
+  assertEquals(initial["createdByUid"],later["createdByUid"]);assertEquals(initial["createdAt"],later["createdAt"])
+  assertEquals("device-partner",later["editedByUid"]);assertEquals(b.actionTime,later["updatedAt"])
+  assertEquals(2,(later["jobEditHistory"] as List<*>).size)
+
+  login("operator")
+  // A distinct existing Operator-owned fixture isolates the edit deadline from
+  // new-customer/new-job creation permissions.
+  val operatorBefore=cloud.document("workspaces/$ws/entries/21").get(Source.SERVER).await().data!!
+  val expired=PendingOperationEntity("operator-expired-"+java.util.UUID.randomUUID(),ws,"device-operator","JOB",21,"UPSERT",db.pendingOperationDao().nextSequence(),origin+26*3600000,
+   JSONObject(operatorBefore).put("operationProtocolVersion",2).put("expectedBaseJson",JSONObject(jobEntryFromFirestoreMap(operatorBefore).toFirestoreMap()).toString()).put("totalAmount",150.0).put("pendingAmount",150.0).toString())
+  db.pendingOperationDao().insert(expired)
+  db.jobEntryDao().insertJob(jobEntryFromFirestoreMap(operatorBefore).copy(totalAmount=150.0,pendingAmount=150.0,isSynced=false))
+  try{repo.applyPendingOperation(expired);fail("Expired Operator edit accepted")}
+  catch(e:com.google.firebase.firestore.FirebaseFirestoreException){assertEquals(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,e.code);db.pendingOperationDao().failed(expired.operationId,"REJECTED","Expired Operator edit: original action exceeds 24 hours; local action retained")}
+  android.util.Log.i("DEVICE_TEST_STAGE","B recovery")
+  assertTrue(OfflineEntryRecovery.restore(db,expired,operatorBefore,{true},{}))
+  assertEquals(100.0,db.jobEntryDao().getJobById(ws,21)!!.totalAmount,0.0)
+  assertEquals(operatorBefore,cloud.document("workspaces/$ws/entries/21").get(Source.SERVER).await().data)
+  val retained=db.pendingOperationDao().getOperation(expired.operationId)!!
+  assertEquals("REJECTED",retained.state);assertEquals(expired.payloadJson,retained.payloadJson)
+  assertEquals(expired.actionTime,retained.actionTime);assertEquals("device-operator",retained.actorUid)
   android.util.Log.i("DEVICE_TEST_STAGE","B account switch");login("owner");try{repo.applyPendingOperation(a);fail("Wrong actor uploaded")}catch(_:SecurityException){};login("partner");android.util.Log.i("DEVICE_TEST_STAGE","B done");Unit
  }
  @Test(timeout = 90000) fun cLegacyQueueAndCallableUpgradeRequired()=runBlocking {
@@ -150,7 +176,11 @@ class DeviceEmulatorIntegrationTest {
   val token=auth.currentUser!!.getIdToken(false).await().token!!;val request=WorkspaceCommandProtocol.request(FirebaseEnvironment.commandUrl(FirebaseEnvironment.DEMO_PROJECT,"deleteWorkspaceEntry"),token,JSONObject().put("workspaceId",ws).put("entryId","10"));okhttp3.OkHttpClient().newCall(request).execute().use{r->try{WorkspaceCommandProtocol.verifyResponse(r.code,r.body!!.string());fail("Legacy callable accepted")}catch(_:WorkspaceUpgradeRequiredException){}}
  }
  @Test(timeout = 90000) fun dFreshOwnerCreateDeleteAndRetry()=runBlocking {
-  login("owner");val now=System.currentTimeMillis();val data=cloud.document("workspaces/$ws/entries/10").get(Source.SERVER).await().data!!.toMutableMap();data["id"]=20L;data["createdAt"]=now;data["createdByUid"]="device-owner";data["createdByRole"]="OWNER";data["entryForUid"]="device-owner";data["financialAttributionUid"]="device-owner";data.remove("authorizationCreatedAt");data.remove("serverReceivedAt");val op=PendingOperationEntity("fresh-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",20,"UPSERT",1000,now,JSONObject(data).put("operationProtocolVersion",2).toString());val repo=FirestoreRepository(context);repo.applyPendingOperation(op);assertTrue(cloud.document("workspaces/$ws/entries/20").get(Source.SERVER).await().exists());val deletion=op.copy(operationId="delete-"+java.util.UUID.randomUUID(),mutationType="DELETE",actionTime=System.currentTimeMillis(),payloadJson=deletionPayload(data).toString());repo.applyPendingOperation(deletion);repo.applyPendingOperation(deletion);assertFalse(cloud.document("workspaces/$ws/entries/20").get(Source.SERVER).await().exists());login("partner")
+  login("owner");val now=System.currentTimeMillis();val data=cloud.document("workspaces/$ws/entries/10").get(Source.SERVER).await().data!!.toMutableMap();data["id"]=20L;data["createdAt"]=now;data["createdByUid"]="device-owner";data["createdByRole"]="OWNER";data["entryForUid"]="device-owner";data["financialAttributionUid"]="device-owner"
+  // This is a new synthetic record, not an edit or recovery of its template.
+  data["jobEditHistory"]=emptyList<Any>();data["editedByUid"]="";data["editedByName"]="";data["editedByRole"]="";data["updatedAt"]=0L
+  data["addedByPartner"]="Device OWNER";data["operatorName"]="Device OWNER"
+  data.remove("authorizationCreatedAt");data.remove("serverReceivedAt");val op=PendingOperationEntity("fresh-"+java.util.UUID.randomUUID(),ws,"device-owner","JOB",20,"UPSERT",1000,now,JSONObject(data).put("operationProtocolVersion",2).toString());val repo=FirestoreRepository(context);repo.applyPendingOperation(op);assertTrue(cloud.document("workspaces/$ws/entries/20").get(Source.SERVER).await().exists());val deletion=op.copy(operationId="delete-"+java.util.UUID.randomUUID(),mutationType="DELETE",actionTime=System.currentTimeMillis(),payloadJson=deletionPayload(data).toString());repo.applyPendingOperation(deletion);repo.applyPendingOperation(deletion);assertFalse(cloud.document("workspaces/$ws/entries/20").get(Source.SERVER).await().exists());login("partner")
  }
 
  @Test(timeout=90000) fun eOwnerFinancialDeletionPreconditions()=runBlocking {

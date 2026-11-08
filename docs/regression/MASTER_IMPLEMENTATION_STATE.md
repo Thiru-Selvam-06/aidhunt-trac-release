@@ -72,9 +72,14 @@ The same source also passed `assembleDebug`, `lintDebug` and
 Compilation does not count as running Android instrumentation. Production
 `google-services.json` was restored byte-for-byte after the isolated demo run
 (SHA-256 `a631361d4ab09d562294b7253978555decf25e6374245afb10f0bd99cde3c120`).
-Publishing is currently blocked by GitHub login: Git GUI initially selected
-Inbha-G, which lacks repository write permission; the repository-specific
-Thiru-Selvam-06 sign-in is awaiting the user. No current-branch CI pass is claimed.
+The initial publishing block was resolved after the repository-specific GitHub
+sign-in. Draft PR #6 and branch `codex/core-enhancements-phase1-5` are published.
+The replay correction at `ce0b6a6` passed 691 local JVM/Room tests. Its Android
+run finished 31 tests with 29 pass and two obsolete-policy/fixture failures;
+the synchronization timeout journeys passed. The preserved Operator denial and
+fresh-history fixture corrections have passed compilation and 311 local Rules
+tests; corrected runtime execution is still pending. See
+`CORE_ANDROID_REPLAY_FOLLOWUP.md` for actual error evidence and run identities.
 
 The five-receipt Partner deletion boundary originally hit Firestore's **1,000
 expression evaluation limit**, not a missing Owner privilege. Full proof checks
@@ -94,6 +99,9 @@ large-history acceptance and a coordinated old-client rollout are release gates.
 1. Finish core regression, Rules, build/lint, Android-emulator CI and review.
 2. Persistent custom categories, existing precise expense editing and refund-safe
    category/funding analytics, reusing current forms and charts.
+   These are implemented on the separate expense-category development branch;
+   its pre-replay-merge local run passed 699 tests and final category Rules passed
+   333. Combined-source/Android gates and stale form-base review remain open.
 3. Authoritative atomic cash/entitlement controls and operation receipts before any
    borrowing feature. A phone-side balance alone is insufficient.
 4. Separate external loan/disbursement/principal/interest/repayment model and UI,
