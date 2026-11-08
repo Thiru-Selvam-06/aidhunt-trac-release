@@ -123,3 +123,19 @@ Fresh local app run after the listener identity correction:727/727,97 classes,
 zero failures/errors/skips (5m21s). Build/lint/Android-test compilation and the
 next exact-source GitHub Android runtime remain separate gates. The two failed
 runtime attempts remain recorded; no timeout or business assertion was relaxed.
+
+## Named timeout identifies a newly introduced summary expectation error
+
+Run42502199217 atfa248e3 again executed36 tests with one failure. The named stage
+was the Owner's customer summary wait, which expected850.25. The unchanged existing
+FinancialCalculationEngine.customerLedger rounds customer billed/paid summaries to
+whole rupees, so that new predicate was impossible under the app's current policy.
+This is separate from the independently confirmed listener-registration defect.
+
+The test-only correction preserves current business outcomes: customer summary850.0,
+while independently asserting raw server, Operator-peer and Owner job amount/due
+remain850.25 with exact customer/operation identities. No amount, attribution,
+formula, timeout or required journey is changed. The user approved preparing a
+SEPARATE paise-consistency change across the app; no such calculation change is
+mixed into this Operator correction. Corrected instrumentation compilation passed
+(1m35s); fresh exact-source runtime remains required. Failed runs stay recorded.

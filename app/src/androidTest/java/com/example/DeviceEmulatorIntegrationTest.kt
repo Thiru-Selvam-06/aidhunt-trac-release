@@ -848,6 +848,7 @@ class DeviceEmulatorIntegrationTest {
   val confirmed=cloud.document("workspaces/$ws/entries/$jobId").get(Source.SERVER).await().data!!
   assertEquals(actor,confirmed["createdByUid"]);assertEquals(actor,confirmed["entryForUid"])
   assertEquals(850.25,confirmed["totalAmount"] as Double,0.0);assertEquals(jobCommand.operationId,confirmed["operationId"])
+  assertEquals(850.25,(confirmed["pendingAmount"] as Number).toDouble(),0.0);assertEquals(0.0,(confirmed["amountReceived"] as Number).toDouble(),0.0)
   try {cloud.document("workspaces/$ws/customers/$customerId").get(Source.SERVER).await();fail("Operator read customer finances")}
   catch(error:com.google.firebase.firestore.FirebaseFirestoreException){assertEquals(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,error.code)}
   FirestoreRepository(context).applyPendingOperation(original)
@@ -872,13 +873,19 @@ class DeviceEmulatorIntegrationTest {
     kotlinx.coroutines.withTimeout(30000){fresh.jobEntryDao().getJobsForWorkspace(ws).first{rows->rows.any{it.id==jobId}}}.single{it.id==jobId}
    }
    assertEquals(actor,peerJob.createdByUid);assertEquals(actor,peerJob.entryForUid);assertEquals(850.25,peerJob.totalAmount,0.0)
+   assertEquals(customerId,peerJob.customerId);assertEquals(850.25,peerJob.pendingAmount,0.0)
   } finally {peerCloud.stopRealtimeListeners();peerScope.coroutineContext[kotlinx.coroutines.Job]?.cancel();fresh.close()}
   login("owner")
   val owner=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid=="device-owner"}}!!
   assertTrue(workspace.initializeForUser(owner).isSuccess)
-  syncStage("Owner canonical customer and850.25 due after Operator account switch") {
-   kotlinx.coroutines.withTimeout(30000){db.customerDao().getCustomersForWorkspace(ws).first{rows->rows.any{it.id==customerId&&it.balanceDue==850.25}}}
+  val ownerCustomer=syncStage("Owner customer summary under existing whole-rupee policy after account switch") {
+   // customerLedger intentionally rounds the customer summary to whole rupees;
+   // raw job/queue/peer paise are independently asserted above and remain unchanged.
+   kotlinx.coroutines.withTimeout(30000){db.customerDao().getCustomersForWorkspace(ws).first{rows->rows.any{it.id==customerId&&it.balanceDue==850.0}}}.single{it.id==customerId}
   }
+  assertEquals(850.0,ownerCustomer.totalBilled,0.0);assertEquals(0.0,ownerCustomer.totalPaid,0.0)
+  assertEquals(850.25,db.jobEntryDao().getJobById(ws,jobId)!!.totalAmount,0.0)
+  assertEquals(850.25,db.jobEntryDao().getJobById(ws,jobId)!!.pendingAmount,0.0)
   assertEquals(confirmed,cloud.document("workspaces/$ws/entries/$jobId").get(Source.SERVER).await().data)
   assertEquals(name,cloud.document("workspaces/$ws/customers/$customerId").get(Source.SERVER).await().getString("name"))
   assertEquals(original.payloadJson,db.pendingOperationDao().getOperation(original.operationId)!!.payloadJson)
