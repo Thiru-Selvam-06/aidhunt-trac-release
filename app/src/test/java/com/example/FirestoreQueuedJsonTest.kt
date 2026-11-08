@@ -3,6 +3,7 @@ package com.example
 import com.example.data.firebase.FirestoreQueuedJson
 import com.example.data.firebase.JobEditorMetadata
 import com.example.data.entity.PendingOperationEntity
+import com.example.data.auth.RoleUtils
 import com.google.firebase.firestore.util.CustomClassMapper
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -49,7 +50,7 @@ class FirestoreQueuedJsonTest {
             "totalAmount" to 200.0)
         val original = queued.toMap()
         val metadata = JobEditorMetadata.fields(operation(), queued, member())
-        assertEquals("partner", metadata["editedByUid"]); assertEquals("PARTNER", metadata["editedByRole"])
+        assertEquals("partner", metadata["editedByUid"]); assertEquals(RoleUtils.ROLE_PARTNER, metadata["editedByRole"])
         assertEquals("Current member name", metadata["editedByName"]); assertEquals(1234L, metadata["updatedAt"])
         assertEquals(original, queued)
         assertTrue(metadata.keys.none { it in setOf("createdByUid", "createdByRole", "createdAt", "entryForUid", "totalAmount") })
@@ -59,7 +60,7 @@ class FirestoreQueuedJsonTest {
         val queued = mapOf<String, Any?>("editedByUid" to "partner", "editedByName" to "Original action name")
         assertEquals("Original action name", JobEditorMetadata.fields(operation(), queued, member())["editedByName"])
         assertEquals("Current member name", JobEditorMetadata.fields(operation(), queued + ("editedByUid" to "owner"), member())["editedByName"])
-        assertEquals("PARTNER", JobEditorMetadata.fields(operation(), emptyMap(), member() - "uid" - "workspaceId")["editedByRole"])
+        assertEquals(RoleUtils.ROLE_PARTNER, JobEditorMetadata.fields(operation(), emptyMap(), member() - "uid" - "workspaceId")["editedByRole"])
     }
 
     @Test fun missingRemovedForeignOrInvalidEditorMembershipDoesNotCreateAnAudit() {
