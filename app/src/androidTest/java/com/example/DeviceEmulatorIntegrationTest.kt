@@ -760,4 +760,44 @@ class DeviceEmulatorIntegrationTest {
   } finally {peerCloud.stopRealtimeListeners();peerScope.coroutineContext[kotlinx.coroutines.Job]?.cancel();fresh.close()}
   Unit
  }
+
+ @Test(timeout=120000) fun vStaleExpenseFormKeepsItsOriginalBaseAndRejectsWithoutOverwritingConfirmedMoney():Unit=runBlocking {
+  login("owner");val actor="device-owner";val db=AppDatabase.getInstance(context)
+  val profiles=com.example.data.repository.AuthRepository.getInstance(context);profiles.startListening()
+  val profile=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid==actor}}!!
+  val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db)
+  assertTrue(workspace.initializeForUser(profile).isSuccess)
+  val id=workspace.addExpense(com.example.data.entity.ExpenseEntity(workspaceId=ws,expenseType="Diesel",amount=100.0,
+   tractorId=3,tractorLabel="Disposable Tractor",operatorName="Owner",addedByPartner="Owner",
+   expenseForUid=actor,financialAttributionUid=actor,paidBy="I Paid",paidByUid=actor,paidByPartner="Owner"))
+  workspace.pushUnsyncedToCloud(isOnline=true)
+  kotlinx.coroutines.withTimeout(30000){db.expenseDao().getExpensesForWorkspace(ws).first{rows->rows.any{it.id==id&&it.isSynced}}}
+  val formBase=db.expenseDao().getExpenseById(ws,id)!!
+  workspace.updateExpense(formBase.copy(amount=150.0,paidBy="Business Paid",paidByUid="",paidByPartner=""))
+  workspace.pushUnsyncedToCloud(isOnline=true)
+  kotlinx.coroutines.withTimeout(30000){db.expenseDao().getExpensesForWorkspace(ws).first{rows->rows.any{it.id==id&&it.isSynced&&it.amount==150.0}}}
+  val ref=cloud.document("workspaces/$ws/expenses/$id")
+  val confirmed=ref.get(Source.SERVER).await().data!!
+  val operation:PendingOperationEntity
+  cloud.disableNetwork().await()
+  try {
+   workspace.updateExpense(formBase.copy(description="Typed in the older open form"),expectedEditBase=formBase)
+   operation=db.pendingOperationDao().outstandingOperations(ws).single{it.entityType=="EXPENSE"&&it.entityId==id}
+   val payload=JSONObject(operation.payloadJson)
+   assertEquals(100.0,payload.getDouble("amount"),0.0)
+   assertEquals(100.0,JSONObject(payload.getString("expectedBaseJson")).getDouble("amount"),0.0)
+   assertEquals("Typed in the older open form",payload.getString("description"))
+   assertEquals(actor,operation.actorUid)
+  } finally {cloud.enableNetwork().await()}
+  workspace.pushUnsyncedToCloud(isOnline=true)
+  val rejected=kotlinx.coroutines.withTimeout(30000){db.pendingOperationDao().observe(ws).first{rows->rows.any{it.operationId==operation.operationId&&it.state=="REJECTED"}}}
+   .single{it.operationId==operation.operationId}
+  assertTrue(rejected.failureReason.contains("Conflict"))
+  assertEquals(operation.payloadJson,rejected.payloadJson);assertEquals(operation.actionTime,rejected.actionTime)
+  assertEquals(operation.actorUid,rejected.actorUid);assertEquals(confirmed,ref.get(Source.SERVER).await().data)
+  val restored=db.expenseDao().getExpenseById(ws,id)!!
+  assertEquals(150.0,restored.amount,0.0);assertEquals("Business Paid",restored.paidBy)
+  assertEquals(formBase.createdByUid,restored.createdByUid);assertEquals(formBase.expenseForUid,restored.expenseForUid)
+  Unit
+ }
 }

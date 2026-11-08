@@ -647,6 +647,8 @@ fun MainAppContent(
                                             onShowToast(if (isTamil) "செலவு சேர்க்கப்பட்டது" else "Expense added")
                                         }
                                     },
+                                    onAddExpenseConfirmed = viewModel::addExpenseConfirmed,
+                                    onUpdateExpenseWithBase = viewModel::updateExpenseWithBase,
                                     onUpdateExpense = { expense ->
                                         viewModel.updateExpense(expense) {
                                             onShowToast(if (isTamil) "செலவு புதுப்பிக்கப்பட்டது" else "Expense updated")

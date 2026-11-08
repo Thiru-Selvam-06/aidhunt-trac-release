@@ -36,8 +36,21 @@ deployment, live balance initialization or recovery of rejected customer actions
 
 The old standalone editor used `amount.toInt().toString()`, dropping paise when
 reopened; its positive-only check also prevented saving a retained refund. The
-editor now round-trips the exact finite non-zero amount and retains its sign.
+editor now round-trips paise. New expenses remain positive. A retained negative
+refund may keep its exact amount while its description/category is corrected;
+new or enlarged negative amounts remain denied. Review found current Rules also
+blocked unchanged legacy refunds, so a narrow local Rule permits only retaining
+the same negative amount under the existing role/time/identity protections.
 This does not change investment, profit, beneficiary or cash calculations.
+
+The expense form now waits for the Room/outbox transaction before navigating.
+Local failures keep typed values visible with an English/Tamil error and explicit
+retry; duplicate Save clicks are disabled while queuing. The actor/workspace are
+captured before dispatch. The form's original edit snapshot enters the outbox,
+so a later confirmed change received while it was open causes an explicit conflict
+instead of silently replacing its starting point with a newer Room row. Rejected
+payloads retain original IDs, actor and action time; cloud money is not overwritten.
+An Android regression checks this using the actual repository/Room/server records.
 
 An optional compact breakdown uses the same filtered rows as the expense list.
 Category and funding totals reconcile charges minus refunds. Pie slices show
@@ -81,6 +94,31 @@ undated history remains overall-only. The list and chart share this same filter.
 - Full unit, build/lint, CI, independent review and manual/automated physical-device
   verification remain release gates for this phase. Physical tests: **NOT TESTED**.
 
+### Final merged-source local checks — 8 November 2026
+
+- Full app JVM/Room/Compose regression: **706/706 pass**, 93 classes, zero
+  failures/errors/skips. The focused edit/form run passed **33/33** before the
+  final unchanged-refund boundary was added; the full run includes that correction.
+- Full Rules: **337/337 pass**, zero failures/skips. Existing positive-to-negative
+  denial remains. Historical-refund metadata preserves the exact negative amount;
+  enlarging/changing the negative amount, foreign/other-Partner writes, and new
+  negative creations are denied.
+- Final `assembleDebug`, `lintDebug`, and `compileDeviceTestAndroidTestKotlin`
+  passed. Lint: **102 warnings, zero errors**. Compilation includes the new category
+  and stale-expense conflict journeys.
+- Interaction inventory: **927** candidates; suite inventory: **93** unit classes,
+  **18** backend files, **6** runnable Android classes and **3** pre-existing blocked
+  classes. No drift. Inventories are source checks, not runtime UI passes.
+- These results are archived separately from core results. New Android journeys
+  must still execute on the expense branch in mandatory GitHub CI. Manual physical
+  and automated physical instrumentation are **NOT TESTED**.
+
+Self-review retained strict workspace/member authority, original operation IDs/
+times/creator/beneficiary, immutable category provenance and server conflict checks.
+No new service/dependency or financial formula change was added. The Room migration
+is additive and the existing rejected-action recovery policy is unchanged. No
+production records, pending live actions, Rules or deployments were modified.
+
 ## Approved later financial decisions
 
 New external-loan destinations are Business Cash, Business Bank or Direct to
@@ -93,5 +131,10 @@ Business borrowing protects currently withdrawable partner entitlements and
 approved commitments first. Example: 20,000 confirmed cash minus 16,000 entitlements
 minus 1,000 commitments leaves 3,000 available. Named-partner lending remains a
 separate approval/reservation path. There is no automatic future-profit offset.
+Business repayments may be confirmed by the authorized payer; direct repayment
+to a lending Partner still requires that lender's confirmation. External-loan
+repayments use Business Cash/Bank only for now; personal principal contributions
+are not enabled. Operators may add basic customer profiles in the next phase,
+without access to customer balances, collections or financial reports.
 These policies are approved; the borrowing/loan/settlement code is **not implemented
 by this category phase**. Shared-expense personal debts remain deferred.

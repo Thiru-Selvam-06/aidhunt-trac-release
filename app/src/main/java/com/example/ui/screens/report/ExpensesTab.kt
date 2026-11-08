@@ -221,15 +221,20 @@ fun ExpensesTab(
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     currentUid: String = "",
     customExpenseCategories: List<String> = emptyList(),
-    onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null
+    onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null,
+    onAddExpenseConfirmed: ((ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onUpdateExpenseWithBase: ((ExpenseEntity, ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null
 ) {
     var currentView by remember { mutableStateOf(ExpenseScreenView.REPORT_LIST) }
     var activeExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
+    var savingExpense by remember { mutableStateOf(false) }
+    var expenseSaveFailed by remember { mutableStateOf(false) }
     val effectiveActorName = actorName.ifBlank { settings.activePartnerName.ifBlank { settings.ownerName } }
     val effectiveUid = if (currentUid.isNotBlank()) currentUid else (com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "")
 
     // Intercept back button when in subview
     BackHandler(enabled = currentView != ExpenseScreenView.REPORT_LIST) {
+        if (savingExpense) return@BackHandler
         if (currentView == ExpenseScreenView.EDIT_EXPENSE && activeExpense != null) {
             currentView = ExpenseScreenView.EXPENSE_DETAILS
         } else {
@@ -248,6 +253,7 @@ fun ExpensesTab(
                     tractors = tractors,
                     partners = partners,
                     onOpenAddExpense = {
+                        expenseSaveFailed = false
                         activeExpense = null
                         currentView = ExpenseScreenView.ADD_EXPENSE
                     },
@@ -256,6 +262,7 @@ fun ExpensesTab(
                         currentView = ExpenseScreenView.EXPENSE_DETAILS
                     },
                     onQuickEdit = { expense ->
+                        expenseSaveFailed = false
                         activeExpense = expense
                         currentView = ExpenseScreenView.EDIT_EXPENSE
                     },
@@ -278,6 +285,8 @@ fun ExpensesTab(
                 AddOrEditExpenseScreen(
                     workspaceMembers = workspaceMembers,
                     isEditMode = false,
+                    isSaving = savingExpense,
+                    saveFailed = expenseSaveFailed,
                     customExpenseCategories = customExpenseCategories,
                     onAddExpenseCategory = onAddExpenseCategory,
                     initialExpense = null,
@@ -288,13 +297,22 @@ fun ExpensesTab(
                     actorName = effectiveActorName,
                     currentUid = effectiveUid,
                     onBack = {
-                        currentView = ExpenseScreenView.REPORT_LIST
-                        activeExpense = null
+                        if (!savingExpense) {
+                            currentView = ExpenseScreenView.REPORT_LIST
+                            activeExpense = null
+                        }
                     },
                     onSaveExpense = { newExpense ->
-                        onAddExpense(newExpense)
-                        currentView = ExpenseScreenView.REPORT_LIST
-                        activeExpense = null
+                        savingExpense = true
+                        expenseSaveFailed = false
+                        val queued = {
+                            savingExpense = false
+                            currentView = ExpenseScreenView.REPORT_LIST
+                            activeExpense = null
+                        }
+                        val failed: (String) -> Unit = { savingExpense = false; expenseSaveFailed = true }
+                        if (onAddExpenseConfirmed != null) onAddExpenseConfirmed(newExpense, queued, failed)
+                        else { onAddExpense(newExpense); queued() }
                     }
                 )
             }
@@ -302,6 +320,8 @@ fun ExpensesTab(
                 AddOrEditExpenseScreen(
                     workspaceMembers = workspaceMembers,
                     isEditMode = true,
+                    isSaving = savingExpense,
+                    saveFailed = expenseSaveFailed,
                     customExpenseCategories = customExpenseCategories,
                     onAddExpenseCategory = onAddExpenseCategory,
                     initialExpense = activeExpense,
@@ -312,12 +332,21 @@ fun ExpensesTab(
                     actorName = effectiveActorName,
                     currentUid = effectiveUid,
                     onBack = {
-                        currentView = if (activeExpense != null) ExpenseScreenView.EXPENSE_DETAILS else ExpenseScreenView.REPORT_LIST
+                        if (!savingExpense) currentView = if (activeExpense != null) ExpenseScreenView.EXPENSE_DETAILS else ExpenseScreenView.REPORT_LIST
                     },
                     onSaveExpense = { updatedExpense ->
-                        onUpdateExpense(updatedExpense)
-                        activeExpense = updatedExpense
-                        currentView = ExpenseScreenView.EXPENSE_DETAILS
+                        val original = activeExpense
+                        savingExpense = true
+                        expenseSaveFailed = false
+                        val queued = {
+                            savingExpense = false
+                            activeExpense = updatedExpense
+                            currentView = ExpenseScreenView.EXPENSE_DETAILS
+                        }
+                        val failed: (String) -> Unit = { savingExpense = false; expenseSaveFailed = true }
+                        if (onUpdateExpenseWithBase != null && original != null)
+                            onUpdateExpenseWithBase(original, updatedExpense, queued, failed)
+                        else { onUpdateExpense(updatedExpense); queued() }
                     }
                 )
             }
@@ -1299,7 +1328,9 @@ fun AddOrEditExpenseScreen(
     onBack: () -> Unit,
     onSaveExpense: (ExpenseEntity) -> Unit,
     customExpenseCategories: List<String> = emptyList(),
-    onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null
+    onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null,
+    isSaving: Boolean = false,
+    saveFailed: Boolean = false
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -1344,11 +1375,14 @@ fun AddOrEditExpenseScreen(
     var isTractorDropdownOpen by remember { mutableStateOf(false) }
     var isPaymentModeDropdownOpen by remember { mutableStateOf(false) }
     var hasValidated by remember { mutableStateOf(false) }
-    val isAmountValid = com.example.data.expense.ExpenseAmountInput.parse(amountText) != null
+    val originalAmount = initialExpense?.amount?.takeIf { isEditMode }
+    val allowRefund = originalAmount != null && originalAmount < 0.0
+    val isAmountValid = com.example.data.expense.ExpenseAmountInput.parseForRecord(amountText, originalAmount) != null
     val formDateFormat = remember(isTamil) { SimpleDateFormat("dd/MM/yyyy  hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH) }
     fun doSave() {
+        if (isSaving) return
         hasValidated = true
-        val amt = com.example.data.expense.ExpenseAmountInput.parse(amountText)
+        val amt = com.example.data.expense.ExpenseAmountInput.parseForRecord(amountText, originalAmount)
         if (amt != null) {
             val matchedTractor = tractors.find { it.label == selectedTractor }
             val currentActor = if (isOwner) {
@@ -1419,7 +1453,7 @@ fun AddOrEditExpenseScreen(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = if (isTamil) "பின்விளக்கம்" else "Back",
@@ -1439,7 +1473,7 @@ fun AddOrEditExpenseScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable { doSave() }
+                        .clickable(enabled = !isSaving) { doSave() }
                         .padding(horizontal = 10.dp, vertical = 6.dp)
                 ) {
                     Icon(
@@ -1584,7 +1618,11 @@ fun AddOrEditExpenseScreen(
                     keyboardType = KeyboardType.Decimal,
                     placeholder = if (isTamil) "எ.கா: 2500" else "e.g. 2500",
                     isError = hasValidated && !isAmountValid,
-                    errorMessage = if (isTamil) "பூஜ்ஜியம் அல்லாத சரியான தொகையை உள்ளிடவும்; திருப்பித் தரப்பட்ட தொகைக்கு மைனஸ் பயன்படுத்தவும்" else "Enter a valid non-zero amount; use minus for a refund",
+                    errorMessage = if (allowRefund) {
+                        if (isTamil) "ஏற்கனவே உள்ள திருப்பித் தரப்பட்ட தொகையை மாற்றாமல் வைத்திருக்கவும் அல்லது பூஜ்ஜியத்தை விட அதிகமான தொகையை உள்ளிடவும்" else "Keep the existing refund amount unchanged, or enter an amount greater than 0"
+                    } else {
+                        if (isTamil) "பூஜ்ஜியத்தை விட அதிகமான சரியான தொகையை உள்ளிடவும்" else "Enter a valid amount greater than 0"
+                    },
                     testTag = "input_expense_amount"
                 )
             }
@@ -1724,10 +1762,18 @@ fun AddOrEditExpenseScreen(
                 )
             }
             // Big Green Save Button
+            if (saveFailed) item {
+                Text(
+                    if (isTamil) "செலவைச் சாதனத்தில் சேமிக்க முடியவில்லை. விவரங்கள் இங்கே உள்ளன; மீண்டும் முயற்சிக்கவும்."
+                    else "Could not save this expense on this device. Your details are still here; please try again.",
+                    color = Color(0xFFDC2626), modifier = Modifier.testTag("expense_save_failed")
+                )
+            }
             item {
                 Spacer(modifier = Modifier.height(10.dp))
                 Button(
                     onClick = { doSave() },
+                    enabled = !isSaving,
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF072D18)),
                     modifier = Modifier

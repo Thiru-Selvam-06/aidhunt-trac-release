@@ -416,7 +416,8 @@ service cloud.firestore {
           active(ws, request.resource.data.expenseForUid) && request.resource.data.financialAttributionUid == request.resource.data.expenseForUid &&
           validNewExpenseParties(ws, request.resource.data);
         allow update: if retainedExpenseSource(ws, request.resource.data) && envelope(ws) && original() && notDeleted() && activeRecord(ws, 'expenseForUid') &&
-          request.resource.data.amount is number && request.resource.data.amount > 0 &&
+          request.resource.data.amount is number && (request.resource.data.amount > 0 ||
+            (resource.data.amount is number && resource.data.amount < 0 && request.resource.data.amount == resource.data.amount)) &&
           (same(['paidBy', 'paidByUid', 'paidByPartner']) || validExpenseFunding(ws, request.resource.data)) &&
           same(['expenseForUid', 'financialAttributionUid']) && (owner(ws) || (partner(ws) && ownTimely()));
         allow delete: if (unlockedExpenseDelete(ws, resource.data) && deleteEnvelope() && activeRecord(ws, 'expenseForUid') && (owner(ws) || (partner(ws) && deleteTimely()))) ||

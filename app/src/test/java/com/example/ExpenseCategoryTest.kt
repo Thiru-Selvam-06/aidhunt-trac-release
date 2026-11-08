@@ -71,5 +71,12 @@ class ExpenseCategoryTest {
         assertEquals("1234.56", ExpenseAmountInput.format(1234.56))
         assertEquals("-25.75", ExpenseAmountInput.format(-25.75))
         for (text in listOf("", "0", "-0", "NaN", "Infinity", "1e999", "bad")) assertNull(ExpenseAmountInput.parse(text))
+        assertNull(ExpenseAmountInput.parse("-25.75", allowRefund = false))
+        assertEquals(25.75, ExpenseAmountInput.parse("25.75", allowRefund = false)!!, 0.0)
+        assertEquals(-25.75, ExpenseAmountInput.parseForRecord("-25.75", -25.75)!!, 0.0)
+        assertNull(ExpenseAmountInput.parseForRecord("-25.75"))
+        assertNull(ExpenseAmountInput.parseForRecord("-25.75", 100.0))
+        assertNull(ExpenseAmountInput.parseForRecord("-30", -25.75))
+        assertNull(ExpenseAmountInput.parseForRecord("-25.75", Double.NaN))
     }
 }

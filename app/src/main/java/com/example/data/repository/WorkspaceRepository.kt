@@ -2226,13 +2226,18 @@ class WorkspaceRepository(
         return expenseDao.getExpensesForJob(wsId, jobId)
     }
 
-    suspend fun addExpense(expense: ExpenseEntity): Long {
-        val operationActorUid = getEffectiveActorUid().orEmpty()
+    suspend fun addExpense(expense: ExpenseEntity,
+        expectedActorUid: String = getEffectiveActorUid().orEmpty(),
+        expectedWorkspaceId: String = _activeWorkspaceId.value.orEmpty()): Long {
+        require(expense.amount.isFinite() && expense.amount > 0) { "New expenses must have a finite positive amount" }
+        val operationActorUid = expectedActorUid
         val operationTime = System.currentTimeMillis()
         val result = database.withTransaction {
 
         val isReady = isCloudReady()
         val wsId = getOrResolveWorkspaceId() ?: ""
+        require(wsId.isNotBlank() && wsId == expectedWorkspaceId && operationActorUid.isNotBlank() &&
+            operationActorUid == getEffectiveActorUid()) { "Account or workspace changed before saving expense" }
         val safeExpId = if (expense.id > 0) expense.id else IdGenerator.generateId()
         val actorUid = getEffectiveActorUid() ?: ""
         val isOwner = isOwnerOfWorkspace(wsId)
@@ -2293,13 +2298,21 @@ class WorkspaceRepository(
         return result
     }
 
-    suspend fun updateExpense(expense: ExpenseEntity) {
-        val operationActorUid = getEffectiveActorUid().orEmpty()
+    suspend fun updateExpense(expense: ExpenseEntity, expectedEditBase: ExpenseEntity? = null,
+        expectedActorUid: String = getEffectiveActorUid().orEmpty(),
+        expectedWorkspaceId: String = _activeWorkspaceId.value.orEmpty()) {
+        require(expense.amount.isFinite() && expense.amount != 0.0) { "Expense amount must be finite and nonzero" }
+        val operationActorUid = expectedActorUid
         val operationTime = System.currentTimeMillis()
         val result = database.withTransaction {
 
         val isReady = isCloudReady()
         val wsId = getOrResolveWorkspaceId() ?: expense.workspaceId
+        require(wsId.isNotBlank() && wsId == expectedWorkspaceId && operationActorUid.isNotBlank() &&
+            operationActorUid == getEffectiveActorUid()) { "Account or workspace changed before saving expense" }
+        require(expectedEditBase == null || (expectedEditBase.id == expense.id && expectedEditBase.workspaceId == wsId)) {
+            "Expense edit base belongs to another record or workspace"
+        }
         val actorUid = getEffectiveActorUid() ?: ""
         val isOwner = isOwnerOfWorkspace(wsId)
         val appSettings = appSettingsDao.getSettingsForWorkspaceOnce(wsId)
@@ -2313,6 +2326,8 @@ class WorkspaceRepository(
 
         val original = expenseDao.getExpenseById(_activeWorkspaceId.value.orEmpty(), expense.id)
         val expenseToCheck = original ?: throw SecurityException("Expense no longer exists")
+        require(com.example.data.expense.ExpenseAmountInput.parseForRecord(expense.amount.toString(),
+            (expectedEditBase ?: expenseToCheck).amount) != null) { "Existing refund amount must remain unchanged" }
         requireRecordMembersActive(expenseToCheck.createdByUid, expenseToCheck.expenseForUid)
         if (expenseToCheck.workspaceId != wsId || expense.workspaceId != wsId) throw SecurityException("Expense workspace mismatch")
 
@@ -2336,7 +2351,10 @@ class WorkspaceRepository(
             isSynced = false
         )
         expenseDao.updateExpense(updated)
-        enqueue("EXPENSE", updated.id, updated.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid, baseSnapshot = original?.toFirestoreMap())
+        // Keep the form's original snapshot. A later listener update must not silently authorize
+        // overwriting another partner's confirmed edit with values from an older open form.
+        enqueue("EXPENSE", updated.id, updated.toFirestoreMap(), "UPSERT", actionTime = operationTime,
+            expectedActorUid = operationActorUid, baseSnapshot = (expectedEditBase ?: expenseToCheck).toFirestoreMap())
 
 
 
