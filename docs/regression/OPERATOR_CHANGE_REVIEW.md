@@ -54,7 +54,7 @@ Paths are relative to the repository. Generated test evidence remains outside Gi
 | cloudflare/firestore-rest.test.mjs | Timestamp type/path/precision provenance and existing integer behavior. |
 | cloudflare/operations.test.mjs | Cleanup/retention, cross-workspace rejection, immutable proofs and exact replay/audit tests. |
 | functions/entry-deletion-emulator.test.js | Trusted deletion atomicity, proofs, immutable audit timestamps and replay. |
-| functions/device-test-fixtures.cjs | Synthetic second Operator and no-capability workspace; demo emulators only. |
+| functions/device-test-fixtures.cjs | Synthetic second Operator and separate legacy-workspace Owner; demo emulators only. |
 | scripts/run_backend_suite.mjs | Include new Rules suite in mandatory existing gate. |
 | docs/regression/asset-inventory.json | Regenerated source/test inventory. |
 | docs/regression/interaction-inventory.csv | Regenerated interaction line references; expected behaviors preserved. |
@@ -72,11 +72,31 @@ investment, entitlement or repayment formula is changed. This phase does not
 implement the remaining approved loans/borrowing/notifications/audit-archival work.
 
 Local app727/727 (97 classes), Rules373/373, backend137/137 and Python110/110
-passed, with zero failures/errors/skips. Final debug build/lint/instrumentation compile,
-publication scan and exact-source GitHub/Android runtime gates are pending at this
-checkpoint. Do not treat earlier expense CI as proof of this branch.
+passed, with zero failures/errors/skips. Debug build/lint/instrumentation compilation
+passed (75 tasks); lint0 errors/fatal and103 warnings. The one added warning is a
+KTX style suggestion on an explicit checked preferences commit; it is not suppressed.
+Full proposed-publication scan passed. Exact-source Android runtime remains a failed
+release gate until the fixture correction below is compiled and rerun successfully.
+Do not treat earlier expense CI as proof of this branch.
 
 Production configuration/deployed Rules/installed APK compatibility still require
 read-only verification before any approved rollout. No live customer record, queue,
 capability flag, production Rule, Worker or Function was changed. No main merge or
 customer APK installation occurred. Both physical testing categories are NOT TESTED.
+
+## First Android runtime failure and isolated fixture correction
+
+Run42498687272 at1a7ea13 failed its Android job; all other applicable checks passed.
+The first failing test was gLogoutRetainsQueueWithoutPostAuthBusinessWrites (15s
+timeout). The new legacy workspace fixture had also made device-owner its Owner,
+giving the original single-workspace test account two choices. The app correctly
+returned SelectionRequired; implicit initializations in later tests also failed.
+w reached its final Owner initialization after its Operator upload/peer checks,
+but the complete journey is FAILED and is not reported as passed.
+
+The correction gives the no-capability workspace a dedicated synthetic
+device-legacy-owner account and keeps normal Owner fixtures single-workspace.
+x uses that actor then restores the original Owner. Product selection behavior,
+financial outcomes, every assertion and mandatory test coverage are unchanged.
+Corrected instrumentation compilation and a fresh exact-source Android run are
+required; the failed run and extracted evidence are retained outside Git.

@@ -13,11 +13,14 @@ catch(e){if(e.code!=='auth/uid-already-exists')throw e;}
 await db.doc('users/'+peerUid).set({uid:peerUid,displayName:'Device Operator Peer',phoneNumber:peerPhone,defaultWorkspaceId:ws,workspaces:[ws],createdAt:now});
 await db.doc('userWorkspaceMemberships/'+peerUid+'/workspaces/'+ws).set({workspaceId:ws,ownerUid:'device-owner',role:'OPERATOR',status:'ACTIVE',joinedAt:now});
 await db.doc('workspaces/'+ws+'/members/'+peerUid).set({uid:peerUid,workspaceId:ws,ownerUid:'device-owner',role:'OPERATOR',status:'ACTIVE',displayName:'Device Operator Peer',phoneNumber:peerPhone,joinedAt:now});
-// Missing capabilities intentionally model a pre-upgrade workspace: new collections stay denied.
-const legacy='ws_legacy_protocol_test';
-await db.doc('workspaces/'+legacy).set({workspaceId:legacy,ownerUid:'device-owner',name:'Synthetic legacy protocol',createdAt:now});
-await db.doc('workspaces/'+legacy+'/members/device-owner').set({uid:'device-owner',workspaceId:legacy,role:'OWNER',status:'ACTIVE',joinedAt:now});
-await db.doc('userWorkspaceMemberships/device-owner/workspaces/'+legacy).set({workspaceId:legacy,ownerUid:'device-owner',role:'OWNER',status:'ACTIVE',joinedAt:now});
-await db.doc('workspaces/'+legacy+'/settings/main').set({workspaceId:legacy,businessName:'Legacy Test Farm',ownerName:'Device Owner',defaultHourlyRate:100,language:'EN'});
-await db.doc('workspaces/'+legacy+'/tractors/3').set({id:3,workspaceId:legacy,label:'Legacy tractor',createdByUid:'device-owner',createdByRole:'OWNER',createdAt:now});
+// Missing capabilities model a pre-upgrade workspace with a separate actor, preserving
+// the original Owner's single-workspace login tests and explicit multi-workspace selection.
+const legacy='ws_legacy_protocol_test',legacyUid='device-legacy-owner',legacyPhone='+919000000006';
+try{await auth.createUser({uid:legacyUid,email:'legacy-owner@device.invalid',password:'EmulatorOnly123!',phoneNumber:legacyPhone,displayName:'Legacy Protocol Owner'});}catch(e){if(e.code!=='auth/uid-already-exists')throw e;}
+await db.doc('users/'+legacyUid).set({uid:legacyUid,displayName:'Legacy Protocol Owner',phoneNumber:legacyPhone,defaultWorkspaceId:legacy,workspaces:[legacy],createdAt:now});
+await db.doc('workspaces/'+legacy).set({workspaceId:legacy,ownerUid:legacyUid,name:'Synthetic legacy protocol',createdAt:now});
+await db.doc('workspaces/'+legacy+'/members/'+legacyUid).set({uid:legacyUid,workspaceId:legacy,role:'OWNER',status:'ACTIVE',joinedAt:now});
+await db.doc('userWorkspaceMemberships/'+legacyUid+'/workspaces/'+legacy).set({workspaceId:legacy,ownerUid:legacyUid,role:'OWNER',status:'ACTIVE',joinedAt:now});
+await db.doc('workspaces/'+legacy+'/settings/main').set({workspaceId:legacy,businessName:'Legacy Test Farm',ownerName:'Legacy Protocol Owner',defaultHourlyRate:100,language:'EN'});
+await db.doc('workspaces/'+legacy+'/tractors/3').set({id:3,workspaceId:legacy,label:'Legacy tractor',createdByUid:legacyUid,createdByRole:'OWNER',createdAt:now});
 console.log(JSON.stringify({project:'demo-aidhunt-v16',workspace:ws,roles:['OWNER','PARTNER','OPERATOR'],seeded:true}));await db.terminate();})().catch(e=>{console.error(JSON.stringify({seeded:false,project:"demo-aidhunt-v16",code:e.code||e.name,message:String(e.message).slice(0,500)}));process.exitCode=1;});

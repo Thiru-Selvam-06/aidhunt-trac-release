@@ -879,7 +879,7 @@ class DeviceEmulatorIntegrationTest {
  }
 
  @Test(timeout=180000) fun xDisabledProtocolsKeepLegacyCustomerEditAndCheckedDeletionWorking():Unit=runBlocking {
-  login("owner");val legacy="ws_legacy_protocol_test";val actor="device-owner"
+  login("legacy-owner");val legacy="ws_legacy_protocol_test";val actor="device-legacy-owner"
   val db=AppDatabase.getInstance(context)
   val profiles=com.example.data.repository.AuthRepository.getInstance(context);profiles.startListening()
   val profile=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid==actor}}!!
@@ -920,7 +920,9 @@ class DeviceEmulatorIntegrationTest {
   assertEquals(deletion.operationId,proof.getString("operationId"));assertEquals(actor,proof.getString("actorUid"))
   assertEquals(123.45,proof.getDouble("totalAmount")!!,0.0)
   assertEquals(edit.payloadJson,db.pendingOperationDao().getOperation(edit.operationId)!!.payloadJson)
-  assertTrue(workspace.initializeForUser(profile,ws).isSuccess)
+  login("owner")
+  val originalOwner=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid=="device-owner"}}!!
+  assertTrue(workspace.initializeForUser(originalOwner,ws).isSuccess)
   Unit
  }
 }

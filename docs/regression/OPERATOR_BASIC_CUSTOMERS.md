@@ -67,10 +67,15 @@ tests and automated physical instrumentation are both **NOT TESTED**.
   was retained and corrected to compare actual stored source to deletion proof.
 - After compatibility additions: full Rules373/373 and backend137/137 passed with
   zero failures/skips; Python110/110 passed after a writable temporary-folder setup.
-  Fresh full app727/727 passed (97 classes, zero failures/errors/skips). Final build
-  and Android runtime checks remain required on the final source and must be
-  recorded before publication/release.
+  Fresh full app727/727 passed (97 classes, zero failures/errors/skips). Debug build,
+  lint and Android-test compilation passed; lint0 errors/103 warnings. The actual
+  first Android runtime failure and its required corrected run are recorded below.
 - Prior expense branch802489e separately passed mandatory GitHub runs42473311844
   and42473313823 (attempt2), including34 Android-emulator tests. Those results do
   not establish runtime coverage of the new Operator/capability code.
 - Physical checklist: [OPERATOR_PHYSICAL_CHECKLIST.md](OPERATOR_PHYSICAL_CHECKLIST.md).
+
+The first Android runtime run42498687272 failed because the added legacy fixture
+gave the original Owner a second workspace, correctly triggering explicit selection.
+See OPERATOR_CHANGE_REVIEW.md for the dedicated-account fixture correction and
+remaining fresh Android runtime gate. No production app selection policy changed.
