@@ -100,3 +100,26 @@ x uses that actor then restores the original Owner. Product selection behavior,
 financial outcomes, every assertion and mandatory test coverage are unchanged.
 Corrected instrumentation compilation and a fresh exact-source Android run are
 required; the failed run and extracted evidence are retained outside Git.
+
+## Second runtime result and same-workspace listener review
+
+Corrected fixture source66ee0aa executed36 Android tests:35 passed,1 failed (w's
+30s timeout). All other applicable push jobs passed. This is still a failed release
+gate. The old timeout did not identify which of w's three30s waits stalled; named
+stage diagnostics are now included without changing assertions or time limits.
+
+Source review confirmed that Firestore registrations compared workspace/capability
+only, although callbacks capture their authenticated UID and their Operator versus
+finance query set. Reusing them for a different account in the same workspace makes
+old UID guards discard every snapshot. Relying only on WorkspaceRepository.activeUid
+comparison is insufficient because getEffectiveActorUid also updates that field.
+Registration identity now includes UID and permission profile; changes invalidate
+the epoch, remove old callbacks and rebuild listeners/health expectations. Pending
+rows, financial commands and authorization rules remain unchanged. This confirmed
+source defect is corrected locally; the exact original live phone failure is not
+inferred from it. Fresh app tests and Android runtime must establish the correction.
+
+Fresh local app run after the listener identity correction:727/727,97 classes,
+zero failures/errors/skips (5m21s). Build/lint/Android-test compilation and the
+next exact-source GitHub Android runtime remain separate gates. The two failed
+runtime attempts remain recorded; no timeout or business assertion was relaxed.

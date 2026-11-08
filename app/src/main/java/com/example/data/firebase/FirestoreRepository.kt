@@ -64,6 +64,7 @@ class FirestoreRepository(
     // Real-time listener registrations per workspace (workspaceId -> Map of listener registrations)
     private val activeWorkspaceListeners = mutableMapOf<String, MutableList<ListenerRegistration>>()
     private val activeListenerCapabilities = mutableMapOf<String, WorkspaceSyncCapabilities>()
+    private val activeListenerSessions = mutableMapOf<String, Pair<String, Boolean>>()
     private fun WorkspaceSyncCapabilities?.orDefaultCapabilities() = this ?: WorkspaceSyncCapabilities()
 
     /**
@@ -337,9 +338,11 @@ class FirestoreRepository(
         }
 
         // Stop listeners for workspaces no longer in the set
-        // Reattach on a verified protocol change, rather than keeping stale health expectations.
+        // Registrations capture their actor and permission profile. The same workspace
+        // must not reuse an Operator's listeners after another account signs in.
         val changed = activeWorkspaceListeners.keys.filter { ws ->
-            activeListenerCapabilities[ws] != capabilityCache.states.value[currentUid to ws].orDefaultCapabilities()
+            activeListenerCapabilities[ws] != capabilityCache.states.value[currentUid to ws].orDefaultCapabilities() ||
+                activeListenerSessions[ws] != (currentUid to (ws in operatorWorkspaceIds))
         }
         if (changed.isNotEmpty()) {
             // Invalidate already-dispatched callbacks too; removing a registration alone is insufficient.
@@ -350,6 +353,8 @@ class FirestoreRepository(
         val toRemove = existingWorkspaces - workspaceIds
         for (wsId in toRemove) {
             activeWorkspaceListeners.remove(wsId)?.forEach { it.remove() }
+            activeListenerCapabilities.remove(wsId)
+            activeListenerSessions.remove(wsId)
             listenerHealth.remove(wsId)
             Log.d("TRAC_FIRESTORE", "STOP_LISTEN workspace=$wsId")
         }
@@ -361,6 +366,7 @@ class FirestoreRepository(
             val wsRef = firestore.collection("workspaces").document(workspaceId)
             val capabilities = capabilityCache.states.value[currentUid to workspaceId].orDefaultCapabilities()
             activeListenerCapabilities[workspaceId] = capabilities
+            activeListenerSessions[workspaceId] = currentUid to (workspaceId in operatorWorkspaceIds)
             val regList = mutableListOf<ListenerRegistration>()
             val operational = setOf("actorMembership", "members", "entries", "tractors", "attendees", "settings", "accessControl", "extensions") +
                 if (capabilities.expenseCategoriesV1) setOf("expenseCategories") else emptySet()
@@ -748,6 +754,7 @@ class FirestoreRepository(
         }
         activeWorkspaceListeners.clear()
         activeListenerCapabilities.clear()
+        activeListenerSessions.clear()
         Log.d(TAG, "All Firestore snapshot listeners stopped.")
     }
 

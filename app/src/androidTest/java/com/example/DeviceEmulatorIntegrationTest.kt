@@ -90,6 +90,8 @@ class DeviceEmulatorIntegrationTest {
   return try { kotlinx.coroutines.withTimeout(20000) { action() } }
   finally { android.util.Log.i("DEVICE_ROLE_TRACE", "END " + stage) }
  }
+ private suspend fun <T> syncStage(stage:String, action:suspend ()->T):T = try {action()}
+ catch(error:kotlinx.coroutines.TimeoutCancellationException){throw AssertionError("Timed out at sync stage: $stage",error)}
  private suspend fun awaitCustomerCommand(db:AppDatabase, operation:PendingOperationEntity, stage:String) {
   val rows=kotlinx.coroutines.withTimeout(60000){db.pendingOperationDao().observe(operation.workspaceId).first{rows->
    rows.any{it.operationId==operation.operationId && it.state in setOf("ACKNOWLEDGED","REJECTED")}
@@ -860,17 +862,23 @@ class DeviceEmulatorIntegrationTest {
    assertNull(fresh.basicCustomerDao().find(ws,customerId))
    val peer=com.example.data.repository.WorkspaceRepository(context,fresh,peerCloud,peerScope)
    assertTrue(peer.initializeForUser(peerProfile).isSuccess)
-   val downloaded=kotlinx.coroutines.withTimeout(30000){fresh.basicCustomerDao().observe(ws).first{rows->rows.any{it.id==customerId}}}.single{it.id==customerId}
+   val downloaded=syncStage("Operator peer basic directory download") {
+    kotlinx.coroutines.withTimeout(30000){fresh.basicCustomerDao().observe(ws).first{rows->rows.any{it.id==customerId}}}.single{it.id==customerId}
+   }
    assertEquals(name,downloaded.name);assertEquals(actor,downloaded.createdByUid)
    assertEquals(original.operationId,downloaded.creationOperationId);assertTrue(downloaded.isSynced)
    assertNull(fresh.customerDao().getCustomerById(ws,customerId))
-   val peerJob=kotlinx.coroutines.withTimeout(30000){fresh.jobEntryDao().getJobsForWorkspace(ws).first{rows->rows.any{it.id==jobId}}}.single{it.id==jobId}
+   val peerJob=syncStage("Operator peer confirmed job download") {
+    kotlinx.coroutines.withTimeout(30000){fresh.jobEntryDao().getJobsForWorkspace(ws).first{rows->rows.any{it.id==jobId}}}.single{it.id==jobId}
+   }
    assertEquals(actor,peerJob.createdByUid);assertEquals(actor,peerJob.entryForUid);assertEquals(850.25,peerJob.totalAmount,0.0)
   } finally {peerCloud.stopRealtimeListeners();peerScope.coroutineContext[kotlinx.coroutines.Job]?.cancel();fresh.close()}
   login("owner")
   val owner=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid=="device-owner"}}!!
   assertTrue(workspace.initializeForUser(owner).isSuccess)
-  kotlinx.coroutines.withTimeout(30000){db.customerDao().getCustomersForWorkspace(ws).first{rows->rows.any{it.id==customerId&&it.balanceDue==850.25}}}
+  syncStage("Owner canonical customer and850.25 due after Operator account switch") {
+   kotlinx.coroutines.withTimeout(30000){db.customerDao().getCustomersForWorkspace(ws).first{rows->rows.any{it.id==customerId&&it.balanceDue==850.25}}}
+  }
   assertEquals(confirmed,cloud.document("workspaces/$ws/entries/$jobId").get(Source.SERVER).await().data)
   assertEquals(name,cloud.document("workspaces/$ws/customers/$customerId").get(Source.SERVER).await().getString("name"))
   assertEquals(original.payloadJson,db.pendingOperationDao().getOperation(original.operationId)!!.payloadJson)
