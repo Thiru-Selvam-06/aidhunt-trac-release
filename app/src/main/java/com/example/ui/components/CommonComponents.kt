@@ -1086,7 +1086,9 @@ fun PartnerWithdrawalPieChart(
     slices: List<PieChartSlice>,
     totalAmount: Double,
     modifier: Modifier = Modifier,
-    isTamil: Boolean = false
+    isTamil: Boolean = false,
+    title: String = if (isTamil) "பங்குதாரர் எடுப்பு பகிர்வு" else "Partner Withdrawal Distribution",
+    emptyText: String = if (isTamil) "எடுப்பு பதிவுகள் எதுவும் இல்லை" else "No withdrawal records matching current filter"
 ) {
     val responsive = com.example.ui.theme.rememberResponsiveDimensions()
 
@@ -1102,7 +1104,7 @@ fun PartnerWithdrawalPieChart(
                 .fillMaxWidth()
         ) {
             Text(
-                text = if (isTamil) "பங்குதாரர் எடுப்பு பகிர்வு" else "Partner Withdrawal Distribution",
+                text = title,
                 fontSize = if (responsive.isSmallPhone) 13.sp else 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = AppTheme.colors.textPrimary
@@ -1117,7 +1119,7 @@ fun PartnerWithdrawalPieChart(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = if (isTamil) "எடுப்பு பதிவுகள் எதுவும் இல்லை" else "No withdrawal records matching current filter",
+                        text = emptyText,
                         fontSize = 12.sp,
                         color = AppTheme.colors.textMuted,
                         textAlign = TextAlign.Center

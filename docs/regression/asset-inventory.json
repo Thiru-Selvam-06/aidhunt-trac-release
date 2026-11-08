@@ -33,11 +33,13 @@
   "daos": [
     "app/src/main/java/com/example/data/dao/Daos.kt",
     "app/src/main/java/com/example/data/dao/DeletedMemberDao.kt",
+    "app/src/main/java/com/example/data/dao/ExpenseCategoryDao.kt",
     "app/src/main/java/com/example/data/dao/PendingOperationDao.kt"
   ],
   "entities": [
     "app/src/main/java/com/example/data/entity/DeletedMemberEntity.kt",
     "app/src/main/java/com/example/data/entity/Entities.kt",
+    "app/src/main/java/com/example/data/entity/ExpenseCategoryEntity.kt",
     "app/src/main/java/com/example/data/entity/PendingOperationEntity.kt"
   ],
   "unit_tests": [
@@ -70,6 +72,10 @@
     "app/src/test/java/com/example/EntryMutationAuthorizationTest.kt",
     "app/src/test/java/com/example/ExampleRobolectricTest.kt",
     "app/src/test/java/com/example/ExampleUnitTest.kt",
+    "app/src/test/java/com/example/ExpenseAnalyticsTest.kt",
+    "app/src/test/java/com/example/ExpenseCategoryRoomTest.kt",
+    "app/src/test/java/com/example/ExpenseCategoryTest.kt",
+    "app/src/test/java/com/example/ExpenseEditorUiTest.kt",
     "app/src/test/java/com/example/ExpenseIdentityDetailsTest.kt",
     "app/src/test/java/com/example/ExpenseWorkspaceIsolationTest.kt",
     "app/src/test/java/com/example/ExtensionDetailsNavigationTest.kt",
@@ -149,19 +155,6 @@
     "functions/entry-deletion-policy.test.js",
     "functions/invitation-policy.test.js",
     "functions/migration/legacy-timestamps.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.bypass.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.clone.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.disable.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.events.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.freeze.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.itemmaxage.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.lock.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.nokey.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.queumaxage.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.sync.clone.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.sync.events.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.sync.test.js",
-    "functions/node_modules/lru-memoizer/test/lru-memoizer.test.js",
     "functions/security.integration.test.js"
   ],
   "worker_tests": [
@@ -172,6 +165,7 @@
   "rules_tests": [
     "security-tests/architecture.test.cjs",
     "security-tests/customer-editing.test.cjs",
+    "security-tests/expense-categories.test.cjs",
     "security-tests/listener-queries.test.cjs",
     "security-tests/phone-onboarding.test.cjs",
     "security-tests/purge-protocol.test.cjs",
@@ -1114,6 +1108,24 @@
       "status": "NOT VERIFIED: map each DAO query to executed assertions"
     },
     {
+      "source": "app/src/main/java/com/example/data/dao/ExpenseCategoryDao.kt",
+      "method": "observe",
+      "sql": "SELECT * FROM expense_categories WHERE workspaceId = :workspaceId ORDER BY nameKey",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/ExpenseCategoryDao.kt",
+      "method": "find",
+      "sql": "SELECT * FROM expense_categories WHERE workspaceId = :workspaceId AND id = :id",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/ExpenseCategoryDao.kt",
+      "method": "acknowledge",
+      "sql": "UPDATE expense_categories SET isSynced = 1 WHERE workspaceId = :workspaceId AND id = :id",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
       "source": "app/src/main/java/com/example/data/dao/PendingOperationDao.kt",
       "method": "observePending",
       "sql": "SELECT * FROM pending_operations WHERE state = 'PENDING' ORDER BY sequence",
@@ -1351,6 +1363,8 @@
       "recalculateCustomerStats",
       "addTractor",
       "getWorkTypeExtensionsFlow",
+      "getExpenseCategoriesFlow",
+      "addExpenseCategory",
       "addExtension",
       "updateExtension",
       "deleteExtension",

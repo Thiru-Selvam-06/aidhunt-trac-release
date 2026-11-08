@@ -302,6 +302,26 @@ test('negative expense edit is denied',async()=>{
  await seed('expenses',{...envelope(),id:1,createdByUid:uid.partner,createdByRole:'PARTNER',createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),expenseForUid:uid.partner,financialAttributionUid:uid.partner,amount:100});
  await assertFails(updateDoc(doc(db('partner'),path('expenses')),{amount:-100}));
 });
+for(const actor of ['owner','partner']) test(`${actor} preserves a historical refund amount while correcting its description`,async()=>{
+ const original={...envelope('partner'),id:1,createdByUid:uid.partner,createdByRole:'PARTNER',createdAt:now-1000,
+  authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(),
+  expenseForUid:uid.partner,financialAttributionUid:uid.partner,paidBy:'Business Paid',paidByUid:'',paidByPartner:'',amount:-25.75};
+ await seed('expenses',original);
+ await assertSucceeds(updateDoc(doc(db(actor),path('expenses')),{...envelope(actor),description:'Corrected note; original refund retained'}));
+ const saved=(await getDoc(doc(db('owner'),path('expenses')))).data();
+ assert.equal(saved.amount,-25.75);assert.equal(saved.createdAt,original.createdAt);
+ assert.equal(saved.createdByUid,uid.partner);assert.equal(saved.expenseForUid,uid.partner);
+ for(const amount of [-30,-1,0]) await assertFails(updateDoc(doc(db(actor),path('expenses')),{...envelope(actor),amount}));
+});
+test('refund metadata permission does not authorize new negative expenses or another Partners refund edit',async()=>{
+ const value={...envelope(),id:1,createdByUid:uid.partner,createdByRole:'PARTNER',createdAt:now-1000,
+  expenseForUid:uid.partner,financialAttributionUid:uid.partner,paidBy:'Business Paid',paidByUid:'',paidByPartner:'',amount:-25.75};
+ await assertFails(setDoc(doc(db('partner'),path('expenses')),value));
+ await seed('expenses',value);
+ for(const actor of ['other','operator','outsider'])
+  await assertFails(updateDoc(doc(db(actor),path('expenses')),{...envelope(actor),description:'Unauthorized'}));
+ assert.equal((await getDoc(doc(db('owner'),path('expenses')))).data().amount,-25.75);
+});
 test('a Customer delete must use the trusted dependency check',async()=>{
  await assertFails(deleteDoc(doc(db('owner'),path('customers','2'))));
 });

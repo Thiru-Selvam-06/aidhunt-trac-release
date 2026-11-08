@@ -91,3 +91,16 @@ The updated Rules suite passed **311/311**. Updated Android instrumentation
 compilation passed. The corrected runtime journey must still execute in CI; it
 is not counted as a pass at this checkpoint. No timeout or required gate was
 removed, and no expected financial amount was changed merely to hide a failure.
+
+## Verified final core Android result
+
+At `ae16cdf85949d93357cdaf0b12b505240377c569`, both GitHub runs
+**42454493370** and **42454497425** completed successfully, including the mandatory
+aggregate gate. Android job **128650518601** actually ran **31/31 API35 emulator
+tests, zero failed and zero skipped**, with BUILD SUCCESSFUL. This closes the
+core runtime gate above. It does not cover later expense-category Android changes
+or physical phones. Physical manual/automated tests remain **NOT TESTED**.
+
+The separate Cloudflare-managed check still fails in its automatic preview command;
+its dashboard error is documented in `CLOUDFLARE_BUILD_FAILURE.md`. The repository's
+build-only Worker job passed; the external deployment integration was not modified.

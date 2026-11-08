@@ -39,11 +39,13 @@ class ArchitectureIntegrationTest {
                     javaClass.classLoader!!.getResourceAsStream(fixture)!!.bufferedReader().useLines { lines ->
                         lines.filter { it.startsWith("CREATE ") }.forEach { db.execSQL(it.removeSuffix(";")) }
                     }
-                    if (version == 19) {
+                    if (version >= 19) {
                         AppDatabase.MIGRATION_17_18.migrate(db)
                         AppDatabase.MIGRATION_18_19.migrate(db)
                     }
-                    row(db, "job_entries", mapOf("id" to 1L, "workspaceId" to "a", "createdAt" to 5000L, "createdByUid" to "actor", "totalAmount" to 50000.0, "pendingAmount" to 30000.0, "amountReceived" to 20000.0))
+                    if (version >= 20) AppDatabase.MIGRATION_19_20.migrate(db)
+                    row(db, "job_entries", mapOf("id" to 1L, "workspaceId" to "a", "createdAt" to 5000L, "createdByUid" to "actor", "totalAmount" to 50000.0, "pendingAmount" to 30000.0, "amountReceived" to 20000.0,
+                        "jobEditHistoryJson" to "[{\"operationId\":\"kept-history\"}]"))
                     row(db, "tractors", mapOf("id" to 1L, "workspaceId" to "a", "createdByUid" to "actor", "createdByRole" to "PARTNER"))
                     if (version >= 17) {
                         row(db, "pending_operations", mapOf("operationId" to "saved-op", "workspaceId" to "a", "actorUid" to "actor", "sequence" to 1L, "entityId" to 1L, "state" to "PENDING", "payloadJson" to "{}"))
@@ -53,7 +55,7 @@ class ArchitectureIntegrationTest {
                 override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = error("Fixture never upgrades")
             }).build())
         helper.writableDatabase; helper.close()
-        val db = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_12_13, AppDatabase.MIGRATION_13_14, AppDatabase.MIGRATION_14_15, AppDatabase.MIGRATION_15_16, AppDatabase.MIGRATION_16_17, AppDatabase.MIGRATION_17_18, AppDatabase.MIGRATION_18_19, AppDatabase.MIGRATION_19_20).build()
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_12_13, AppDatabase.MIGRATION_13_14, AppDatabase.MIGRATION_14_15, AppDatabase.MIGRATION_15_16, AppDatabase.MIGRATION_16_17, AppDatabase.MIGRATION_17_18, AppDatabase.MIGRATION_18_19, AppDatabase.MIGRATION_19_20, AppDatabase.MIGRATION_20_21).build()
         try {
             val entry = db.jobEntryDao().getJobById("a", 1)!!
             assertEquals(5000L, entry.createdAt); assertEquals(50000.0, entry.totalAmount, 0.0); assertEquals(30000.0, entry.pendingAmount, 0.0)
@@ -65,7 +67,7 @@ class ArchitectureIntegrationTest {
                 assertEquals("REJECTED",rejected.state);assertEquals("actor",rejected.actorUid)
                 assertEquals(5001L,rejected.actionTime);assertEquals(2,rejected.attempts)
                 assertEquals("{\"amount\":200,\"jobEntryId\":1}",rejected.payloadJson)
-                assertEquals("[]",entry.jobEditHistoryJson)
+                assertEquals(if (version >= 20) "[{\"operationId\":\"kept-history\"}]" else "[]",entry.jobEditHistoryJson)
             }
         } finally { db.close(); context.deleteDatabase(name) }
     }
@@ -73,6 +75,7 @@ class ArchitectureIntegrationTest {
     @Test fun release13SameVersionLineageUpgrades() = runBlocking { upgrade(13, "release-v14-schema.sql") }
     @Test fun knownLocal17PreservesPendingQueue() = runBlocking { upgrade(17, "local-v17-schema.sql") }
     @Test fun fullVersion19SchemaPreservesMoneyPendingAndRejectedActionsAt20() = runBlocking { upgrade(19, "local-v17-schema.sql") }
+    @Test fun fullVersion20PreservesMoneyAndRejectedOperationsAt21() = runBlocking { upgrade(20, "local-v17-schema.sql") }
     @Test fun rejectedDependencyDoesNotHideIndependentPendingCommands() = runBlocking {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).build()
         try {

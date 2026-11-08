@@ -116,19 +116,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 fun getLocalizedExpenseType(type: String, isTamil: Boolean): String {
-    if (!isTamil) return type
-    return when (type.trim().lowercase()) {
-        "diesel" -> "டீசல்"
-        "petrol" -> "பெட்ரோல்"
-        "repair" -> "பழுதுபார்ப்பு"
-        "puncture" -> "பஞ்சர்"
-        "oil change" -> "ஆயில் மாற்றம்"
-        "driver bata" -> "டிரைவர் படி"
-        "spare parts" -> "உதிரி பாகங்கள்"
-        "toll / parking" -> "சுங்கச்சாவடி / பார்க்கிங்"
-        "other" -> "இதர"
-        else -> type
-    }
+    return com.example.data.expense.ExpenseCategories.label(type, isTamil)
 }
 fun getLocalizedPaymentMode(mode: String, isTamil: Boolean): String {
     if (!isTamil) return mode
@@ -147,20 +135,12 @@ fun getLocalizedDatePreset(preset: DatePreset, isTamil: Boolean): String {
         DatePreset.TODAY -> "இன்று"
         DatePreset.THIS_WEEK -> "இந்த வாரம்"
         DatePreset.THIS_MONTH -> "இந்த மாதம்"
+        DatePreset.THIS_YEAR -> "இந்த ஆண்டு"
+        DatePreset.CUSTOM -> "தேதி வரம்பு"
         DatePreset.ALL_TIME -> "முழுவதும்"
     }
 }
-val ExpenseTypes = listOf(
-    "Diesel",
-    "Petrol",
-    "Repair",
-    "Puncture",
-    "Oil Change",
-    "Driver Bata",
-    "Spare Parts",
-    "Toll / Parking",
-    "Other"
-)
+val ExpenseTypes = com.example.data.expense.ExpenseCategories.builtIns
 val PaymentModes = listOf(
     "Cash",
     "UPI / GPay / PhonePe",
@@ -222,7 +202,9 @@ enum class DatePreset(val label: String) {
     TODAY("Today"),
     THIS_WEEK("This Week"),
     THIS_MONTH("This Month"),
-    ALL_TIME("All Time")
+    ALL_TIME("All Time"),
+    THIS_YEAR("This Year"),
+    CUSTOM("Custom range")
 }
 @Composable
 fun ExpensesTab(
@@ -237,15 +219,22 @@ fun ExpensesTab(
     isOwner: Boolean = false,
     actorName: String = "",
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
-    currentUid: String = ""
+    currentUid: String = "",
+    customExpenseCategories: List<String> = emptyList(),
+    onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null,
+    onAddExpenseConfirmed: ((ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onUpdateExpenseWithBase: ((ExpenseEntity, ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null
 ) {
     var currentView by remember { mutableStateOf(ExpenseScreenView.REPORT_LIST) }
     var activeExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
+    var savingExpense by remember { mutableStateOf(false) }
+    var expenseSaveFailed by remember { mutableStateOf(false) }
     val effectiveActorName = actorName.ifBlank { settings.activePartnerName.ifBlank { settings.ownerName } }
     val effectiveUid = if (currentUid.isNotBlank()) currentUid else (com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "")
 
     // Intercept back button when in subview
     BackHandler(enabled = currentView != ExpenseScreenView.REPORT_LIST) {
+        if (savingExpense) return@BackHandler
         if (currentView == ExpenseScreenView.EDIT_EXPENSE && activeExpense != null) {
             currentView = ExpenseScreenView.EXPENSE_DETAILS
         } else {
@@ -264,6 +253,7 @@ fun ExpensesTab(
                     tractors = tractors,
                     partners = partners,
                     onOpenAddExpense = {
+                        expenseSaveFailed = false
                         activeExpense = null
                         currentView = ExpenseScreenView.ADD_EXPENSE
                     },
@@ -272,6 +262,7 @@ fun ExpensesTab(
                         currentView = ExpenseScreenView.EXPENSE_DETAILS
                     },
                     onQuickEdit = { expense ->
+                        expenseSaveFailed = false
                         activeExpense = expense
                         currentView = ExpenseScreenView.EDIT_EXPENSE
                     },
@@ -294,6 +285,10 @@ fun ExpensesTab(
                 AddOrEditExpenseScreen(
                     workspaceMembers = workspaceMembers,
                     isEditMode = false,
+                    isSaving = savingExpense,
+                    saveFailed = expenseSaveFailed,
+                    customExpenseCategories = customExpenseCategories,
+                    onAddExpenseCategory = onAddExpenseCategory,
                     initialExpense = null,
                     tractors = tractors,
                     partners = partners,
@@ -302,13 +297,22 @@ fun ExpensesTab(
                     actorName = effectiveActorName,
                     currentUid = effectiveUid,
                     onBack = {
-                        currentView = ExpenseScreenView.REPORT_LIST
-                        activeExpense = null
+                        if (!savingExpense) {
+                            currentView = ExpenseScreenView.REPORT_LIST
+                            activeExpense = null
+                        }
                     },
                     onSaveExpense = { newExpense ->
-                        onAddExpense(newExpense)
-                        currentView = ExpenseScreenView.REPORT_LIST
-                        activeExpense = null
+                        savingExpense = true
+                        expenseSaveFailed = false
+                        val queued = {
+                            savingExpense = false
+                            currentView = ExpenseScreenView.REPORT_LIST
+                            activeExpense = null
+                        }
+                        val failed: (String) -> Unit = { savingExpense = false; expenseSaveFailed = true }
+                        if (onAddExpenseConfirmed != null) onAddExpenseConfirmed(newExpense, queued, failed)
+                        else { onAddExpense(newExpense); queued() }
                     }
                 )
             }
@@ -316,6 +320,10 @@ fun ExpensesTab(
                 AddOrEditExpenseScreen(
                     workspaceMembers = workspaceMembers,
                     isEditMode = true,
+                    isSaving = savingExpense,
+                    saveFailed = expenseSaveFailed,
+                    customExpenseCategories = customExpenseCategories,
+                    onAddExpenseCategory = onAddExpenseCategory,
                     initialExpense = activeExpense,
                     tractors = tractors,
                     partners = partners,
@@ -324,12 +332,21 @@ fun ExpensesTab(
                     actorName = effectiveActorName,
                     currentUid = effectiveUid,
                     onBack = {
-                        currentView = if (activeExpense != null) ExpenseScreenView.EXPENSE_DETAILS else ExpenseScreenView.REPORT_LIST
+                        if (!savingExpense) currentView = if (activeExpense != null) ExpenseScreenView.EXPENSE_DETAILS else ExpenseScreenView.REPORT_LIST
                     },
                     onSaveExpense = { updatedExpense ->
-                        onUpdateExpense(updatedExpense)
-                        activeExpense = updatedExpense
-                        currentView = ExpenseScreenView.EXPENSE_DETAILS
+                        val original = activeExpense
+                        savingExpense = true
+                        expenseSaveFailed = false
+                        val queued = {
+                            savingExpense = false
+                            activeExpense = updatedExpense
+                            currentView = ExpenseScreenView.EXPENSE_DETAILS
+                        }
+                        val failed: (String) -> Unit = { savingExpense = false; expenseSaveFailed = true }
+                        if (onUpdateExpenseWithBase != null && original != null)
+                            onUpdateExpenseWithBase(original, updatedExpense, queued, failed)
+                        else { onUpdateExpense(updatedExpense); queued() }
                     }
                 )
             }
@@ -400,8 +417,8 @@ fun ExpenseReportListScreen(
     val searchRequester = remember { BringIntoViewRequester() }
     var searchQuery by remember { mutableStateOf("") }
     var selectedDatePreset by remember { mutableStateOf(DatePreset.ALL_TIME) }
-    var customStartDate by remember { mutableLongStateOf(getStartOfDayMillis()) }
-    var customEndDate by remember { mutableLongStateOf(getEndOfDayMillis()) }
+    var customStartDate by remember { mutableLongStateOf(com.example.data.expense.ExpenseDateRange.startOfDay(System.currentTimeMillis())) }
+    var customEndDate by remember { mutableLongStateOf(com.example.data.expense.ExpenseDateRange.endOfDay(System.currentTimeMillis())) }
     var selectedOperatorFilter by remember { mutableStateOf("All") }
     var selectedTractorFilter by remember { mutableStateOf("All") }
     var selectedTypeFilter by remember { mutableStateOf("All") }
@@ -448,21 +465,10 @@ fun ExpenseReportListScreen(
         val matchesType = selectedTypeFilter == "All" ||
                 exp.expenseType.equals(selectedTypeFilter, ignoreCase = true)
         // Date filter
-        val matchesDate = when (selectedDatePreset) {
-            DatePreset.TODAY -> {
-                val ts = if (exp.dateTimestamp > 0) exp.dateTimestamp else exp.createdAt
-                ts in getStartOfDayMillis()..getEndOfDayMillis()
-            }
-            DatePreset.THIS_WEEK -> {
-                val ts = if (exp.dateTimestamp > 0) exp.dateTimestamp else exp.createdAt
-                ts in getStartOfWeekMillis()..getEndOfDayMillis()
-            }
-            DatePreset.THIS_MONTH -> {
-                val ts = if (exp.dateTimestamp > 0) exp.dateTimestamp else exp.createdAt
-                ts in getStartOfMonthMillis()..getEndOfDayMillis()
-            }
-            DatePreset.ALL_TIME -> true
-        }
+        val matchesDate = com.example.data.expense.ExpenseDateRange.contains(
+            if (exp.dateTimestamp > 0) exp.dateTimestamp else exp.createdAt,
+            com.example.data.expense.ExpenseDateRange.Period.valueOf(selectedDatePreset.name),
+            System.currentTimeMillis(), customStartDate, customEndDate)
         matchesSearch && matchesOperator && matchesTractor && matchesType && matchesDate
     }
     val totalAmount = filteredExpenses.sumOf { it.amount }
@@ -470,7 +476,9 @@ fun ExpenseReportListScreen(
     val avgAmount = if (totalCount > 0) totalAmount / totalCount else 0.0
     val lowestAmount = filteredExpenses.minOfOrNull { it.amount } ?: 0.0
     val highestAmount = filteredExpenses.maxOfOrNull { it.amount } ?: 0.0
-    val dateFormat = remember { SimpleDateFormat("dd/MM/yy\nhh:mm a", Locale.getDefault()) }
+    val dateFormat = remember { SimpleDateFormat("dd/MM/yy", Locale.getDefault()).apply {
+        timeZone = java.util.TimeZone.getTimeZone("Asia/Kolkata")
+    } }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -592,6 +600,7 @@ fun ExpenseReportListScreen(
                         .clickable {
                             showDatePicker(context, customStartDate) { picked ->
                                 customStartDate = picked
+                                selectedDatePreset = DatePreset.CUSTOM
                             }
                         }
                 ) {
@@ -625,7 +634,8 @@ fun ExpenseReportListScreen(
                         .height(46.dp)
                         .clickable {
                             showDatePicker(context, customEndDate) { picked ->
-                                customEndDate = picked + 86399000L
+                                customEndDate = com.example.data.expense.ExpenseDateRange.endOfDay(picked)
+                                selectedDatePreset = DatePreset.CUSTOM
                             }
                         }
                 ) {
@@ -653,7 +663,8 @@ fun ExpenseReportListScreen(
                         .clickable {
                             showDatePicker(context, customStartDate) { picked ->
                                 customStartDate = picked
-                                customEndDate = picked + 86399000L
+                                customEndDate = com.example.data.expense.ExpenseDateRange.endOfDay(picked)
+                                selectedDatePreset = DatePreset.CUSTOM
                             }
                         }
                 ) {
@@ -748,7 +759,7 @@ fun ExpenseReportListScreen(
                             isTypeMenuOpen = false
                         }
                     )
-                    ExpenseTypes.forEach { type ->
+                    com.example.data.expense.ExpenseCategories.choices(emptyList(), expenses.map { it.expenseType }).forEach { type ->
                         DropdownMenuItem(
                             text = { Text(getLocalizedExpenseType(type, isTamil)) },
                             onClick = {
@@ -837,6 +848,7 @@ fun ExpenseReportListScreen(
                 )
             }
         }
+        item { com.example.ui.components.ExpenseAnalyticsCard(filteredExpenses, isTamil) }
         // Expense List Items or Empty State
         if (filteredExpenses.isEmpty()) {
             item {
@@ -1314,7 +1326,11 @@ fun AddOrEditExpenseScreen(
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     currentUid: String = "",
     onBack: () -> Unit,
-    onSaveExpense: (ExpenseEntity) -> Unit
+    onSaveExpense: (ExpenseEntity) -> Unit,
+    customExpenseCategories: List<String> = emptyList(),
+    onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null,
+    isSaving: Boolean = false,
+    saveFailed: Boolean = false
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -1346,23 +1362,28 @@ fun AddOrEditExpenseScreen(
     var selectedTractor by remember {
         mutableStateOf(initialExpense?.tractorLabel ?: tractors.firstOrNull()?.label ?: "")
     }
-    var amountText by remember { mutableStateOf(if (initialExpense != null) initialExpense.amount.toInt().toString() else "") }
+    var amountText by remember { mutableStateOf(initialExpense?.amount?.let(com.example.data.expense.ExpenseAmountInput::format) ?: "") }
     var descriptionText by remember { mutableStateOf(initialExpense?.description ?: "") }
     var selectedWhoPaid by remember(initialExpense) {
         mutableStateOf(initialExpense?.paidBy?.ifBlank { "I Paid" } ?: "I Paid")
     }
     var paymentMode by remember { mutableStateOf("Cash") }
     var isTypeDropdownOpen by remember { mutableStateOf(false) }
+    var showAddCategory by remember { mutableStateOf(false) }
+    val categoryChoices = com.example.data.expense.ExpenseCategories.choices(customExpenseCategories, listOfNotNull(initialExpense?.expenseType))
     var isOperatorDropdownOpen by remember { mutableStateOf(false) }
     var isTractorDropdownOpen by remember { mutableStateOf(false) }
     var isPaymentModeDropdownOpen by remember { mutableStateOf(false) }
     var hasValidated by remember { mutableStateOf(false) }
-    val isAmountValid = (amountText.toDoubleOrNull() ?: 0.0) > 0
+    val originalAmount = initialExpense?.amount?.takeIf { isEditMode }
+    val allowRefund = originalAmount != null && originalAmount < 0.0
+    val isAmountValid = com.example.data.expense.ExpenseAmountInput.parseForRecord(amountText, originalAmount) != null
     val formDateFormat = remember(isTamil) { SimpleDateFormat("dd/MM/yyyy  hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH) }
     fun doSave() {
+        if (isSaving) return
         hasValidated = true
-        val amt = amountText.toDoubleOrNull() ?: 0.0
-        if (amt > 0) {
+        val amt = com.example.data.expense.ExpenseAmountInput.parseForRecord(amountText, originalAmount)
+        if (amt != null) {
             val matchedTractor = tractors.find { it.label == selectedTractor }
             val currentActor = if (isOwner) {
                 settings.ownerName.ifBlank { actorName.ifBlank { settings.activePartnerName.ifBlank { "Owner" } } }
@@ -1410,6 +1431,10 @@ fun AddOrEditExpenseScreen(
             onSaveExpense(expense)
         }
     }
+    if (showAddCategory && onAddExpenseCategory != null) com.example.ui.components.AddExpenseCategoryDialog(
+        isTamil = isTamil, onDismiss = { showAddCategory = false }, onSave = onAddExpenseCategory,
+        onSelected = { selectedType = it }
+    )
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1428,7 +1453,7 @@ fun AddOrEditExpenseScreen(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = if (isTamil) "பின்விளக்கம்" else "Back",
@@ -1448,7 +1473,7 @@ fun AddOrEditExpenseScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable { doSave() }
+                        .clickable(enabled = !isSaving) { doSave() }
                         .padding(horizontal = 10.dp, vertical = 6.dp)
                 ) {
                     Icon(
@@ -1506,7 +1531,7 @@ fun AddOrEditExpenseScreen(
                             expanded = isTypeDropdownOpen,
                             onDismissRequest = { isTypeDropdownOpen = false }
                         ) {
-                            ExpenseTypes.forEach { type ->
+                            categoryChoices.filter { onAddExpenseCategory == null || it != "Other" || initialExpense?.expenseType == "Other" }.forEach { type ->
                                 DropdownMenuItem(
                                     text = { Text(getLocalizedExpenseType(type, isTamil)) },
                                     onClick = {
@@ -1515,6 +1540,11 @@ fun AddOrEditExpenseScreen(
                                     }
                                 )
                             }
+                            if (onAddExpenseCategory != null) DropdownMenuItem(
+                                text = { Text(if (isTamil) "+ வகையைச் சேர்" else "+ Add Category") },
+                                modifier = Modifier.testTag("expense-add-category"),
+                                onClick = { isTypeDropdownOpen = false; showAddCategory = true }
+                            )
                         }
                     }
                 }
@@ -1585,10 +1615,14 @@ fun AddOrEditExpenseScreen(
                     label = if (isTamil) "தொகை (₹)*" else "Amount (₹)*",
                     value = amountText,
                     onValueChange = { amountText = it },
-                    keyboardType = KeyboardType.Number,
+                    keyboardType = KeyboardType.Decimal,
                     placeholder = if (isTamil) "எ.கா: 2500" else "e.g. 2500",
                     isError = hasValidated && !isAmountValid,
-                    errorMessage = if (isTamil) "தயவுசெய்து 0 ஐ விட அதிகமான சரியான தொகையை உள்ளிடவும்" else "Please enter a valid amount greater than 0",
+                    errorMessage = if (allowRefund) {
+                        if (isTamil) "ஏற்கனவே உள்ள திருப்பித் தரப்பட்ட தொகையை மாற்றாமல் வைத்திருக்கவும் அல்லது பூஜ்ஜியத்தை விட அதிகமான தொகையை உள்ளிடவும்" else "Keep the existing refund amount unchanged, or enter an amount greater than 0"
+                    } else {
+                        if (isTamil) "பூஜ்ஜியத்தை விட அதிகமான சரியான தொகையை உள்ளிடவும்" else "Enter a valid amount greater than 0"
+                    },
                     testTag = "input_expense_amount"
                 )
             }
@@ -1728,10 +1762,18 @@ fun AddOrEditExpenseScreen(
                 )
             }
             // Big Green Save Button
+            if (saveFailed) item {
+                Text(
+                    if (isTamil) "செலவைச் சாதனத்தில் சேமிக்க முடியவில்லை. விவரங்கள் இங்கே உள்ளன; மீண்டும் முயற்சிக்கவும்."
+                    else "Could not save this expense on this device. Your details are still here; please try again.",
+                    color = Color(0xFFDC2626), modifier = Modifier.testTag("expense_save_failed")
+                )
+            }
             item {
                 Spacer(modifier = Modifier.height(10.dp))
                 Button(
                     onClick = { doSave() },
+                    enabled = !isSaving,
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF072D18)),
                     modifier = Modifier
@@ -2262,17 +2304,17 @@ fun DetailInfoItem(
    Date & Time Helper Utilities
    ========================================================================================= */
 fun showDatePicker(context: Context, initialMillis: Long, onPicked: (Long) -> Unit) {
-    val cal = Calendar.getInstance().apply { timeInMillis = initialMillis }
+    val cal = com.example.data.expense.ExpenseDateRange.calendar(initialMillis)
     DatePickerDialog(
         context,
         { _, year, month, dayOfMonth ->
-            val resultCal = Calendar.getInstance().apply {
+            val resultCal = com.example.data.expense.ExpenseDateRange.calendar(initialMillis).apply {
                 timeInMillis = initialMillis
                 set(Calendar.YEAR, year)
                 set(Calendar.MONTH, month)
                 set(Calendar.DAY_OF_MONTH, dayOfMonth)
             }
-            onPicked(resultCal.timeInMillis)
+            onPicked(com.example.data.expense.ExpenseDateRange.startOfDay(resultCal.timeInMillis))
         },
         cal.get(Calendar.YEAR),
         cal.get(Calendar.MONTH),

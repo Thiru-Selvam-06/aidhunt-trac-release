@@ -316,6 +316,7 @@ class FirestoreRepository(
         onAccessControlUpdated: (Map<String, Any?>?, String) -> Unit = { _, _ -> },
         onPartnerPermissionsUpdated: (Map<String, Any?>?, String) -> Unit = { _, _ -> },
         onExtensionsUpdated: (List<WorkTypeExtensionEntity>, String) -> Unit = { _, _ -> },
+        onExpenseCategoriesUpdated: (List<com.example.data.entity.ExpenseCategoryEntity>, String) -> Unit = { _, _ -> },
         operatorWorkspaceIds: Set<String> = emptySet(),
         onMembershipUpdated: (List<WorkspaceMember>, String) -> Unit = { _, _ -> }
     ) {
@@ -342,7 +343,7 @@ class FirestoreRepository(
             if (workspaceId.isBlank()) continue
             val wsRef = firestore.collection("workspaces").document(workspaceId)
             val regList = mutableListOf<ListenerRegistration>()
-            val operational = setOf("actorMembership", "members", "entries", "tractors", "attendees", "settings", "accessControl", "extensions")
+            val operational = setOf("actorMembership", "members", "entries", "tractors", "attendees", "settings", "accessControl", "extensions", "expenseCategories")
             listenerHealth.begin(workspaceId, operational + if (workspaceId in operatorWorkspaceIds) emptySet() else setOf("customers", "expenses", "withdrawals", "payments"))
             // The full members query loses permission after removal. The actor's own
             // member document remains readable so revocation still reaches this device.
@@ -594,6 +595,28 @@ class FirestoreRepository(
                     }
                 }
             regList.add(regExtensions)
+
+            regList.add(wsRef.collection("expenseCategories")
+                .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
+                    if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                    if (error != null) {
+                        listenerHealth.failed(workspaceId, "expenseCategories")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        // A malformed category must not certify this listener as healthy.
+                        val categories = runCatching { snapshot.documents.map { doc ->
+                            val value = expenseCategoryFromFirestoreMap(requireNotNull(doc.data), workspaceId)
+                            require(value.id.toString() == doc.id) { "Category document identity mismatch" }
+                            value
+                        } }.getOrElse {
+                            listenerHealth.failed(workspaceId, "expenseCategories")
+                            return@addSnapshotListener
+                        }
+                        listenerHealth.snapshot(workspaceId, "expenseCategories", snapshot.metadata.isFromCache)
+                        onExpenseCategoriesUpdated(categories, workspaceId)
+                    }
+                })
 
             activeWorkspaceListeners[workspaceId] = regList
             Log.d(TAG, "All Firestore snapshot listeners started for workspace: $workspaceId")
@@ -862,6 +885,7 @@ class FirestoreRepository(
             "PAYMENT" -> "collections"
             "TRACTOR" -> "tractors"
             "EXTENSION" -> "extensions"
+            "EXPENSE_CATEGORY" -> "expenseCategories"
             else -> throw SecurityException("Unsupported queued operation")
         }
         val json = org.json.JSONObject(op.payloadJson)
@@ -952,6 +976,23 @@ class FirestoreRepository(
             }
             else require(existing.getString("operationId") == op.operationId) { "Delete belongs to another pending operation" }
             ref.delete().await()
+        } else if (op.entityType == "EXPENSE_CATEGORY") {
+            require(op.mutationType == "UPSERT") { "Categories cannot be deleted or rewritten" }
+            val category = expenseCategoryFromFirestoreMap(payload, op.workspaceId)
+            firestore.runTransaction { transaction ->
+                val existing = transaction.get(ref)
+                if (existing.exists()) {
+                    val canonical = expenseCategoryFromFirestoreMap(existing.data.orEmpty(), op.workspaceId)
+                    require(canonical.nameKey == category.nameKey) { "Category identity collision; original retained" }
+                    if (existing.getString("operationId") != op.operationId) {
+                        // Concurrent equivalent additions share one category. Keep its original
+                        // name/creator; acknowledge this command with metadata only.
+                        transaction.update(ref, payload.filterKeys { it in setOf(
+                            "operationId", "actorUid", "actionTime", "protocolVersion", "operationType", "dependencies") })
+                    }
+                } else transaction.set(ref, payload)
+                null
+            }.await()
         } else if (op.entityType == "CUSTOMER") {
             firestore.runTransaction { transaction ->
                 val existing = transaction.get(ref)
@@ -974,6 +1015,13 @@ class FirestoreRepository(
         } else if (op.entityType in setOf("JOB", "EXPENSE", "WITHDRAWAL")) {
             saveTimedDocument(ref, payload, queuedOperation = op)
         } else ref.set(payload).await()
+    }
+
+    suspend fun getExpenseCategoryFromServer(workspaceId: String, id: Long): com.example.data.entity.ExpenseCategoryEntity? {
+        val data = (db ?: error("Firestore unavailable")).collection("workspaces").document(workspaceId)
+            .collection("expenseCategories").document(id.toString()).get(com.google.firebase.firestore.Source.SERVER)
+            .await().data ?: return null
+        return expenseCategoryFromFirestoreMap(data, workspaceId)
     }
 
     suspend fun savePayment(workspaceId: String, payment: PaymentEntity, uid: String?) {

@@ -45,6 +45,7 @@ object OperationPolicy {
             "EXPENSE" -> owner || (partner && creator == op.actorUid && (target == op.actorUid || matchingOwnJob) && timely)
             "WITHDRAWAL" -> owner || (partner && creator == op.actorUid && target == op.actorUid && timely)
             "TRACTOR", "EXTENSION" -> owner || (partner && creator == op.actorUid)
+            "EXPENSE_CATEGORY" -> (owner || partner) && creator == op.actorUid && op.mutationType == "UPSERT"
             "CUSTOMER" -> owner || (partner && op.mutationType != "DELETE")
             "PAYMENT" -> owner || (partner && data.optString("collectedByUid") == op.actorUid &&
                 (data.optString("status") == "ACTIVE" || AuthorizationManager.within24Hours(data.optLong("createdAt"), op.actionTime)))

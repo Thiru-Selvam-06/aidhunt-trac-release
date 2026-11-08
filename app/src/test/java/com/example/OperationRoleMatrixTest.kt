@@ -18,12 +18,14 @@ class OperationRoleMatrixTest(private val role: String, private val entity: Stri
             "JOB" to setOf("OWNER","PARTNER","OPERATOR"),
             "EXPENSE" to setOf("OWNER","PARTNER"), "WITHDRAWAL" to setOf("OWNER","PARTNER"),
             "TRACTOR" to setOf("OWNER","PARTNER"), "EXTENSION" to setOf("OWNER","PARTNER"),
+            "EXPENSE_CATEGORY" to setOf("OWNER","PARTNER"),
             "CUSTOMER" to setOf("OWNER","PARTNER"), "PAYMENT" to setOf("OWNER","PARTNER"))
         @JvmStatic @ParameterizedRobolectricTestRunner.Parameters(name="{0}/{1}/{2}")
         fun cases(): List<Array<Any>> = listOf("OWNER","PARTNER","OPERATOR").flatMap { role ->
             expectations.flatMap { (entity, permitted) -> listOf("UPSERT","DELETE").map { mutation ->
                 arrayOf<Any>(role,entity,mutation, role in permitted &&
-                    !(entity=="CUSTOMER" && mutation=="DELETE" && role!="OWNER"))
+                    !(entity=="CUSTOMER" && mutation=="DELETE" && role!="OWNER") &&
+                    !(entity=="EXPENSE_CATEGORY" && mutation=="DELETE"))
             } }
         }
     }
@@ -49,6 +51,8 @@ class OperationRoleMatrixTest(private val role: String, private val entity: Stri
         missingMembershipCannotAuthorize()
         timeLimitedOperationsRespectExactCutoffAndUnknownCreation()
         nonOwnerCannotMutateOtherCreatorsOrHistoricalJobs()
+        if(entity=="EXPENSE_CATEGORY") denied(operation(creator="other"),
+            listOf(member(),WorkspaceMember(uid="other",workspaceId="a",role="PARTNER",status="ACTIVE")))
     }
     private fun removedMembershipCannotUseTheSameRole() = denied(members=listOf(member(status="REMOVED")))
     private fun foreignWorkspaceMembershipCannotAuthorize() = denied(members=listOf(member(ws="b")))

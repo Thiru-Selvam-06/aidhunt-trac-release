@@ -416,7 +416,8 @@ service cloud.firestore {
           active(ws, request.resource.data.expenseForUid) && request.resource.data.financialAttributionUid == request.resource.data.expenseForUid &&
           validNewExpenseParties(ws, request.resource.data);
         allow update: if retainedExpenseSource(ws, request.resource.data) && envelope(ws) && original() && notDeleted() && activeRecord(ws, 'expenseForUid') &&
-          request.resource.data.amount is number && request.resource.data.amount > 0 &&
+          request.resource.data.amount is number && (request.resource.data.amount > 0 ||
+            (resource.data.amount is number && resource.data.amount < 0 && request.resource.data.amount == resource.data.amount)) &&
           (same(['paidBy', 'paidByUid', 'paidByPartner']) || validExpenseFunding(ws, request.resource.data)) &&
           same(['expenseForUid', 'financialAttributionUid']) && (owner(ws) || (partner(ws) && ownTimely()));
         allow delete: if (unlockedExpenseDelete(ws, resource.data) && deleteEnvelope() && activeRecord(ws, 'expenseForUid') && (owner(ws) || (partner(ws) && deleteTimely()))) ||
@@ -488,6 +489,26 @@ service cloud.firestore {
           !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/customers/$(id)) &&
           request.resource.data.keys().hasOnly(['workspaceId','recordId','actorUid','operationId','actionTime','protocolVersion','sourceCreatedAt','entryId']);
         allow update, delete: if false;
+      }
+      match /expenseCategories/{id} {
+        allow read: if member(ws);
+        allow create: if finance(ws) && envelope(ws) && request.resource.data.operationType == 'UPSERT' &&
+          request.resource.data.isDeleted == false && request.resource.data.id is int &&
+          request.resource.data.id > 0 && string(request.resource.data.id) == id &&
+          request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 120 &&
+          request.resource.data.nameKey is string && request.resource.data.nameKey.size() > 0 && request.resource.data.nameKey.size() <= 240 &&
+          request.resource.data.createdByUid == request.auth.uid &&
+          ((owner(ws) && request.resource.data.createdByRole in ['OWNER', 'Owner', 'owner']) ||
+           (partner(ws) && request.resource.data.createdByRole in ['PARTNER', 'Partner', 'partner'])) &&
+          request.resource.data.createdAt == request.resource.data.actionTime &&
+          request.resource.data.keys().hasOnly(['id', 'workspaceId', 'name', 'nameKey', 'createdAt', 'createdByUid',
+            'createdByRole', 'protocolVersion', 'operationType', 'dependencies', 'operationId', 'actorUid', 'actionTime', 'isDeleted']);
+        // Equivalent concurrent additions may acknowledge their command, never rename
+        // another member's category, change its identity/provenance, or touch money.
+        allow update: if finance(ws) && envelope(ws) && request.resource.data.operationType == 'UPSERT' &&
+          request.resource.data.isDeleted == false && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['operationId', 'actorUid', 'actionTime', 'protocolVersion', 'operationType', 'dependencies']);
+        allow delete: if false;
       }
       match /{asset}/{id} {
         allow read: if asset in ['tractors', 'extensions'] && member(ws);

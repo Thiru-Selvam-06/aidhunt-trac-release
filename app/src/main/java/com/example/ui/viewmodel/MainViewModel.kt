@@ -229,6 +229,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun isAccountBlocked(): Boolean = com.example.data.auth.AuthorizationManager.isAccountBlocked()
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val expenseCategories: StateFlow<List<com.example.data.entity.ExpenseCategoryEntity>> = activeWorkspaceId.flatMapLatest { ws ->
+        if (ws.isNullOrBlank()) kotlinx.coroutines.flow.flowOf(emptyList())
+        else workspaceRepository.getExpenseCategoriesFlow(ws)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun addExpenseCategory(name: String, onSuccess: (String) -> Unit, onError: (String) -> Unit) {
+        val ws = activeWorkspaceId.value.orEmpty()
+        val actor = currentUid.orEmpty()
+        viewModelScope.launch {
+            try {
+                val selected = workspaceRepository.addExpenseCategory(name, ws, actor)
+                if (activeWorkspaceId.value == ws && currentUid.orEmpty() == actor) onSuccess(selected)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (e: Exception) { onError(e.message ?: "Unable to add category") }
+        }
+    }
+
     fun canCreateNewEntry(): Boolean = currentUserRole.value in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER, com.example.data.auth.RoleUtils.ROLE_OPERATOR)
 
     fun canCreateOldEntry(): Boolean = com.example.data.auth.AuthorizationManager.canCreateOldEntry(isCollaborationOwner.value, currentUserRole.value)
@@ -940,39 +958,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun getExpensesForJob(jobId: Long): List<ExpenseEntity> = workspaceRepository.getExpensesForJob(jobId)
 
-    fun addExpense(expense: ExpenseEntity, onSuccess: () -> Unit = {}) {
-        if (!com.example.data.auth.AuthorizationManager.canViewExpenses(isCollaborationOwner.value, role = currentUserRole.value)) {
-            _syncMessage.value = "Expense operations restricted by administration"
-            return
-        }
-        viewModelScope.launch {
-            try {
-                workspaceRepository.addExpense(expense)
-                _syncMessage.value = "Expense saved on this device; cloud sync pending"
-                onSuccess()
-            } catch (e: Exception) {
-                val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code?.name ?: "SYNC_FAILED"
-                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
-                android.util.Log.e("TRAC_FIRESTORE", "Cloud sync failed for expense: $code ${e.message}", e)
-                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
-            }
-        }
-    }
+    fun addExpense(expense: ExpenseEntity, onSuccess: () -> Unit = {}) =
+        addExpenseConfirmed(expense, onSuccess, {})
 
-    fun updateExpense(expense: ExpenseEntity, onSuccess: () -> Unit = {}) {
+    fun updateExpense(expense: ExpenseEntity, onSuccess: () -> Unit = {}) =
+        queueExpense(expense, null, true, onSuccess, {})
+
+    fun addExpenseConfirmed(expense: ExpenseEntity, onQueued: () -> Unit, onError: (String) -> Unit) =
+        queueExpense(expense, null, false, onQueued, onError)
+
+    fun updateExpenseWithBase(original: ExpenseEntity, expense: ExpenseEntity,
+        onQueued: () -> Unit, onError: (String) -> Unit) =
+        queueExpense(expense, original, true, onQueued, onError)
+
+    private fun queueExpense(expense: ExpenseEntity, original: ExpenseEntity?, editing: Boolean,
+        onQueued: () -> Unit, onError: (String) -> Unit) {
+        // Bind the click to its account/workspace before dispatching asynchronous work.
+        val actor = currentUid.orEmpty()
+        val workspace = activeWorkspaceId.value.orEmpty()
         if (!com.example.data.auth.AuthorizationManager.canViewExpenses(isCollaborationOwner.value, role = currentUserRole.value)) {
             _syncMessage.value = "Expense operations restricted by administration"
+            onError(_syncMessage.value)
             return
         }
         viewModelScope.launch {
             try {
-                workspaceRepository.updateExpense(expense)
-                onSuccess()
-            } catch (e: Exception) {
+                if (editing) workspaceRepository.updateExpense(expense, original, actor, workspace)
+                else workspaceRepository.addExpense(expense, actor, workspace)
+                _syncMessage.value = "Expense saved on this device; cloud sync pending"
+                onQueued()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (e: Exception) {
                 val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code?.name ?: "SYNC_FAILED"
                 _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
-                android.util.Log.e("TRAC_FIRESTORE", "Cloud update failed for expense: $code ${e.message}", e)
-                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
+                android.util.Log.e("TRAC_FIRESTORE", "Local expense save failed: $code ${e.message}", e)
+                onError(_syncMessage.value)
             }
         }
     }
