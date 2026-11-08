@@ -229,6 +229,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun isAccountBlocked(): Boolean = com.example.data.auth.AuthorizationManager.isAccountBlocked()
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val expenseCategories: StateFlow<List<com.example.data.entity.ExpenseCategoryEntity>> = activeWorkspaceId.flatMapLatest { ws ->
+        if (ws.isNullOrBlank()) kotlinx.coroutines.flow.flowOf(emptyList())
+        else workspaceRepository.getExpenseCategoriesFlow(ws)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun addExpenseCategory(name: String, onSuccess: (String) -> Unit, onError: (String) -> Unit) {
+        val ws = activeWorkspaceId.value.orEmpty()
+        val actor = currentUid.orEmpty()
+        viewModelScope.launch {
+            try {
+                val selected = workspaceRepository.addExpenseCategory(name, ws, actor)
+                if (activeWorkspaceId.value == ws && currentUid.orEmpty() == actor) onSuccess(selected)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (e: Exception) { onError(e.message ?: "Unable to add category") }
+        }
+    }
+
     fun canCreateNewEntry(): Boolean = currentUserRole.value in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER, com.example.data.auth.RoleUtils.ROLE_OPERATOR)
 
     fun canCreateOldEntry(): Boolean = com.example.data.auth.AuthorizationManager.canCreateOldEntry(isCollaborationOwner.value, currentUserRole.value)

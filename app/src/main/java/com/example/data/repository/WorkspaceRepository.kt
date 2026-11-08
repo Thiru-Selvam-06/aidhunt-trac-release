@@ -129,6 +129,7 @@ class WorkspaceRepository(
     private val paymentDao = database.paymentDao()
     private val checklistItemDao = database.checklistItemDao()
     private val workTypeExtensionDao = database.workTypeExtensionDao()
+    private val expenseCategoryDao = database.expenseCategoryDao()
 
     val currentWorkspace: StateFlow<Workspace?> = firestoreRepository.currentWorkspace
 
@@ -1188,6 +1189,17 @@ class WorkspaceRepository(
                     Log.d(TAG, "Partner permissions synced for $partnerKey in $listenerWsId: locks=$lockedPagesList")
                 }
             },
+            onExpenseCategoriesUpdated = { categories, listenerWsId ->
+                scope.launch {
+                    if (listenerWsId !in _visibleWorkspaceIds.value && listenerWsId != _activeWorkspaceId.value) return@launch
+                    database.withTransaction {
+                        val pending = operations.outstandingOperations(listenerWsId)
+                            .filter { it.entityType == "EXPENSE_CATEGORY" }.map { it.entityId }.toSet()
+                        // The outbox owns pending rows; a cloud snapshot must not overwrite them.
+                        categories.filter { it.id !in pending }.forEach { expenseCategoryDao.put(it) }
+                    }
+                }
+            },
             onExtensionsUpdated = { remoteExtensions, listenerWsId ->
                 scope.launch {
                     val pWsId = _personalWorkspaceId.value
@@ -1680,6 +1692,10 @@ class WorkspaceRepository(
     }
 
     private suspend fun acknowledge(op: PendingOperationEntity) {
+        val confirmedCategory = if (op.entityType == "EXPENSE_CATEGORY")
+            firestoreRepository.getExpenseCategoryFromServer(op.workspaceId, op.entityId)
+                ?: error("Category acknowledgement is missing; original action retained")
+            else null
         // A listener can arrive while this profile is still pending and be intentionally ignored.
         // Fetch the confirmed profile so a phone-only edit also receives another device's rename.
         val confirmedProfile = if (op.entityType == "CUSTOMER" && op.mutationType == "UPSERT" &&
@@ -1742,6 +1758,9 @@ class WorkspaceRepository(
                             totalPaid = stats.totalPaid, balanceDue = stats.balanceDue, isSynced = true))
                     } else customerDao.markCustomersSynced(op.workspaceId, listOf(op.entityId))
                     "WITHDRAWAL" -> withdrawalDao.markWithdrawalsSynced(op.workspaceId, listOf(op.entityId))
+                    "EXPENSE_CATEGORY" -> {
+                        expenseCategoryDao.put(requireNotNull(confirmedCategory))
+                    }
                     "PAYMENT" -> {
                         paymentDao.markPaymentsSynced(op.workspaceId, listOf(op.entityId))
                         val jobId = org.json.JSONObject(op.payloadJson).optLong("jobEntryId")
@@ -2801,6 +2820,40 @@ class WorkspaceRepository(
 
     fun getWorkTypeExtensionsFlow(workspaceId: String): Flow<List<WorkTypeExtensionEntity>> {
         return authorizedRecords(workspaceId, records = workTypeExtensionDao.getExtensionsForWorkspace(workspaceId))
+    }
+
+    fun getExpenseCategoriesFlow(workspaceId: String): Flow<List<com.example.data.entity.ExpenseCategoryEntity>> =
+        authorizedRecords(workspaceId, records = expenseCategoryDao.observe(workspaceId))
+
+    suspend fun addExpenseCategory(name: String, expectedWorkspaceId: String = _activeWorkspaceId.value.orEmpty(),
+        expectedActorUid: String = getEffectiveActorUid().orEmpty()): String {
+        val actor = expectedActorUid
+        val actionTime = System.currentTimeMillis()
+        val display = com.example.data.expense.ExpenseCategories.validate(name)
+        val result = database.withTransaction {
+            val ws = getOrResolveWorkspaceId().orEmpty()
+            require(ws.isNotBlank() && ws == expectedWorkspaceId && actor.isNotBlank() && actor == getEffectiveActorUid()) {
+                "Account or workspace changed; category was not saved"
+            }
+            val role = requireWorkspaceActor(ws)
+            require(role in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) {
+                "Only Owners and Partners can add expense categories"
+            }
+            com.example.data.expense.ExpenseCategories.builtIn(display)?.let { return@withTransaction it }
+            val id = com.example.data.expense.ExpenseCategories.id(display)
+            val key = com.example.data.expense.ExpenseCategories.key(display)
+            val existing = expenseCategoryDao.find(ws, id)
+            if (existing != null) {
+                require(existing.nameKey == key) { "Category identity collision; original category retained for review" }
+                return@withTransaction existing.name
+            }
+            val category = com.example.data.entity.ExpenseCategoryEntity(id, ws, display, key, actionTime, actor, role)
+            expenseCategoryDao.put(category)
+            enqueue("EXPENSE_CATEGORY", id, category.toFirestoreMap(), expectedActorUid = actor, actionTime = actionTime)
+            display
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
     }
 
     suspend fun addExtension(name: String, workspaceId: String = ""): WorkTypeExtensionEntity {

@@ -115,6 +115,7 @@ fun MainAppContent(
     val lockedPages by viewModel.lockedPages.collectAsState()
     val checklistItems by viewModel.checklistItems.collectAsState()
     val workTypeExtensions by viewModel.workTypeExtensions.collectAsState()
+    val expenseCategories by viewModel.expenseCategories.collectAsState()
     val authenticatedUserName by viewModel.authenticatedUserName.collectAsState()
     val authenticatedUserRole by viewModel.authenticatedUserRole.collectAsState()
     val profitShareAllocations by viewModel.profitShareAllocations.collectAsState()
@@ -608,6 +609,8 @@ fun MainAppContent(
 
                             BottomTab.REPORT -> {
                                 ReportScreen(
+                                    customExpenseCategories = expenseCategories.map { it.name },
+                                    onAddExpenseCategory = viewModel::addExpenseCategory,
                                     currentSubPage = currentReportSubPage,
                                     onSubPageSelected = { subPage ->
                                         val pageKey = when (subPage) {
@@ -858,6 +861,8 @@ fun MainAppContent(
                                 }
 
                                 NewEntryScreen(
+                                    customExpenseCategories = expenseCategories.map { it.name },
+                                    onAddExpenseCategory = viewModel::addExpenseCategory,
                                     settings = settings,
                                     tractors = tractors,
                                     customers = customers,

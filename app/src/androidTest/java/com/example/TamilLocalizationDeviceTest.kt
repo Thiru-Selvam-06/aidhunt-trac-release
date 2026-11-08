@@ -32,6 +32,24 @@ class TamilLocalizationDeviceTest {
         check(FirebaseApp.getInstance().options.projectId == "demo-aidhunt-v16")
     }
 
+    // Like the existing person-filter dialog, this window journey runs on Android:
+    // Robolectric cannot idle this separate dialog window even at setContent.
+    @Test fun tamilCategoryDialogSavesUserTextWithoutTranslation() {
+        var sent = ""; var selected = ""
+        val dismissed = mutableStateOf(false)
+        compose.setContent { MyApplicationTheme {
+            if (!dismissed.value) com.example.ui.components.AddExpenseCategoryDialog(true, { dismissed.value = true },
+                onSave = { name, success, _ -> sent = name; success(name) }, onSelected = { selected = it })
+        } }
+        compose.onNodeWithText("செலவு வகையைச் சேர்").assertExists()
+        compose.onNodeWithTag("expense-category-name").performTextInput("Engine Oil")
+        compose.onNodeWithTag("expense-category-save").performClick()
+        compose.runOnIdle {
+            assertEquals("Engine Oil", sent); assertEquals(sent, selected)
+            org.junit.Assert.assertTrue(dismissed.value)
+        }
+    }
+
     @Test fun overviewMetricAndPersonFiltersPreserveEnteredMemberNamesAcrossLanguages() {
         val language = mutableStateOf("EN")
         val member = WorkspaceMember(uid = "fixture-member", workspaceId = "fixture", displayName = "All", role = "PARTNER", status = "ACTIVE")

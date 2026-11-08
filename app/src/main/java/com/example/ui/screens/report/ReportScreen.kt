@@ -127,7 +127,9 @@ fun ReportScreen(
     profitShareAllocations: Map<String, Int> = emptyMap(),
     profitShareAllocationDetails: Map<String, com.example.data.firebase.ProfitShareAllocation> = emptyMap(),
     onUpdateProfitShareAllocations: (Map<String, Int>, Map<String, com.example.data.firebase.ProfitShareAllocation>) -> Unit = { _, _ -> },
-    onEditCustomerProfile: ((CustomerEntity, CustomerEntity, () -> Unit) -> Unit)? = null
+    onEditCustomerProfile: ((CustomerEntity, CustomerEntity, () -> Unit) -> Unit)? = null,
+    customExpenseCategories: List<String> = emptyList(),
+    onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     Box(
@@ -160,6 +162,8 @@ fun ReportScreen(
             }
             ReportSubPage.EXPENSES -> {
                 ExpensesTab(
+                    customExpenseCategories = customExpenseCategories,
+                    onAddExpenseCategory = onAddExpenseCategory,
                     workspaceMembers = workspaceMembers,
                     settings = settings,
                     expenses = expenses,

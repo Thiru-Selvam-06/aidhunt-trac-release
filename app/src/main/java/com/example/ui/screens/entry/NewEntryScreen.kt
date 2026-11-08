@@ -178,7 +178,9 @@ fun NewEntryScreen(
     onSaveJob: (JobEntryEntity, ExpenseEntity?, List<ExpenseEntity>) -> Unit,
     onUpdateLockedTractor: ((String) -> Unit)? = null,
     onUpdateLockedPerson: ((String) -> Unit)? = null,
-    onResolvePersonalRate: (String) -> Double = { 1100.0 }
+    onResolvePersonalRate: (String) -> Double = { 1100.0 },
+    customExpenseCategories: List<String> = emptyList(),
+    onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -2290,6 +2292,9 @@ fun NewEntryScreen(
 
     if (showAddExpenseModal && canReceivePayment) {
         AddExpenseModal(
+            isTamil = isTamil,
+            customExpenseCategories = customExpenseCategories,
+            onAddExpenseCategory = onAddExpenseCategory,
             entryForPartnerName = effectivePersonName,
             currency = settings.currency,
             initialExpense = expenseToEdit,
@@ -2633,7 +2638,10 @@ fun AddExpenseModal(
     currency: String,
     initialExpense: DraftExpenseItem? = null,
     onDismiss: () -> Unit,
-    onAddExpense: (DraftExpenseItem) -> Unit
+    onAddExpense: (DraftExpenseItem) -> Unit,
+    isTamil: Boolean = false,
+    customExpenseCategories: List<String> = emptyList(),
+    onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null
 ) {
     var selectedExpenseType by remember(initialExpense) { mutableStateOf(initialExpense?.expenseType ?: "Diesel") }
     var amountInput by remember(initialExpense) {
@@ -2646,9 +2654,14 @@ fun AddExpenseModal(
     var selectedWhoPaid by remember(initialExpense) { mutableStateOf(initialExpense?.paidBy ?: "I Paid") }
     var expenseTypeExpanded by remember { mutableStateOf(false) }
     var hasError by remember { mutableStateOf(false) }
+    var showAddCategory by remember { mutableStateOf(false) }
+    val expenseCategories = com.example.data.expense.ExpenseCategories.choices(customExpenseCategories,
+        listOfNotNull(initialExpense?.expenseType))
+        .filter { onAddExpenseCategory == null || it != "Other" || initialExpense?.expenseType == "Other" }
 
-    val expenseCategories = listOf(
-        "Diesel", "Petrol", "Puncture", "Repair", "Maintenance", "Oil", "Parts", "Other"
+    if (showAddCategory && onAddExpenseCategory != null) com.example.ui.components.AddExpenseCategoryDialog(
+        isTamil = isTamil, onDismiss = { showAddCategory = false }, onSave = onAddExpenseCategory,
+        onSelected = { selectedExpenseType = it }
     )
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -2682,7 +2695,8 @@ fun AddExpenseModal(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (initialExpense != null) "Edit Expense" else "Add Expense",
+                            text = if (initialExpense != null) (if (isTamil) "செலவைத் திருத்து" else "Edit Expense")
+                                else (if (isTamil) "செலவைச் சேர்" else "Add Expense"),
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1E293B)
@@ -2698,7 +2712,7 @@ fun AddExpenseModal(
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
-                                    contentDescription = "Close",
+                                contentDescription = if (isTamil) "மூடு" else "Close",
                                     tint = Color(0xFF64748B),
                                     modifier = Modifier.size(16.dp)
                                 )
@@ -2715,7 +2729,7 @@ fun AddExpenseModal(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "Expense",
+                                text = if (isTamil) "செலவு வகை" else "Expense",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = TextMutedDark
@@ -2760,7 +2774,7 @@ fun AddExpenseModal(
                                                 )
                                             }
                                             Text(
-                                                text = selectedExpenseType,
+                                                text = com.example.data.expense.ExpenseCategories.label(selectedExpenseType, isTamil),
                                                 fontSize = 13.5.sp,
                                                 fontWeight = FontWeight.SemiBold,
                                                 color = Color(0xFF1E293B)
@@ -2780,13 +2794,18 @@ fun AddExpenseModal(
                                 ) {
                                     expenseCategories.forEach { cat ->
                                         DropdownMenuItem(
-                                            text = { Text(cat, fontSize = 13.5.sp) },
+                                            text = { Text(com.example.data.expense.ExpenseCategories.label(cat, isTamil), fontSize = 13.5.sp) },
                                             onClick = {
                                                 selectedExpenseType = cat
                                                 expenseTypeExpanded = false
                                             }
                                         )
                                     }
+                                    if (onAddExpenseCategory != null) DropdownMenuItem(
+                                        text = { Text(if (isTamil) "+ வகையைச் சேர்" else "+ Add Category") },
+                                        modifier = Modifier.testTag("job-expense-add-category"),
+                                        onClick = { expenseTypeExpanded = false; showAddCategory = true }
+                                    )
                                 }
                             }
                         }
@@ -2796,7 +2815,7 @@ fun AddExpenseModal(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "Amount (₹)",
+                                text = if (isTamil) "தொகை (₹)" else "Amount (₹)",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = TextMutedDark
@@ -2841,7 +2860,7 @@ fun AddExpenseModal(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "Who paid?",
+                                text = if (isTamil) "யார் செலுத்தியது?" else "Who paid?",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = TextMutedDark
@@ -2877,7 +2896,7 @@ fun AddExpenseModal(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "$entryForPartnerName Paid",
+                                        text = if (isTamil) "$entryForPartnerName செலுத்தியது" else "$entryForPartnerName Paid",
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.sp,
                                         color = if (isIPaid) DeepSageGreen else Color(0xFF334155)
@@ -2911,7 +2930,7 @@ fun AddExpenseModal(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Business Paid",
+                                        text = if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid",
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.sp,
                                         color = if (isBusinessPaid) DeepSageGreen else Color(0xFF334155)
@@ -2924,7 +2943,7 @@ fun AddExpenseModal(
                     Button(
                         onClick = {
                             val parsedAmount = amountInput.toDoubleOrNull() ?: 0.0
-                            if (parsedAmount <= 0.0) {
+                            if (parsedAmount <= 0.0 || !parsedAmount.isFinite()) {
                                 hasError = true
                                 return@Button
                             }
@@ -2951,7 +2970,8 @@ fun AddExpenseModal(
                             .height(48.dp)
                     ) {
                         Text(
-                            text = if (initialExpense != null) "Save Expense" else "Add Expense",
+                            text = if (initialExpense != null) (if (isTamil) "செலவைச் சேமி" else "Save Expense")
+                                else (if (isTamil) "செலவைச் சேர்" else "Add Expense"),
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.5.sp,
                             color = Color.White
