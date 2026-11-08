@@ -119,6 +119,25 @@ No new service/dependency or financial formula change was added. The Room migrat
 is additive and the existing rejected-action recovery policy is unchanged. No
 production records, pending live actions, Rules or deployments were modified.
 
+### First GitHub run and verified follow-up
+
+Published checkpoint: `6a247ce`; draft PR #7 targets the core development branch.
+GitHub run **42472073633 failed**. Backend/Rules/build-only Worker jobs passed.
+The first harness failure was `test_new_operation_entities_require_explicit_role_matrix_expectations`:
+the explicit permission matrix lacked the newly added `EXPENSE_CATEGORY` entity.
+The existing guard remains unchanged. The matrix now explicitly accepts only
+Owner/Partner UPSERT, denies every category DELETE and Operator write, and tests
+forged category creators under every role. Updated focused Kotlin run:
+**54/54 passed**, zero failures/errors/skips. The unchanged Python suite now passes
+**110/110**; the first run correctly reported109/110.
+
+The Android compilation, four partitions and emulator job did not reach app tests:
+the Gradle9.3.1 distribution download failed with `SocketTimeoutException` at the
+wrapper's10000ms network limit. Only `gradle-wrapper.properties` download timeout
+is now120000ms; the distribution/version and URL validation stay unchanged. No
+application synchronization or test timeout was increased and no gate was disabled.
+A fresh exact-head GitHub run must prove the corrected download and all tests.
+
 ## Approved later financial decisions
 
 New external-loan destinations are Business Cash, Business Bank or Direct to
