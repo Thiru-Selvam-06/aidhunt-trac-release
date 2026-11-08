@@ -77,6 +77,33 @@ service cloud.firestore {
       return uid is string && uid != '' && exists(/databases/$(database)/documents/workspaces/$(ws)/deletedUsers/$(uid)) &&
         get(/databases/$(database)/documents/workspaces/$(ws)/deletedUsers/$(uid)).data.purgeState in ['PURGE_PENDING', 'PURGED'];
     }
+    function jobEditValues(data) {
+      return {'customerId': data.get('customerId', null),
+        'customerName': data.get('customerName', null),
+        'customerPhone': data.get('customerPhone', null),
+        'customerLocation': data.get('customerLocation', null),
+        'operatorName': data.get('operatorName', null),
+        'tractorId': data.get('tractorId', null),
+        'tractorLabel': data.get('tractorLabel', null),
+        'workType': data.get('workType', null),
+        'startTimeMillis': data.get('startTimeMillis', null),
+        'endTimeMillis': data.get('endTimeMillis', null),
+        'durationMinutes': data.get('durationMinutes', null),
+        'hourlyRate': data.get('hourlyRate', null),
+        'totalAmount': data.get('totalAmount', null),
+        'notes': data.get('notes', null)};
+    }
+    function validJobEditAudit(before, after) {
+      let previous = before.get('jobEditHistory', []);
+      let next = after.get('jobEditHistory', []);
+      return previous is list && next is list &&
+        ((!('jobEditHistory' in before) && !('jobEditHistory' in after)) ||
+         (next == previous && same(['customerId','customerName','customerPhone','customerLocation','operatorName','tractorId','tractorLabel','workType','startTimeMillis','endTimeMillis','durationMinutes','hourlyRate','totalAmount','notes','editedByUid','editedByName','editedByRole','updatedAt'])) ||
+         (previous.size() < 100 && after.editedByUid == request.auth.uid && after.updatedAt == after.actionTime && next == previous.concat([{
+           'actorUid': request.auth.uid, 'operationId': after.operationId, 'actionTime': after.actionTime,
+           'before': jobEditValues(before), 'after': jobEditValues(after)
+         }])));
+    }
     function validEntryAmounts(data) {
       return data.totalAmount is number && data.totalAmount >= 0 && data.amountReceived is number &&
         data.amountReceived >= 0 && data.pendingAmount is number && data.pendingAmount >= 0 &&
@@ -245,6 +272,8 @@ service cloud.firestore {
         proof.sourceCreatedAt == source.createdAt && proof.customerId == source.customerId &&
         proof.sourceCreatorUid == source.get('createdByUid', '') && proof.sourceBeneficiaryUid == source.get('entryForUid', '') &&
         proof.totalAmount == source.totalAmount && proof.amountReceived == source.amountReceived && proof.pendingAmount == source.pendingAmount &&
+        proof.get('deletedJobEditHistory', []) == source.get('jobEditHistory', []) &&
+        proof.get('deletedCustomerReassignmentHistory', []) == source.get('customerReassignmentHistory', []) &&
         proof.get('deletedCollectionAuditJson', '[]') is string && proof.get('deletedCollectionAuditJson', '[]').size() <= 131072 &&
         proof.get('deletedExpenseAuditJson', '[]') is string && proof.get('deletedExpenseAuditJson', '[]').size() <= 131072 &&
         proof.collectionIds is list && proof.collectionIds.size() <= 450 && proof.collectionIds.toSet().size() == proof.collectionIds.size() &&
@@ -260,14 +289,24 @@ service cloud.firestore {
       let path = entryProofPath(ws, id);
       let proof = getAfter(path).data;
       return !exists(path) && proof.workspaceId == ws && proof.recordId == id &&
-        proof.actorUid == request.auth.uid && lockMatchesProof(ws, 'ENTRY', id, proof) &&
-        lockMatchesProof(ws, 'CUSTOMER', proof.customerId, proof);
+        proof.actorUid == request.auth.uid;
+    }
+    // Every audited compound deletion must delete this source too. Check the
+    // guards here once, leaving the proof's five-receipt read budget available.
+    function guardedSourceDeletion(ws, id, source) {
+      let proof = getAfter(entryProofPath(ws, id)).data;
+      return newDeletionProof(ws, id) && lockMatchesProof(ws, 'ENTRY', id, proof) &&
+        lockMatchesProof(ws, 'CUSTOMER', source.customerId, proof);
     }
     function compoundChildDelete(ws, jobId, creatorUid, createdAt) {
       let proof = getAfter(entryProofPath(ws, string(jobId))).data;
+      let actor = get(memberPath(ws, request.auth.uid)).data;
+      let activeActor = actor.status in ['ACTIVE', 'active'];
       return resource.data.workspaceId == ws && !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(jobId))) &&
         newDeletionProof(ws, string(jobId)) &&
-        (owner(ws) || (partner(ws) && creatorUid == request.auth.uid &&
+        ((activeActor && actor.role in ['OWNER', 'Owner', 'owner'] &&
+          get(/databases/$(database)/documents/workspaces/$(ws)).data.ownerUid == request.auth.uid) ||
+         (activeActor && actor.role in ['PARTNER', 'Partner', 'partner'] && creatorUid == request.auth.uid &&
           resource.data.get('authorizationTimeStatus', '') in ['CLIENT_ORIGINAL_V2', 'VERIFIED'] && createdAt is int && createdAt > 0 &&
           proof.actionTime >= createdAt && proof.actionTime - createdAt < 86400000));
     }
@@ -348,14 +387,14 @@ service cloud.firestore {
         allow get: if finance(ws) || (operator(ws) && (!exists(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)) || resource.data.isHistorical == false));
         allow list: if finance(ws) || (operator(ws) && resource.data.isHistorical == false);
         allow create: if !customerLocked(ws, request.resource.data.customerId) && !exists(entryProofPath(ws, id)) && envelope(ws) && member(ws) && request.resource.data.createdByUid == request.auth.uid &&
-          timedCreationTime() && validCustomerReassignment(null, request.resource.data) && reference(ws, 'customers', request.resource.data.customerId) &&
+          timedCreationTime() && request.resource.data.get('jobEditHistory', []) == [] && validCustomerReassignment(null, request.resource.data) && reference(ws, 'customers', request.resource.data.customerId) &&
           (request.resource.data.get('tractorId', 0) == 0 || reference(ws, 'tractors', request.resource.data.tractorId)) &&
           request.resource.data.isDeleted == false && request.resource.data.isHistorical is bool &&
           active(ws, request.resource.data.entryForUid) && request.resource.data.financialAttributionUid == request.resource.data.entryForUid &&
           validEntryAmounts(request.resource.data) && request.resource.data.amountReceived == 0 &&
           (owner(ws) || (!request.resource.data.isHistorical &&
             (partner(ws) || (operator(ws) && request.resource.data.entryForUid == request.auth.uid))));
-        allow update: if unlockedEntry(ws, resource.data) && !customerLocked(ws, request.resource.data.customerId) && envelope(ws) && !request.resource.data.isDeleted && notDeleted() && original() && validCustomerReassignment(resource.data, request.resource.data) && same(['isHistorical', 'entryForUid', 'financialAttributionUid']) &&
+        allow update: if unlockedEntry(ws, resource.data) && !customerLocked(ws, request.resource.data.customerId) && envelope(ws) && !request.resource.data.isDeleted && notDeleted() && original() && validJobEditAudit(resource.data, request.resource.data) && validCustomerReassignment(resource.data, request.resource.data) && same(['isHistorical', 'entryForUid', 'financialAttributionUid']) &&
           (request.resource.data.customerId == resource.data.customerId || reference(ws, 'customers', request.resource.data.customerId)) &&
           (request.resource.data.amountReceived != resource.data.amountReceived
             ? (request.resource.data.get('purgeUid', '') != ''
@@ -366,8 +405,8 @@ service cloud.firestore {
             : (activeRecord(ws, 'entryForUid') && validEntryAmounts(request.resource.data) &&
                (!request.resource.data.isDeleted || request.resource.data.amountReceived == 0) &&
                (request.resource.data.get('tractorId', 0) == resource.data.get('tractorId', 0) || reference(ws, 'tractors', request.resource.data.tractorId)) &&
-               (owner(ws) || ((partner(ws) || operator(ws)) && !resource.data.isHistorical && ownTimely()))));
-        allow delete: if (resource.data.workspaceId == ws && newDeletionProof(ws, id)) ||
+               (owner(ws) || partner(ws) || (operator(ws) && !resource.data.isHistorical && ownTimely()))));
+        allow delete: if (resource.data.workspaceId == ws && guardedSourceDeletion(ws, id, resource.data)) ||
           purge(ws, resource.data.createdByUid) || purge(ws, resource.data.entryForUid) || purge(ws, resource.data.financialAttributionUid);
       }
       match /expenses/{id} {
@@ -425,11 +464,12 @@ service cloud.firestore {
       }
       match /entryDeletionProofs/{id} {
         allow read: if finance(ws);
-        allow create: if finance(ws) && !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)) &&
+        // validDeletionProof already requires the same active Owner/Partner authority.
+        allow create: if !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)) &&
           validDeletionProof(ws, id, get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)).data) &&
           request.resource.data.keys().hasOnly(['workspaceId','recordId','actorUid','operationId','actionTime','protocolVersion',
             'sourceCreatedAt','customerId','sourceCreatorUid','sourceBeneficiaryUid','totalAmount','amountReceived','pendingAmount',
-            'deletedCollectionAuditJson','deletedExpenseAuditJson','collectionIds']);
+            'deletedCollectionAuditJson','deletedExpenseAuditJson','deletedJobEditHistory','deletedCustomerReassignmentHistory','collectionIds']);
         allow update, delete: if false;
       }
       match /ledgerDeletionLocks/{id} {

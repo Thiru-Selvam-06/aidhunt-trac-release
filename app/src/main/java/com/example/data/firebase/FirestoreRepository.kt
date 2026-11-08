@@ -743,6 +743,15 @@ class FirestoreRepository(
                 existing.getString("authorizationTimeStatus")?.let { payload["authorizationTimeStatus"] = it }
                 existing.getTimestamp("serverReceivedAt")?.let { payload["serverReceivedAt"] = it }
                 if (queuedOperation?.entityType == "JOB") {
+                    // Old retained commands/legacy server records may have no editor fields.
+                    // Bind the new audit to this operation's actual, currently active actor.
+                    // Never derive an editor from the job's creator or beneficiary.
+                    val actor = transaction.get(firestore.collection("workspaces").document(queuedOperation.workspaceId)
+                        .collection("members").document(queuedOperation.actorUid))
+                    payload.putAll(JobEditorMetadata.fields(queuedOperation, data, actor.data.orEmpty()))
+                    payload["jobEditHistory"] = com.example.data.sync.JobEditAudit.append(
+                        (existing.data?.get("jobEditHistory") as? List<*>).orEmpty(), existing.data.orEmpty(), payload,
+                        queuedOperation.actorUid, queuedOperation.operationId, queuedOperation.actionTime)
                     val history = (existing.data?.get("customerReassignmentHistory") as? List<*>)?.toList().orEmpty()
                     if (reassigning) {
                         require(history.size < 1000) { "Customer reassignment audit needs separate archival review" }
@@ -865,8 +874,7 @@ class FirestoreRepository(
         if (com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != op.actorUid) throw WorkspaceSessionChangedException()
         val dependencies = org.json.JSONArray()
         com.example.data.sync.OperationDependencies.references(op).filter { it != (op.entityType to op.entityId) }.forEach { (type,id) -> dependencies.put(org.json.JSONObject().put("entityType",type).put("entityId",id.toString())) }
-        val payload = mutableMapOf<String, Any?>()
-        json.keys().forEach { key -> payload[key] = json.opt(key).takeUnless { it == org.json.JSONObject.NULL } }
+        val payload = FirestoreQueuedJson.read(json)
         payload.remove("operationProtocolVersion")
         payload.remove("expectedBaseJson")
         payload.remove(com.example.data.sync.CustomerProfileEdit.PAYLOAD_KEY)
@@ -889,8 +897,7 @@ class FirestoreRepository(
                 require(kotlin.math.abs((currentJob.getDouble("amountReceived") ?: 0.0) - json.getDouble("baseAmountReceived")) < 0.001 &&
                     kotlin.math.abs((currentJob.getDouble("pendingAmount") ?: 0.0) - json.getDouble("basePendingAmount")) < 0.001) { "Collection conflict: refresh the source due before retrying" }
                 val jobJson = org.json.JSONObject(json.getString("entrySnapshotJson"))
-                val entry = mutableMapOf<String, Any?>()
-                jobJson.keys().forEach { key -> entry[key] = jobJson.opt(key).takeUnless { it == org.json.JSONObject.NULL } }
+                val entry = FirestoreQueuedJson.read(jobJson)
                 entry["collectionId"] = op.entityId.toString()
                 entry["operationId"] = op.operationId
                 entry["actorUid"] = op.actorUid

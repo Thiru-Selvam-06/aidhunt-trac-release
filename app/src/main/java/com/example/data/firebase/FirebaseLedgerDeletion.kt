@@ -24,28 +24,11 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
     private val root get() = transport.documentRoot
     private fun name(ws: String, collection: String, id: String) = "$root/workspaces/$ws/$collection/$id"
     private fun rows(raw: String): List<JSONObject> = JSONArray(raw).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
-    private fun decode(value: JSONObject): Any? = when {
-        value.has("integerValue") -> value.getString("integerValue").toLong()
-        value.has("doubleValue") -> value.getDouble("doubleValue")
-        value.has("stringValue") -> value.getString("stringValue")
-        value.has("booleanValue") -> value.getBoolean("booleanValue")
-        value.has("nullValue") -> null
-        else -> null
-    }
+    private fun decode(value: JSONObject): Any? = FirestoreValueCodec.decode(value)
     private fun data(document: JSONObject): Map<String, Any?> = document.getJSONObject("fields").let { fields ->
         fields.keys().asSequence().associateWith { decode(fields.getJSONObject(it)) }
     }
-    private fun value(value: Any?): JSONObject = when (value) {
-        null -> JSONObject().put("nullValue", JSONObject.NULL)
-        is String -> JSONObject().put("stringValue", value)
-        is Boolean -> JSONObject().put("booleanValue", value)
-        is Int, is Long -> JSONObject().put("integerValue", value.toString())
-        is Number -> JSONObject().put("doubleValue", value.toDouble())
-        is Collection<*> -> JSONObject().put("arrayValue", JSONObject().put("values", JSONArray().apply {
-            value.forEach { put(this@FirebaseLedgerDeletion.value(it)) }
-        }))
-        else -> error("Unsupported deletion field")
-    }
+    private fun value(value: Any?): JSONObject = FirestoreValueCodec.encode(value)
     private fun fields(values: Map<String, Any?>) = JSONObject().apply { values.forEach { (key, item) -> put(key, value(item)) } }
     private suspend fun get(transaction: String, names: List<String>): List<JSONObject> = rows(transport.request(
         "batchGet", JSONObject().put("documents", JSONArray(names)).put("transaction", transaction)))
@@ -118,7 +101,8 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
                 json.keys().asSequence().associateWith { json.opt(it).takeUnless { item -> item == JSONObject.NULL } }
             })
             require(entry.id == op.entityId && entry.workspaceId == ws &&
-                entry.copy(isSynced = true, updatedAt = 0) == payload.copy(isSynced = true, updatedAt = 0)) {
+                com.example.data.sync.JobEditAudit.equivalent(JSONArray(entry.jobEditHistoryJson), JSONArray(payload.jobEditHistoryJson)) &&
+                entry.copy(isSynced = true, updatedAt = 0, jobEditHistoryJson = "[]") == payload.copy(isSynced = true, updatedAt = 0, jobEditHistoryJson = "[]")) {
                 "Entry changed after this deletion was requested; refresh and review it before deleting"
             }
             require(owner || (entry.createdByUid == op.actorUid && !entry.isHistorical &&
@@ -172,6 +156,9 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
             }.toString().also { require(it.length <= 131072) { "Linked audit is too large for one deletion" } }
             proof["deletedCollectionAuditJson"] = audit(deletedCollections)
             proof["deletedExpenseAuditJson"] = audit(linkedExpenses)
+            // Rules require exact preservation; deletion must not erase the edit journal.
+            proof["deletedJobEditHistory"] = data(source)["jobEditHistory"] ?: emptyList<Any>()
+            proof["deletedCustomerReassignmentHistory"] = data(source)["customerReassignmentHistory"] ?: emptyList<Any>()
             deletedCollections.forEach { writes.put(delete(it)) }
             linkedExpenses.forEach { writes.put(delete(it)) }
             val customerName = name(ws, "customers", entry.customerId.toString())
@@ -238,7 +225,14 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
                     val error = runCatching { JSONObject(raw).optJSONObject("error") }.getOrNull()
                     if (error?.optString("status") in setOf("ABORTED", "FAILED_PRECONDITION", "ALREADY_EXISTS")) throw TransactionConflict()
                     if (response.code == 401) throw WorkspaceAuthenticationRequiredException()
-                    if (response.code == 403) throw SecurityException("Firebase rejected deletion during $method; verify the deployed deletion rules. Original data retained.")
+                    if (response.code == 403) {
+                        // Emulator explanations expose the exact evaluation budget/condition.
+                        // Never include that verbose diagnostic for a production project/origin.
+                        val detail = if (origin == "http://127.0.0.1:18180" && documentRoot.startsWith("projects/demo-"))
+                            error?.optString("message").orEmpty() else ""
+                        throw SecurityException("Firebase rejected deletion during $method; verify the deployed deletion rules. Original data retained." +
+                            if (detail.isBlank()) "" else " Emulator: $detail")
+                    }
                     error("Firebase deletion could not complete (${error?.optString("status") ?: response.code}); original action retained")
                 }
                 return raw

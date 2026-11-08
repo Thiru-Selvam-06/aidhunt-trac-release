@@ -412,11 +412,12 @@ fun NewEntryScreen(
         }
     }
 
-    val nameSuggestions = remember(customerNameInput, activeWsCustomers, matchedCustomerId) {
+    val nameSuggestions = remember(customerNameInput, activeWsCustomers, matchedCustomerId, isTamil) {
         val q = customerNameInput.trim()
         if (q.isNotEmpty() && matchedCustomerId == 0L) {
             activeWsCustomers
                 .filter { com.example.ui.util.CustomerIdentity.matches(it.name, q) }
+                .let { com.example.ui.util.CustomerIdentity.ranked(it, q, isTamil) }
                 .distinctBy { it.id.takeIf { id -> id > 0L } ?: (it.name.trim().lowercase() + "_" + it.phone) }
         } else {
             emptyList()
@@ -935,7 +936,7 @@ fun NewEntryScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (isTamil) "வேலை பதிவு செய்பவர்" else "Entry For",
+                                text = if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = DeepSageGreen
@@ -1133,7 +1134,7 @@ fun NewEntryScreen(
                             val currentRole = currentMember?.role?.ifBlank { null } ?: "Partner"
                             val roleLabel = com.example.data.auth.RoleUtils.getRoleDisplayName(currentRole, isTamil)
                             Text(
-                                text = if (isTamil) "வேலை செய்பவர் ($roleLabel)" else "Entry For: $roleLabel",
+                                text = if (isTamil) "வேலை செய்பவர் ($roleLabel)" else "Entry for Operator: $roleLabel",
                                 fontSize = 10.5.sp,
                                 color = AppTheme.colors.textMuted,
                                 fontWeight = FontWeight.Medium

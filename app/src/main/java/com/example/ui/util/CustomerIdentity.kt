@@ -10,6 +10,18 @@ import java.util.Locale
 object CustomerIdentity {
     fun searchKey(value: String): String = Normalizer.normalize(value.trim(), Normalizer.Form.NFC).lowercase(Locale.ROOT)
     fun matches(name: String, query: String): Boolean = searchKey(name).contains(searchKey(query))
+    /** Search ranking affects display only; customer IDs and stored names never change. */
+    fun ranked(rows: List<CustomerEntity>, query: String, tamil: Boolean = false): List<CustomerEntity> {
+        if (query.isBlank()) return rows
+        val key = searchKey(query)
+        val collator = java.text.Collator.getInstance(if (tamil) Locale("ta", "IN") else Locale.ENGLISH)
+        return rows.sortedWith(Comparator { a, b ->
+            val rank = (if (searchKey(a.name).startsWith(key)) 0 else 1)
+                .compareTo(if (searchKey(b.name).startsWith(key)) 0 else 1)
+            if (rank != 0) rank else collator.compare(a.name, b.name).takeIf { it != 0 }
+                ?: a.id.compareTo(b.id)
+        })
+    }
     private fun index(customers: List<CustomerEntity>) = customers.filter { it.id > 0 && it.workspaceId.isNotBlank() }
         .associateBy { it.workspaceId to it.id }
 

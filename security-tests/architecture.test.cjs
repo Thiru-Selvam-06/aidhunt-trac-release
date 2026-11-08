@@ -34,6 +34,8 @@ test.beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRules
  for(const [role,id] of Object.entries(uid)) if(role!=='outsider') await setDoc(doc(database,`workspaces/${ws}/members/${id}`),{uid:id,workspaceId:ws,role:role==='other'?'PARTNER':role.toUpperCase(),status:'ACTIVE'});
 });});
 for(const role of ['owner','partner','operator']) test(`${role} creates own ordinary entry`,async()=>assertSucceeds(setDoc(doc(db(role),path('entries')),entry(role))));
+test('a new job cannot import another records edit history',async()=>
+ assertFails(setDoc(doc(db('owner'),path('entries')),entry('owner',{jobEditHistory:[{operationId:'copied-history',actorUid:uid.partner}]}))));
 for(const role of ['owner','partner']) test(`${role} creates tractor job for another active partner`,async()=>{
  await seed('tractors',{workspaceId:ws,isDeleted:false},'3');
  await assertSucceeds(setDoc(doc(db(role),path('entries')),entry(role,{tractorId:3,entryForUid:uid.other,financialAttributionUid:uid.other})));
@@ -50,10 +52,10 @@ for(const role of ['partner','operator']) {
  });
  test(`${role} edits own ordinary entry before deadline`,async()=>{await seed('entries',entry(role));await assertSucceeds(updateDoc(doc(db(role),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
  test(`${role} cannot bypass checked Entry deletion with a direct tombstone`,async()=>{await seed('entries',entry(role));await assertFails(updateDoc(doc(db(role),path('entries')),{isDeleted:true,authorizationDeletedAt:serverTimestamp()}));});
- test(`${role} cannot mutate historical entry`,async()=>{await seed('entries',entry(role,{isHistorical:true}));await assertFails(updateDoc(doc(db(role),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
+ test(`${role} historical editing follows approved role policy`,async()=>{await seed('entries',entry(role,{isHistorical:true}));await (role==='partner'?assertSucceeds:assertFails)(updateDoc(doc(db(role),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
  test(`${role} cannot create historical entry`,async()=>assertFails(setDoc(doc(db(role),path('entries')),entry(role,{isHistorical:true}))));
  test(`${role} cannot reset creation time`,async()=>{await seed('entries',entry(role));await assertFails(updateDoc(doc(db(role),path('entries')),{createdAt:now}));});
- test(`${role} cannot edit another creator's entry`,async()=>{await seed('entries',entry('other'));await assertFails(updateDoc(doc(db(role),path('entries')),{...envelope(role),totalAmount:60000,pendingAmount:60000}));});
+ test(`${role} cross-creator editing follows approved role policy`,async()=>{await seed('entries',entry('other'));await (role==='partner'?assertSucceeds:assertFails)(updateDoc(doc(db(role),path('entries')),{...envelope(role),totalAmount:60000,pendingAmount:60000}));});
 }
 test('Owner creates eligible member historical entry',async()=>assertSucceeds(setDoc(doc(db('owner'),path('entries')),entry('owner',{isHistorical:true,entryForUid:uid.partner,financialAttributionUid:uid.partner}))));
 
@@ -226,7 +228,7 @@ for (const [name,change] of [
  assert.equal(source.amountReceived,action.source.amountReceived);assert.equal(source.pendingAmount,action.source.pendingAmount);
 });
 test('accepted limitation: backdated offline action can arrive after deadline',async()=>{let record=entry('partner',{createdAt:now-53*3600000,authorizationCreatedAt:Timestamp.fromMillis(now-53*3600000),actionTime:now-48*3600000});await seed('entries',record);await assertSucceeds(updateDoc(doc(db('partner'),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
-test('offline action after deadline rejected',async()=>{let record=entry('partner',{createdAt:now-53*3600000,authorizationCreatedAt:Timestamp.fromMillis(now-53*3600000),actionTime:now-27*3600000});await seed('entries',record);await assertFails(updateDoc(doc(db('partner'),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
+test('Operator offline action after deadline rejected',async()=>{let record=entry('operator',{createdAt:now-53*3600000,authorizationCreatedAt:Timestamp.fromMillis(now-53*3600000),actionTime:now-27*3600000});await seed('entries',record);await assertFails(updateDoc(doc(db('operator'),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
 test('future action timestamp rejected',async()=>assertFails(setDoc(doc(db('partner'),path('entries')),entry('partner',{actionTime:now+3600000}))));
 
 for (const role of ['owner','partner']) test(`${role} offline collection accepts legacy path-scoped member without workspaceId`, async()=>{
@@ -511,9 +513,9 @@ test('unknown-role caller cannot create Withdrawal',async()=>{
  await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),`workspaces/${ws}/members/${uid.partner}`),{role:'Co-Owner'}));
  await assertFails(setDoc(doc(db('partner'),path('withdrawals')),withdrawal('partner',uid.partner)));
 });
-test('exact original-creation/action-time boundary is excluded',async()=>{
- await seed('entries',entry('partner',{createdAt:now-24*3600000,authorizationCreatedAt:Timestamp.fromMillis(now-24*3600000)}));
- await assertFails(updateDoc(doc(db('partner'),path('entries')),{totalAmount:60000,pendingAmount:60000}));
+test('Operator exact original-creation/action-time boundary is excluded',async()=>{
+ await seed('entries',entry('operator',{createdAt:now-24*3600000,authorizationCreatedAt:Timestamp.fromMillis(now-24*3600000)}));
+ await assertFails(updateDoc(doc(db('operator'),path('entries')),{totalAmount:60000,pendingAmount:60000}));
 });
 test('legacy server receipt time does not replace immutable original local creation',async()=>{
  await seed('entries',entry('partner',{createdAt:now-1000,authorizationCreatedAt:Timestamp.fromMillis(now-72*3600000)}));
@@ -583,16 +585,16 @@ for(const actor of ['owner','partner','operator']) test(`${actor} cannot forge o
 
 // Approved offline arrival-independent policy: hour 0 / 18 / 26 / 30.
 for (const field of ['totalAmount','customerName']) test('offline 0/18/26/30 retains A when rejected B changes '+field,async()=>{
- const origin=now-30*3600000, database=db('partner'),ref=doc(database,path('entries'));
- await assertSucceeds(setDoc(ref,entry('partner',{createdAt:origin,authorizationCreatedAt:Timestamp.fromMillis(origin),actionTime:origin,operationId:'offline-create',customerName:'original'})));
+ const origin=now-30*3600000, database=db('operator'),ref=doc(database,path('entries'));
+ await assertSucceeds(setDoc(ref,entry('operator',{createdAt:origin,authorizationCreatedAt:Timestamp.fromMillis(origin),actionTime:origin,operationId:'offline-create',customerName:'original'})));
  await assertSucceeds(updateDoc(ref,{actionTime:origin+18*3600000,operationId:'offline-A',totalAmount:60000,pendingAmount:60000}));
  const B=field==='totalAmount'?{totalAmount:70000,pendingAmount:70000}:{customerName:'expired B'};
  await assertFails(updateDoc(ref,{actionTime:origin+26*3600000,operationId:'offline-B',...B}));
  const result=(await getDoc(ref)).data();assert.equal(result.createdAt,origin);assert.equal(result.authorizationCreatedAt.toMillis(),origin);assert.ok(result.serverReceivedAt.toMillis()>=now);assert.equal(result.totalAmount,60000);assert.equal(result.pendingAmount,60000);assert.equal(result.customerName,'original');assert.equal(result.operationId,'offline-A');
 });
-for(const offset of [-1,0,86399999,86400000])test('operation boundary '+offset,async()=>{
- const origin=now-30*3600000;await seed('entries',entry('partner',{createdAt:origin}));
- const command=updateDoc(doc(db('partner'),path('entries')),{actionTime:origin+offset,totalAmount:60000,pendingAmount:60000});
+for(const offset of [-1,0,86399999,86400000])test('Operator operation boundary '+offset,async()=>{
+ const origin=now-30*3600000;await seed('entries',entry('operator',{createdAt:origin}));
+ const command=updateDoc(doc(db('operator'),path('entries')),{actionTime:origin+offset,totalAmount:60000,pendingAmount:60000});
  await (offset>=0&&offset<86400000?assertSucceeds(command):assertFails(command));
 });
 test('late offline creation cannot reset original deadline on upload',async()=>{
@@ -600,7 +602,7 @@ test('late offline creation cannot reset original deadline on upload',async()=>{
 });
 
 test('old write without protocol version is denied',async()=>{const data=entry();delete data.protocolVersion;await assertFails(setDoc(doc(db('partner'),path('entries')),data));});
-test('unreviewed legacy time restricts Partner but preserves Owner edit authority',async()=>{const data=entry();delete data.authorizationTimeStatus;await seed('entries',data);await assertFails(updateDoc(doc(db('partner'),path('entries')),{totalAmount:60000,pendingAmount:60000}));const update={...envelope('owner'),totalAmount:60000,pendingAmount:60000};delete update.authorizationTimeStatus;await assertSucceeds(updateDoc(doc(db('owner'),path('entries')),update));});
+test('unreviewed legacy time restricts Operator but preserves Owner edit authority',async()=>{const data=entry('operator');delete data.authorizationTimeStatus;await seed('entries',data);await assertFails(updateDoc(doc(db('operator'),path('entries')),{totalAmount:60000,pendingAmount:60000}));const update={...envelope('owner'),totalAmount:60000,pendingAmount:60000};delete update.authorizationTimeStatus;await assertSucceeds(updateDoc(doc(db('owner'),path('entries')),update));});
 
 // Selected collector and India-calendar validation: recorder authentication is never substituted.
 test('Owner records for Partner while recorder and financial delta remain Owner-authenticated', async()=>{
@@ -651,4 +653,26 @@ test('selected collector cannot be replaced during reversal',async()=>{
  const after={...source,amountReceived:100,pendingAmount:49900};
  const bad=await collect('owner','96',100,after,'REVERSED',{...create.collection,collectorUid:uid.other});await assertFails(bad.commit());
  const good=await collect('owner','96',100,after,'REVERSED',create.collection);await assertSucceeds(good.commit());
+});
+
+// Approved November core policy: existing-job edits, not historical creation or deletion.
+function editValues(data) {
+  return Object.fromEntries(['customerId','customerName','customerPhone','customerLocation','operatorName','tractorId','tractorLabel','workType','startTimeMillis','endTimeMillis','durationMinutes','hourlyRate','totalAmount','notes'].map(key=>[key,data[key]??null]));
+}
+for(const sourceCreator of ['owner','other']) test(`Partner edits aged historical ${sourceCreator} job with immutable audit`,async()=>{
+  const before=entry(sourceCreator,{isHistorical:true,createdAt:now-365*86400000,notes:'original',jobEditHistory:[]});
+  await seed('entries',before);
+  const changes={...envelope('partner'),notes:'corrected',editedByUid:uid.partner,updatedAt:envelope('partner').actionTime};
+  const after={...before,...changes};
+  const event={actorUid:uid.partner,operationId:after.operationId,actionTime:after.actionTime,before:editValues(before),after:editValues(after)};
+  await assertSucceeds(updateDoc(doc(db('partner'),path('entries')),{...changes,jobEditHistory:[event]}));
+  await assertFails(updateDoc(doc(db('partner'),path('entries')),{...envelope('partner'),notes:'erase',jobEditHistory:[]}));
+  await assertFails(updateDoc(doc(db('partner'),path('entries')),{...envelope('partner'),createdByUid:uid.partner}));
+});
+test('forged audit actor and forged before value remain denied',async()=>{
+  const before=entry('owner',{notes:'original',jobEditHistory:[]});await seed('entries',before);
+  const changes={...envelope('partner'),notes:'corrected',editedByUid:uid.partner,updatedAt:now};const after={...before,...changes};
+  const event={actorUid:uid.partner,operationId:after.operationId,actionTime:after.actionTime,before:editValues(before),after:editValues(after)};
+  await assertFails(updateDoc(doc(db('partner'),path('entries')),{...changes,jobEditHistory:[{...event,actorUid:uid.owner}]}));
+  await assertFails(updateDoc(doc(db('partner'),path('entries')),{...changes,jobEditHistory:[{...event,before:{...event.before,notes:'fake'}}]}));
 });

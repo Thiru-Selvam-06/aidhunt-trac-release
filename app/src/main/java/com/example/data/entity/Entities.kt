@@ -78,7 +78,8 @@ data class JobEntryEntity(
     val updatedAt: Long = 0L,
     val isHistorical: Boolean = false,
     val entryForUid: String = "",
-    val financialAttributionUid: String = ""
+    val financialAttributionUid: String = "",
+    @androidx.room.ColumnInfo(defaultValue = "'[]'") val jobEditHistoryJson: String = "[]"
 )
 
 @Entity(tableName = "payments", primaryKeys = ["workspaceId", "id"])

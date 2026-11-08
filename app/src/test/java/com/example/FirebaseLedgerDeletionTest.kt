@@ -14,6 +14,38 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], application = android.app.Application::class)
 class FirebaseLedgerDeletionTest {
+    @Test fun nestedFirestoreValuesRoundTripWithoutLosingAuditOrTimestampPrecision() {
+        val map=mapOf("history" to listOf(mapOf("actorUid" to "partner", "before" to mapOf("notes" to "தமிழ்", "amount" to 200L), "after" to mapOf("notes" to "edited", "amount" to 200.0))), "empty" to emptyList<Any>(), "missing" to null)
+        val decoded=FirestoreValueCodec.decode(FirestoreValueCodec.encode(map)) as Map<*,*>
+        assertTrue(com.example.data.sync.JobEditAudit.equivalent(JSONObject(map),JSONObject(decoded)))
+        val timestamp=JSONObject().put("timestampValue","2026-11-07T05:00:00.123456789Z")
+        assertEquals(timestamp.toString(),FirestoreValueCodec.encode(FirestoreValueCodec.decode(timestamp)).toString())
+        try {FirestoreValueCodec.decode(JSONObject().put("unknownValue","x"));fail("Unknown wire value silently discarded")}
+        catch (_:IllegalArgumentException) {}
+    }
+    @Test fun editedJobDeletionRetainsNestedHistoryInImmutableProof() = runBlocking {
+        val base=job()
+        val history=com.example.data.sync.JobEditAudit.append(emptyList<Any>(),base.toFirestoreMap(),base.toFirestoreMap()+mapOf("notes" to "changed"),"owner","original-edit",now-1)
+        val source=base.copy(notes="changed",jobEditHistoryJson=JSONArray(history).toString())
+        val transport=fixture(source)
+        FirebaseLedgerDeletion(transport).execute(operation(source))
+        val writes=transport.commits.single().getJSONArray("writes")
+        val proof=(0 until writes.length()).mapNotNull { writes.getJSONObject(it).optJSONObject("update") }
+            .single { it.getString("name")==transport.name("entryDeletionProofs",id) }.getJSONObject("fields")
+        val retained=FirestoreValueCodec.decode(proof.getJSONObject("deletedJobEditHistory")) as List<*>
+        assertTrue(com.example.data.sync.JobEditAudit.equivalent(JSONArray(history),JSONArray(retained)))
+        assertEquals(2,deleted(transport).size)
+    }
+    @Test fun interveningAuditOnlyChangeCannotBeIgnoredByDeletionComparison() = runBlocking {
+        val base=job()
+        val first=com.example.data.sync.JobEditAudit.append(emptyList<Any>(),base.toFirestoreMap(),base.toFirestoreMap(),"owner","first-edit",now-2)
+        val original=base.copy(jobEditHistoryJson=JSONArray(first).toString())
+        val second=com.example.data.sync.JobEditAudit.append(first,base.toFirestoreMap(),base.toFirestoreMap(),"owner","second-edit",now-1)
+        val transport=fixture(base.copy(jobEditHistoryJson=JSONArray(second).toString()))
+        try { FirebaseLedgerDeletion(transport).execute(operation(original));fail("Stale audit was discarded") }
+        catch (expected:IllegalArgumentException) {assertTrue(expected.message.orEmpty().contains("changed"))}
+        assertTrue(transport.commits.isEmpty());assertEquals(1,transport.rollbacks)
+    }
     @Test fun mobileTransportRefusesServerOnlyTransactionRpcBeforeNetworkAccess() = runBlocking {
         val transport = FirebaseLedgerDeletion.HttpTransport("demo-aidhunt-v16", "http://127.0.0.1:1", "not-a-token") {}
         for (method in listOf("beginTransaction", "rollback")) {
@@ -42,17 +74,20 @@ class FirebaseLedgerDeletionTest {
         var rollbacks = 0
         var conflictOnce = false
         var sessionValid = true
+        private fun typed(value: Any?): JSONObject = when(value) {
+            null -> JSONObject().put("nullValue", JSONObject.NULL)
+            is String -> JSONObject().put("stringValue", value)
+            is Boolean -> JSONObject().put("booleanValue", value)
+            is Int, is Long -> JSONObject().put("integerValue", value.toString())
+            is Number -> JSONObject().put("doubleValue", value.toDouble())
+            is List<*> -> JSONObject().put("arrayValue", JSONObject().put("values", JSONArray().apply { value.forEach { put(typed(it)) } }))
+            is Map<*, *> -> JSONObject().put("mapValue", JSONObject().put("fields", JSONObject().apply { value.forEach { (key,item) -> put(key as String,typed(item)) } }))
+            else -> error("Unsupported fixture")
+        }
         fun name(collection: String, id: Any) = "$documentRoot/workspaces/ws_test/$collection/$id"
         fun put(name: String, values: Map<String, Any?>) {
             val fields = JSONObject()
-            for ((key, value) in values) fields.put(key, when(value) {
-                null -> JSONObject().put("nullValue", JSONObject.NULL)
-                is String -> JSONObject().put("stringValue", value)
-                is Boolean -> JSONObject().put("booleanValue", value)
-                is Int, is Long -> JSONObject().put("integerValue", value.toString())
-                is Number -> JSONObject().put("doubleValue", value.toDouble())
-                else -> error("Unsupported fixture")
-            })
+            for ((key, value) in values) fields.put(key, typed(value))
             records[name] = JSONObject().put("name", name).put("fields", fields)
         }
         override fun requireSession() { check(sessionValid) { "Session changed" } }
