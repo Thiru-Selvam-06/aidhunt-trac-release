@@ -78,6 +78,7 @@
     "app/src/test/java/com/example/FinancialConsistencyAndSyncRepairTest.kt",
     "app/src/test/java/com/example/FirebaseLedgerDeletionTest.kt",
     "app/src/test/java/com/example/FirebaseOnlyDeletionEmulatorTest.kt",
+    "app/src/test/java/com/example/FirestoreQueuedJsonTest.kt",
     "app/src/test/java/com/example/GreetingScreenshotTest.kt",
     "app/src/test/java/com/example/HomeFinancialVisibilityTest.kt",
     "app/src/test/java/com/example/HomeRecordSummaryTest.kt",
