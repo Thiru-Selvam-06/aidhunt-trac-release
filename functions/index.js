@@ -128,10 +128,11 @@ exports.deleteWorkspaceCustomer = onCall(async request => {
     const ws = db.doc(`workspaces/${wsId}`);
     const ref = ws.collection("customers").doc(id);
     const receipt = ws.collection("customerDeleteReceipts").doc(operationId);
-    const [owner, customer, prior, entries, collections] = await Promise.all([
+    const directoryRef = ws.collection("customerDirectory").doc(id);
+    const [owner, customer, prior, entries, collections, directory] = await Promise.all([
       tx.get(ws.collection("members").doc(request.auth.uid)), tx.get(ref), tx.get(receipt),
       tx.get(ws.collection("entries").where("customerId", "==", BigInt(id))),
-      tx.get(ws.collection("collections").where("customerId", "==", BigInt(id)))
+      tx.get(ws.collection("collections").where("customerId", "==", BigInt(id))), tx.get(directoryRef)
     ]);
     if (String(owner.get("role")).toUpperCase() !== "OWNER" || String(owner.get("status")).toUpperCase() !== "ACTIVE") throw new HttpsError("permission-denied", "Owner access changed");
     if (prior.exists) {
@@ -143,8 +144,13 @@ exports.deleteWorkspaceCustomer = onCall(async request => {
     if (!customer.exists) throw new HttpsError("failed-precondition", "Customer is missing without a confirmed deletion receipt");
     if (customer.get("workspaceId") !== wsId) throw new HttpsError("permission-denied", "Customer workspace mismatch");
     if (!entries.empty || !collections.empty) throw new HttpsError("failed-precondition", "Customer is referenced by retained business records");
+    if (directory.exists && directory.get("workspaceId") !== wsId) throw new HttpsError("failed-precondition", "Basic Customer directory workspace mismatch");
+    if (directory.exists) tx.delete(directoryRef);
     tx.delete(ref);
+    tx.create(ws.collection("customerDeletionProofs").doc(id), {workspaceId:wsId,recordId:id,actorUid:uid,
+      operationId,actionTime,protocolVersion:2,sourceCreatedAt:customer.get("createdAt")??null});
     tx.create(receipt, { workspaceId: wsId, customerId: id, actorUid: uid, operationId, actionTime,
+      ...(directory.exists ? {deletedCustomerDirectoryId:id,deletedCustomerDirectoryCreationOperationId:directory.get("creationOperationId")??null} : {}),
       deletedAt: require("firebase-admin/firestore").FieldValue.serverTimestamp() });
     return acknowledgement;
   });
@@ -201,7 +207,8 @@ exports.deleteWorkspaceEntry = onCall(async request => {
     const customerId=String(data.customerId);
     if (!/^[1-9][0-9]{0,18}$/.test(customerId) || BigInt(customerId)>9223372036854775807n || (typeof data.customerId==="number" && !Number.isSafeInteger(data.customerId))) throw new HttpsError("failed-precondition", "Source Customer identity must be reconciled");
     const customerRef=ws.collection("customers").doc(customerId);
-    const [customer,customerEntries]=await Promise.all([tx.get(customerRef),tx.get(ws.collection("entries"))]);
+    const directoryRef=ws.collection("customerDirectory").doc(customerId);
+    const [customer,customerEntries,directory]=await Promise.all([tx.get(customerRef),tx.get(ws.collection("entries")),tx.get(directoryRef)]);
     if(!customer.exists || customer.get("workspaceId")!==wsId || (customer.get("isDeleted") ?? false)!==false) throw new HttpsError("failed-precondition", "Source Customer must exist in this workspace");
     let totals;
     try { totals=require("./entry-deletion-policy").customerTotals(customerEntries.docs.filter(d=>d.id!==id && String(d.get("customerId"))===customerId).map(d=>{ if(d.get("workspaceId")!==wsId) throw Error("Customer Entry workspace mismatch"); return d.data(); })); }
@@ -209,12 +216,25 @@ exports.deleteWorkspaceEntry = onCall(async request => {
     const customerPlan=require("./entry-deletion-policy").customerAfterEntryDeletion(customerId,
       customerEntries.docs.filter(d=>d.id!==id).map(d=>d.data()),
       collectionData.filter(c=>!collectionDeletes.includes(c)),id);
-    if(customerPlan.deleteCustomer && owner) tx.delete(customerRef);
+    if(customerPlan.deleteCustomer && owner) {
+      if(directory.exists && directory.get("workspaceId")!==wsId) throw new HttpsError("failed-precondition", "Basic Customer directory workspace mismatch");
+      if(directory.exists) tx.delete(directoryRef);
+      tx.delete(customerRef);
+      tx.create(ws.collection("customerDeletionProofs").doc(customerId), {workspaceId:wsId,recordId:customerId,
+        actorUid:uid,operationId,actionTime,protocolVersion:2,sourceCreatedAt:customer.get("createdAt")??null,entryId:id});
+    }
     else tx.update(customerRef,totals);
     collectionDeleteDocs.forEach(collection=>tx.delete(collection.ref));
     linkedExpenses.forEach(expense=>tx.delete(expense.ref));
     tx.delete(ref);
-    tx.create(receipt,{workspaceId:wsId,entryId:id,actorUid:uid,operationId,actionTime,deletedExpenseIds:linkedExpenses.map(expense=>expense.id),deletedCollectionIds:collectionDeleteDocs.map(collection=>collection.id),deletedCollectionAudit:collectionDeleteDocs.map(collection=>({id:collection.id,amount:collection.get("amount")??null,customerId:collection.get("customerId")??null,jobEntryId:collection.get("jobEntryId")??null,collectedByUid:collection.get("collectedByUid")??null,createdAt:collection.get("createdAt")??null,allocationsJson:collection.get("allocationsJson")??null})),createdAt:data.createdAt ?? null,deletedAt:require("firebase-admin/firestore").FieldValue.serverTimestamp()});
+    tx.create(ws.collection("entryDeletionProofs").doc(id), {workspaceId:wsId,recordId:id,actorUid:uid,
+      operationId,actionTime,protocolVersion:2,sourceCreatedAt:data.createdAt??null,customerId:data.customerId,
+      sourceCreatorUid:data.createdByUid,sourceBeneficiaryUid:data.entryForUid,totalAmount:data.totalAmount,
+      amountReceived:data.amountReceived,pendingAmount:data.pendingAmount,collectionIds:collectionDeleteDocs.map(d=>d.id),
+      deletedJobEditHistory:data.jobEditHistory??[],deletedCustomerReassignmentHistory:data.customerReassignmentHistory??[]});
+    tx.create(receipt,{workspaceId:wsId,entryId:id,actorUid:uid,operationId,actionTime,
+      ...(customerPlan.deleteCustomer && owner && directory.exists ? {deletedCustomerDirectoryId:customerId,deletedCustomerDirectoryCreationOperationId:directory.get("creationOperationId")??null} : {}),
+      deletedExpenseIds:linkedExpenses.map(expense=>expense.id),deletedCollectionIds:collectionDeleteDocs.map(collection=>collection.id),deletedCollectionAudit:collectionDeleteDocs.map(collection=>({id:collection.id,amount:collection.get("amount")??null,customerId:collection.get("customerId")??null,jobEntryId:collection.get("jobEntryId")??null,collectedByUid:collection.get("collectedByUid")??null,createdAt:collection.get("createdAt")??null,allocationsJson:collection.get("allocationsJson")??null})),createdAt:data.createdAt ?? null,deletedAt:require("firebase-admin/firestore").FieldValue.serverTimestamp()});
     return acknowledgement;
   });
 });

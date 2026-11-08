@@ -139,9 +139,9 @@ export async function deleteWorkspaceCustomer(db, uid, data) {
   return db.transaction(async tx => {
     await ownerInTransaction(tx, ws, uid);
     const receiptPath = path(ws, 'customerDeleteReceipts', operationId);
-    const [customer, prior, entries, collections] = await Promise.all([
+    const [customer, prior, entries, collections, directory] = await Promise.all([
       tx.get(path(ws, 'customers', id)), tx.get(receiptPath), tx.list(`workspaces/${ws}/entries`),
-      tx.list(`workspaces/${ws}/collections`)
+      tx.list(`workspaces/${ws}/collections`), tx.get(path(ws, 'customerDirectory', id))
     ]);
     if (prior.exists) {
       if (prior.get('actorUid') !== uid || prior.get('customerId') !== id ||
@@ -156,9 +156,18 @@ export async function deleteWorkspaceCustomer(db, uid, data) {
       fail('FAILED_PRECONDITION', 'Legacy Customer references require identity reconciliation');
     if ([...entries, ...collections].some(item => String(item.get('customerId')) === id))
       fail('FAILED_PRECONDITION', 'Customer is referenced by retained business records');
+    if (directory.exists && directory.get('workspaceId') !== ws)
+      fail('FAILED_PRECONDITION', 'Basic Customer directory workspace mismatch');
+    if (directory.exists) tx.delete(path(ws, 'customerDirectory', id));
     tx.delete(path(ws, 'customers', id));
+    // The same immutable ID tombstone used by Firebase-only deletion prevents a
+    // late mobile create from resurrecting a source removed by this legacy endpoint.
+    tx.create(path(ws, 'customerDeletionProofs', id), { workspaceId: ws, recordId: id,
+      actorUid: uid, operationId, actionTime, protocolVersion: 2, sourceCreatedAt: customer.get('createdAt') ?? null });
     tx.create(receiptPath, { workspaceId: ws, customerId: id, actorUid: uid,
-      operationId, actionTime, deletedAt: SERVER_TIMESTAMP });
+      operationId, actionTime, deletedAt: SERVER_TIMESTAMP,
+      ...(directory.exists ? { deletedCustomerDirectoryId: id,
+        deletedCustomerDirectoryCreationOperationId: directory.get('creationOperationId') ?? null } : {}) });
     return acknowledgement;
   });
 }
@@ -229,8 +238,9 @@ export async function deleteWorkspaceEntry(db, uid, data) {
     if (!/^[1-9][0-9]{0,18}$/.test(customerId) || BigInt(customerId) > maxId ||
       (typeof entry.customerId === 'number' && !Number.isSafeInteger(entry.customerId)))
       fail('FAILED_PRECONDITION', 'Source Customer identity must be reconciled');
-    const [customer, customerEntries] = await Promise.all([
-      tx.get(path(ws, 'customers', customerId)), tx.list(`workspaces/${ws}/entries`)
+    const [customer, customerEntries, directory] = await Promise.all([
+      tx.get(path(ws, 'customers', customerId)), tx.list(`workspaces/${ws}/entries`),
+      tx.get(path(ws, 'customerDirectory', customerId))
     ]);
     if (!customer.exists || customer.get('workspaceId') !== ws || (customer.get('isDeleted') ?? false) !== false)
       fail('FAILED_PRECONDITION', 'Source Customer must exist in this workspace');
@@ -243,14 +253,31 @@ export async function deleteWorkspaceEntry(db, uid, data) {
     const customerPlan = deletionPolicy.customerAfterEntryDeletion(customerId,
       customerEntries.filter(other => other.id !== id).map(other => other.data),
       collections.filter(item => !collectionDeleteIds.has(item.id)).map(item => item.data), id);
-    if (customerPlan.deleteCustomer && owner) tx.delete(path(ws, 'customers', customerId));
+    if (customerPlan.deleteCustomer && owner) {
+      if (directory.exists && directory.get('workspaceId') !== ws)
+        fail('FAILED_PRECONDITION', 'Basic Customer directory workspace mismatch');
+      if (directory.exists) tx.delete(path(ws, 'customerDirectory', customerId));
+      tx.delete(path(ws, 'customers', customerId));
+      tx.create(path(ws, 'customerDeletionProofs', customerId), { workspaceId: ws, recordId: customerId,
+        actorUid: uid, operationId, actionTime, protocolVersion: 2, sourceCreatedAt: customer.get('createdAt') ?? null, entryId: id });
+    }
     else tx.update(path(ws, 'customers', customerId), totals);
     for (const collection of collections.filter(item => collectionDeleteIds.has(item.id)))
       tx.delete(path(ws, 'collections', collection.id));
     for (const expense of linkedExpenses) tx.delete(path(ws, 'expenses', expense.id));
     tx.delete(path(ws, 'entries', id));
+    tx.create(path(ws, 'entryDeletionProofs', id), { workspaceId: ws, recordId: id, actorUid: uid,
+      operationId, actionTime, protocolVersion: 2, sourceCreatedAt: entry.createdAt ?? null,
+      customerId: entry.customerId, sourceCreatorUid: entry.createdByUid, sourceBeneficiaryUid: entry.entryForUid,
+      totalAmount: entry.totalAmount, amountReceived: entry.amountReceived, pendingAmount: entry.pendingAmount,
+      collectionIds: [...collectionDeleteIds], deletedJobEditHistory: entry.jobEditHistory ?? [],
+      deletedCustomerReassignmentHistory: entry.customerReassignmentHistory ?? [],
+      backendAuditEncoding: 'FIRESTORE_REST_DECODED_WITH_TIMESTAMP_PROVENANCE_V1',
+      sourceTimestampAudit: job.timestampProvenance ?? [] });
     tx.create(path(ws, 'entryDeleteReceipts', operationId), { workspaceId: ws, entryId: id,
       actorUid: uid, operationId, actionTime, deletedExpenseIds: linkedExpenses.map(item => item.id),
+      ...(customerPlan.deleteCustomer && owner && directory.exists ? { deletedCustomerDirectoryId: customerId,
+        deletedCustomerDirectoryCreationOperationId: directory.get('creationOperationId') ?? null } : {}),
       deletedCollectionIds: [...collectionDeleteIds],
       deletedCollectionAudit: collections.filter(item => collectionDeleteIds.has(item.id)).map(item => ({
         id: item.id, amount: item.get('amount') ?? null, customerId: item.get('customerId') ?? null,

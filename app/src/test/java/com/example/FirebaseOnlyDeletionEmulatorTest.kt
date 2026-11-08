@@ -127,6 +127,32 @@ class FirebaseOnlyDeletionEmulatorTest {
     private fun service(actor: String) = FirebaseLedgerDeletion(FirebaseLedgerDeletion.HttpTransport("demo-aidhunt-v16", origin, jwt(actor)) {})
     private fun exists(collection: String, id: Any): Boolean = request("v1/${name(collection, id)}", "GET").first == 200
 
+    private fun currentCustomerMap(): Map<String, Any?> {
+        val fields=JSONObject(request("v1/${name("customers",customerId)}","GET").second).getJSONObject("fields")
+        return fields.keys().asSequence().associateWith{FirestoreValueCodec.decode(fields.getJSONObject(it))}
+    }
+    private fun seedBasicDirectory() {
+        seed("$root/workspaces/ws_test" to mapOf("workspaceId" to "ws_test", "ownerUid" to "owner", "syncCapabilities" to mapOf("basicCustomerProfilesV1" to true)))
+        val command=PendingOperationEntity("original-basic-projection","ws_test","owner","CUSTOMER",customerId,"UPSERT",1,now,"{}")
+        seed(name("customerDirectory",customerId) to basicCustomerProjection(currentCustomerMap(),null,command))
+    }
+
+    @Test fun directUnusedCustomerDeletionRemovesBasicDirectoryInTheSameCheckedCommit()=runBlocking {
+        seedBasicDirectory()
+        val command=PendingOperationEntity("explicit-customer-delete","ws_test","owner","CUSTOMER",customerId,"DELETE",1,now,
+            JSONObject(currentCustomerMap()).put("operationProtocolVersion",2).toString())
+        service("owner").execute(command)
+        assertFalse(exists("customers",customerId));assertFalse(exists("customerDirectory",customerId))
+        assertTrue(exists("customerDeletionProofs",customerId))
+    }
+
+    @Test fun ownerJobDeletionRemovesUnusedCustomerAndBasicDirectoryWithoutLeavingAChoiceGhost()=runBlocking {
+        val source=job();seedCurrent(source);seedBasicDirectory()
+        service("owner").execute(op(source))
+        assertFalse(exists("entries",id));assertFalse(exists("customers",customerId))
+        assertFalse(exists("customerDirectory",customerId));assertTrue(exists("customerDeletionProofs",customerId))
+    }
+
     private fun newJobWrite(source: JobEntryEntity, recordId: Long): JSONObject {
         val write = update(name("entries", recordId), source.copy(id = recordId).toFirestoreMap() + mapOf(
             "protocolVersion" to 2, "operationType" to "UPSERT", "actorUid" to "owner", "operationId" to "new-job",
@@ -280,9 +306,12 @@ class FirebaseOnlyDeletionEmulatorTest {
         assertFalse(exists("entries", id)); assertFalse(exists("collections", 31)); assertFalse(exists("collections", 33))
     }
 
-    @Test fun fiveReceiptBoundaryWorksForAPartnerEntryRecordedForOwner() = runBlocking {
+    @Test fun fiveReceiptBoundaryWorksForAPartnerEntryRecordedForOwner() = runBlocking { fiveReceiptBoundary(false) }
+    @Test fun fiveReceiptBoundaryAlsoPreservesItsBasicCustomerDirectory() = runBlocking { fiveReceiptBoundary(true) }
+    private suspend fun fiveReceiptBoundary(withDirectory: Boolean) {
         val source = job("partner", 50.0).copy(entryForUid = "owner", financialAttributionUid = "owner", operatorName = "Owner")
         seedCurrent(source, "partner", "partner")
+        if (withDirectory) seedBasicDirectory()
         for (receiptId in 31L..35L) seed(name("collections", receiptId) to (PaymentEntity(id = receiptId,
             workspaceId = "ws_test", jobEntryId = id, customerId = customerId, amount = 10.0,
             collectedByUid = "partner", createdAt = source.createdAt,
@@ -291,6 +320,7 @@ class FirebaseOnlyDeletionEmulatorTest {
         service("partner").execute(op(source, "partner"))
         assertFalse(exists("entries", id)); assertFalse(exists("expenses", 32))
         for (receiptId in 31L..35L) assertFalse(exists("collections", receiptId))
+        if (withDirectory) { assertTrue(exists("customers",customerId));assertTrue(exists("customerDirectory",customerId)) }
     }
 
     @Test fun deletionAuditsCannotBeAlteredAndAnOldUploadCannotRecreateTheDeletedId() = runBlocking {

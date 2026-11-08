@@ -69,6 +69,7 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
         val sources = get(transaction, listOf("$root/workspaces/$ws", name(ws, "members", op.actorUid),
             name(ws, sourceCollection, id), proofName)).associateBy { it.getString("name") }
         val workspace = sources["$root/workspaces/$ws"]?.let(::data) ?: error("Workspace is missing")
+        val basicDirectoryEnabled = WorkspaceSyncCapabilities.fromWorkspace(workspace).basicCustomerProfilesV1
         val member = sources[name(ws, "members", op.actorUid)]?.let(::data) ?: error("Workspace access is missing")
         require(member["status"].toString().equals("ACTIVE", true)) { "Workspace access removed" }
         val role = member["role"].toString().uppercase()
@@ -95,6 +96,7 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
             require((entries + collections).none { data(it)["customerId"].toString() == id }) {
                 "Customer is still referenced by business records"
             }
+            if (basicDirectoryEnabled) get(transaction, listOf(name(ws, "customerDirectory", id))).forEach { writes.put(delete(it)) }
         } else {
             val entry = jobEntryFromFirestoreMap(data(source))
             val payload = jobEntryFromFirestoreMap(JSONObject(op.payloadJson).let { json ->
@@ -168,6 +170,7 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
             val retainedCollections = collections.filterNot { doc -> toDelete.any { it.id.toString() == doc.getString("name").substringAfterLast('/') } }
             val customerUnused = (retained + retainedCollections).none { data(it)["customerId"].toString() == entry.customerId.toString() }
             if (owner && customerUnused) {
+                if (basicDirectoryEnabled) get(transaction, listOf(name(ws, "customerDirectory", entry.customerId.toString()))).forEach { writes.put(delete(it)) }
                 writes.put(delete(customer))
                 writes.put(create(name(ws, "customerDeletionProofs", entry.customerId.toString()), mapOf(
                     "workspaceId" to ws, "actorUid" to op.actorUid, "operationId" to op.operationId,

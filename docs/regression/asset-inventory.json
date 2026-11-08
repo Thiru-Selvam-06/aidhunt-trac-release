@@ -31,12 +31,14 @@
     "app/src/main/java/com/example/data/repository/WorkspaceRequestOutcome.kt"
   ],
   "daos": [
+    "app/src/main/java/com/example/data/dao/BasicCustomerDao.kt",
     "app/src/main/java/com/example/data/dao/Daos.kt",
     "app/src/main/java/com/example/data/dao/DeletedMemberDao.kt",
     "app/src/main/java/com/example/data/dao/ExpenseCategoryDao.kt",
     "app/src/main/java/com/example/data/dao/PendingOperationDao.kt"
   ],
   "entities": [
+    "app/src/main/java/com/example/data/entity/BasicCustomerEntity.kt",
     "app/src/main/java/com/example/data/entity/DeletedMemberEntity.kt",
     "app/src/main/java/com/example/data/entity/Entities.kt",
     "app/src/main/java/com/example/data/entity/ExpenseCategoryEntity.kt",
@@ -46,6 +48,9 @@
     "app/src/test/java/com/example/ArchitectureIntegrationTest.kt",
     "app/src/test/java/com/example/ArchivedRecordAuthorizationTest.kt",
     "app/src/test/java/com/example/AuthSessionRecoveryTest.kt",
+    "app/src/test/java/com/example/BasicCustomerDirectoryTest.kt",
+    "app/src/test/java/com/example/BasicCustomerOperationPolicyTest.kt",
+    "app/src/test/java/com/example/BasicCustomerRoomTest.kt",
     "app/src/test/java/com/example/BusinessMaintenancePolicyTest.kt",
     "app/src/test/java/com/example/BusinessOverviewAttributionTest.kt",
     "app/src/test/java/com/example/BusinessOverviewChartMembersTest.kt",
@@ -135,6 +140,7 @@
     "app/src/test/java/com/example/WorkspaceRequestFenceTest.kt",
     "app/src/test/java/com/example/WorkspaceRequestOutcomeTest.kt",
     "app/src/test/java/com/example/WorkspaceSelectionPolicyTest.kt",
+    "app/src/test/java/com/example/WorkspaceSyncCapabilitiesTest.kt",
     "app/src/test/java/com/example/ui/screens/report/DriverEarningsConsistencyTest.kt"
   ],
   "instrumentation_tests": [
@@ -167,6 +173,7 @@
     "security-tests/customer-editing.test.cjs",
     "security-tests/expense-categories.test.cjs",
     "security-tests/listener-queries.test.cjs",
+    "security-tests/operator-customer-profiles.test.cjs",
     "security-tests/phone-onboarding.test.cjs",
     "security-tests/purge-protocol.test.cjs",
     "security-tests/security-recovery.test.cjs",
@@ -183,6 +190,42 @@
     "deleteWorkspaceEntry"
   ],
   "dao_queries": [
+    {
+      "source": "app/src/main/java/com/example/data/dao/BasicCustomerDao.kt",
+      "method": "observe",
+      "sql": "SELECT * FROM basic_customers WHERE workspaceId = :workspaceId ORDER BY name, id",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/BasicCustomerDao.kt",
+      "method": "find",
+      "sql": "SELECT * FROM basic_customers WHERE workspaceId = :workspaceId AND id = :id",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/BasicCustomerDao.kt",
+      "method": "remove",
+      "sql": "DELETE FROM basic_customers WHERE workspaceId = :workspaceId AND id = :id",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/BasicCustomerDao.kt",
+      "method": "removeConfirmedAbsent",
+      "sql": "DELETE FROM basic_customers WHERE workspaceId = :workspaceId AND isSynced = 1 AND id NOT IN (:retainedIds)",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/BasicCustomerDao.kt",
+      "method": "removeAllConfirmed",
+      "sql": "DELETE FROM basic_customers WHERE workspaceId = :workspaceId AND isSynced = 1",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
+    {
+      "source": "app/src/main/java/com/example/data/dao/BasicCustomerDao.kt",
+      "method": "unsyncedCount",
+      "sql": "SELECT COUNT(*) FROM basic_customers WHERE workspaceId = :workspaceId AND isSynced = 0",
+      "status": "NOT VERIFIED: map each DAO query to executed assertions"
+    },
     {
       "source": "app/src/main/java/com/example/data/dao/Daos.kt",
       "method": "getPartnersForWorkspace",
@@ -1288,6 +1331,7 @@
       "effectiveEntryStartTimeForEdit",
       "initialWorkspaceSettings",
       "getPersonalWorkspaceId",
+      "currentCapabilities",
       "retryCloudListeners",
       "loadCachedPercentages",
       "updatePartnerPercentages",
@@ -1362,8 +1406,10 @@
       "deleteChecklistItemById",
       "recalculateCustomerStats",
       "addTractor",
+      "queueBasicCustomer",
       "getWorkTypeExtensionsFlow",
       "getExpenseCategoriesFlow",
+      "getBasicCustomersFlow",
       "addExpenseCategory",
       "addExtension",
       "updateExtension",

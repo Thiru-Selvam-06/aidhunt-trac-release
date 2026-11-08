@@ -22,6 +22,8 @@ import com.example.data.firebase.WorkspaceInvitation
 import com.example.data.firebase.WorkspaceMember
 import com.example.data.firebase.appSettingsFromFirestoreMap
 import com.example.data.firebase.toFirestoreMap
+import com.example.data.firebase.toBasicFirestoreMap
+import com.example.data.firebase.asCustomerChoice
 import com.example.data.entity.PendingOperationEntity
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -130,6 +132,8 @@ class WorkspaceRepository(
     private val checklistItemDao = database.checklistItemDao()
     private val workTypeExtensionDao = database.workTypeExtensionDao()
     private val expenseCategoryDao = database.expenseCategoryDao()
+    private val basicCustomerDao = database.basicCustomerDao()
+    private val basicSnapshotRevision = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
 
     val currentWorkspace: StateFlow<Workspace?> = firestoreRepository.currentWorkspace
 
@@ -152,6 +156,16 @@ class WorkspaceRepository(
 
     private val _activeWorkspaceId = MutableStateFlow<String?>(null)
     val activeWorkspaceId: StateFlow<String?> = _activeWorkspaceId.asStateFlow()
+    val syncCapabilities = combine(verifiedWorkspaceContext, firestoreRepository.workspaceCapabilityStates) { actor, states ->
+        states[actor] ?: com.example.data.firebase.WorkspaceSyncCapabilities()
+    }.stateIn(scope, SharingStarted.Eagerly, com.example.data.firebase.WorkspaceSyncCapabilities())
+
+    private fun currentCapabilities(ws: String): com.example.data.firebase.WorkspaceSyncCapabilities {
+        val actor = getEffectiveActorUid().orEmpty()
+        return if (_verifiedWorkspaceContext.value == (actor to ws))
+            firestoreRepository.workspaceCapabilityStates.value[actor to ws] ?: com.example.data.firebase.WorkspaceSyncCapabilities()
+        else com.example.data.firebase.WorkspaceSyncCapabilities()
+    }
 
     val cloudConnectionState = combine(firestoreRepository.cloudListenerStates, activeWorkspaceId) { states, ws ->
         states[ws] ?: com.example.data.firebase.CloudConnectionState.IDLE
@@ -1045,6 +1059,24 @@ class WorkspaceRepository(
                     syncRemoteExpensesToLocal(remoteExpenses, listenerWsId)
                 }
             },
+            onBasicCustomersUpdated = { profiles, listenerWsId ->
+                val revision = basicSnapshotRevision.getOrPut(listenerWsId) { java.util.concurrent.atomic.AtomicLong() }.incrementAndGet()
+                val snapshotActor = getEffectiveActorUid()
+                scope.launch {
+                    database.withTransaction {
+                        if (snapshotActor.isNullOrBlank() || snapshotActor != activeUid || snapshotActor != getEffectiveActorUid() ||
+                            listenerWsId != _activeWorkspaceId.value || basicSnapshotRevision[listenerWsId]?.get() != revision) return@withTransaction
+                        require(profiles.all { it.workspaceId == listenerWsId }) { "Basic profile snapshot workspace mismatch" }
+                        val retained = operations.outstandingOperations(listenerWsId).filter {
+                            it.entityType == "CUSTOMER" && org.json.JSONObject(it.payloadJson).optBoolean("basicProfileCreate")
+                        }.map { it.entityId }.toSet()
+                        profiles.filter { it.id !in retained }.forEach { basicCustomerDao.put(it) }
+                        val ids = (profiles.map { it.id } + retained).distinct()
+                        if (ids.isEmpty()) basicCustomerDao.removeAllConfirmed(listenerWsId)
+                        else basicCustomerDao.removeConfirmedAbsent(listenerWsId, ids)
+                    }
+                }
+            },
             onCustomersUpdated = { remoteCustomers, listenerWsId ->
                 replicaUpdates.submit {
                     syncRemoteCustomersToLocal(remoteCustomers, listenerWsId)
@@ -1578,6 +1610,7 @@ class WorkspaceRepository(
         _workspaceInitState.value = WorkspaceInitState.CachedReady(wsId)
         _isInitialized.value = true
         _verifiedWorkspaceContext.value = uid to _activeWorkspaceId.value.orEmpty()
+        firestoreRepository.restoreWorkspaceCapabilities(uid, wsId)
     }
 
     private val syncMutex = Mutex()
@@ -1660,7 +1693,10 @@ class WorkspaceRepository(
                     (it.entityType == "PAYMENT" && it.operationId != op.operationId && org.json.JSONObject(it.payloadJson).optLong("jobEntryId") == sourceId)) }
             if (newerRecord || pendingSource) return@withTransaction false
             when(op.entityType) {
-                "CUSTOMER" -> if (cloud != null) customerDao.insertCustomer(com.example.data.firebase.customerFromFirestoreMap(cloud, op.entityId, op.workspaceId))
+                "CUSTOMER" -> if (org.json.JSONObject(op.payloadJson).optBoolean("basicProfileCreate")) {
+                    if (cloud != null) basicCustomerDao.put(com.example.data.firebase.basicCustomerFromFirestoreMap(cloud, op.workspaceId, op.entityId))
+                    else basicCustomerDao.remove(op.workspaceId, op.entityId)
+                } else if (cloud != null) customerDao.insertCustomer(com.example.data.firebase.customerFromFirestoreMap(cloud, op.entityId, op.workspaceId))
                     else customerDao.getCustomerById(op.workspaceId, op.entityId)?.let { customerDao.deleteCustomer(it) }
                 "EXPENSE" -> if (cloud != null) expenseDao.insertExpense(com.example.data.firebase.expenseFromFirestoreMap(cloud, op.entityId, op.workspaceId))
                     else {
@@ -1692,6 +1728,14 @@ class WorkspaceRepository(
     }
 
     private suspend fun acknowledge(op: PendingOperationEntity) {
+        val confirmedBasic = if (op.entityType == "CUSTOMER" && org.json.JSONObject(op.payloadJson).optBoolean("basicProfileCreate")) {
+            val confirmed = firestoreRepository.getOperationRecordFromServer(op)
+                ?: error("Basic customer acknowledgement is missing; original action retained")
+            com.example.data.firebase.basicCustomerFromFirestoreMap(confirmed, op.workspaceId, op.entityId).also {
+                require(it.creationOperationId == op.operationId && it.createdByUid == op.actorUid &&
+                    it.createdAt == org.json.JSONObject(op.payloadJson).getLong("createdAt")) { "Basic customer creation receipt mismatch" }
+            }
+        } else null
         val confirmedCategory = if (op.entityType == "EXPENSE_CATEGORY")
             firestoreRepository.getExpenseCategoryFromServer(op.workspaceId, op.entityId)
                 ?: error("Category acknowledgement is missing; original action retained")
@@ -1751,7 +1795,9 @@ class WorkspaceRepository(
                     }) { if (confirmedJob != null) jobEntryDao.insertJob(confirmedJob.copy(isSynced = true))
                         else jobEntryDao.markJobsSynced(op.workspaceId, listOf(op.entityId)) }
                     "EXPENSE" -> expenseDao.markExpensesSynced(op.workspaceId, listOf(op.entityId))
-                    "CUSTOMER" -> if (confirmedProfile != null) {
+                    "CUSTOMER" -> if (confirmedBasic != null) {
+                        basicCustomerDao.put(confirmedBasic)
+                    } else if (confirmedProfile != null) {
                         val stats = com.example.ui.util.FinancialCalculationEngine.calculateCustomerFinancials(confirmedProfile,
                             jobEntryDao.getJobsForWorkspaceOnce(op.workspaceId))
                         customerDao.insertCustomer(confirmedProfile.copy(totalBilled = stats.totalBilled,
@@ -1813,9 +1859,11 @@ class WorkspaceRepository(
         }
         var customerId = job.customerId
         if (createNewCustomer) {
-            require(verifiedActorRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR) { "Only Owner or Partner can create customers" }
             require(customerId > 0 && job.customerName.isNotBlank()) { "Select the new customer identity before saving" }
-            if (customerDao.getCustomerById(wsId, customerId) == null) {
+            if (verifiedActorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) {
+                if (basicCustomerDao.find(wsId, customerId) == null)
+                    queueBasicCustomer(wsId, customerId, job.customerName, job.customerPhone, job.customerLocation, operationActorUid, operationTime)
+            } else if (customerDao.getCustomerById(wsId, customerId) == null) {
                 val profile = CustomerEntity(id = customerId, workspaceId = wsId, name = job.customerName.trim(),
                     phone = com.example.ui.util.requireOptionalContactPhone(job.customerPhone), location = job.customerLocation.trim(),
                     createdByUid = authenticatedUid, createdAt = operationTime, updatedAt = operationTime, isSynced = false)
@@ -1832,6 +1880,7 @@ class WorkspaceRepository(
         }
 
         if (customerId > 0 && customerDao.getCustomerById(wsId, customerId) == null &&
+            !(verifiedActorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR && basicCustomerDao.find(wsId, customerId) != null) &&
             jobEntryDao.getJobsForWorkspaceOnce(wsId).none { it.customerId == customerId }) throw SecurityException("Customer reference is outside this workspace")
         if (job.tractorId > 0 && (existingJob == null || existingJob.tractorId != job.tractorId) &&
             tractorDao.getTractorsForWorkspaceOnce(wsId).none { it.id == job.tractorId }) throw SecurityException("Tractor reference is outside this workspace")
@@ -1929,7 +1978,9 @@ class WorkspaceRepository(
             currentActorName
         }
 
-        val currentCustomer = customerDao.getCustomerById(wsId, customerId)
+        val currentCustomer = if (verifiedActorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR)
+            basicCustomerDao.find(wsId, customerId)?.asCustomerChoice()
+            else customerDao.getCustomerById(wsId, customerId)
         val sameCustomer = existingJob?.customerId == customerId
         val finalCustomerName = if (sameCustomer) existingJob!!.customerName else currentCustomer?.name ?: if (job.customerName.isNotBlank()) {
             job.customerName
@@ -2569,11 +2620,17 @@ class WorkspaceRepository(
         val actorRole = requireWorkspaceActor(wsId)
         if (actorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) {
             val cleanPhone = com.example.ui.util.requireOptionalContactPhone(phone)
+            val basic = basicCustomerDao.observe(wsId).firstOrNull().orEmpty().filter {
+                cleanPhone.isNotBlank() && it.phone == cleanPhone
+            }.map { it.id }
             val permitted = jobEntryDao.getJobsForWorkspaceOnce(wsId).filter { !it.isHistorical && it.customerId > 0 &&
                 (if (cleanPhone.isNotBlank()) it.customerPhone == cleanPhone else it.customerName.trim() == name.trim() && it.customerLocation.trim() == location.trim()) }
-                .map { it.customerId }.distinct()
+                .map { it.customerId }.plus(basic).distinct()
             if (permitted.size == 1) return@withTransaction permitted.single()
-            throw SecurityException("Use a customer from an existing ordinary Entry; only Owner or Partner can create customers")
+            require(permitted.isEmpty()) { "Multiple customers match; choose an existing customer explicitly" }
+            val id = IdGenerator.generateId()
+            queueBasicCustomer(wsId, id, name, phone, location, operationActorUid, operationTime)
+            return@withTransaction id
         }
         val customers = customerDao.getCustomersForWorkspace(wsId).firstOrNull() ?: emptyList()
         val cleanPhone = com.example.ui.util.requireOptionalContactPhone(phone)
@@ -2836,12 +2893,33 @@ class WorkspaceRepository(
         return result
     }
 
+    /** Called only inside the Room transaction that owns its dependent job. */
+    private suspend fun queueBasicCustomer(ws: String, id: Long, name: String, phone: String,
+        location: String, actor: String, time: Long) {
+        require(requireWorkspaceActor(ws) == com.example.data.auth.RoleUtils.ROLE_OPERATOR && actor.isNotBlank() && actor == getEffectiveActorUid()) {
+            "Basic profile requires the original active Operator"
+        }
+        if (!currentCapabilities(ws).basicCustomerProfilesV1) throw com.example.data.firebase.WorkspaceCapabilityPendingException()
+        require(id > 0 && name.trim().length in 1..256 && location.trim().length <= 1024) { "Enter valid basic customer details" }
+        val operationId = java.util.UUID.randomUUID().toString()
+        val customer = CustomerEntity(id = id, workspaceId = ws, name = name.trim(),
+            phone = com.example.ui.util.requireOptionalContactPhone(phone), location = location.trim(),
+            createdByUid = actor, createdAt = time, updatedAt = time, isSynced = false)
+        basicCustomerDao.put(com.example.data.entity.BasicCustomerEntity(id, ws, customer.name, customer.phone,
+            customer.location, actor, time, operationId, time, isSynced = false))
+        enqueue("CUSTOMER", id, customer.toFirestoreMap() + ("basicProfileCreate" to true),
+            expectedActorUid = actor, actionTime = time, operationId = operationId)
+    }
+
     fun getWorkTypeExtensionsFlow(workspaceId: String): Flow<List<WorkTypeExtensionEntity>> {
         return authorizedRecords(workspaceId, records = workTypeExtensionDao.getExtensionsForWorkspace(workspaceId))
     }
 
     fun getExpenseCategoriesFlow(workspaceId: String): Flow<List<com.example.data.entity.ExpenseCategoryEntity>> =
         authorizedRecords(workspaceId, records = expenseCategoryDao.observe(workspaceId))
+
+    fun getBasicCustomersFlow(workspaceId: String): Flow<List<com.example.data.entity.BasicCustomerEntity>> =
+        authorizedRecords(workspaceId, records = basicCustomerDao.observe(workspaceId))
 
     suspend fun addExpenseCategory(name: String, expectedWorkspaceId: String = _activeWorkspaceId.value.orEmpty(),
         expectedActorUid: String = getEffectiveActorUid().orEmpty()): String {
@@ -2857,6 +2935,7 @@ class WorkspaceRepository(
             require(role in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) {
                 "Only Owners and Partners can add expense categories"
             }
+            if (!currentCapabilities(ws).expenseCategoriesV1) throw com.example.data.firebase.WorkspaceCapabilityPendingException()
             com.example.data.expense.ExpenseCategories.builtIn(display)?.let { return@withTransaction it }
             val id = com.example.data.expense.ExpenseCategories.id(display)
             val key = com.example.data.expense.ExpenseCategories.key(display)
@@ -3545,9 +3624,8 @@ class WorkspaceRepository(
             cacheVerifiedMembership(uid, wsId, members)
             // Offline cold start restores Room context without attaching cloud listeners.
             // Reconnect only after authoritative membership and the original session are verified.
-            if (firestoreRepository.cloudListenerStates.value[wsId] == null ||
-                firestoreRepository.cloudListenerStates.value[wsId] == com.example.data.firebase.CloudConnectionState.IDLE)
-                attachRealtimeListenersForVisibleWorkspaces()
+            // Existing registrations are retained unless verified capabilities changed.
+            attachRealtimeListenersForVisibleWorkspaces()
             var count = 0
             var failed = operations.rejectedCount(wsId, uid) > 0
             var authenticationMessage: String? = null
@@ -3644,7 +3722,7 @@ class WorkspaceRepository(
                 }
                 kotlinx.coroutines.yield()
             }
-            val retainedLocalCount = jobEntryDao.getUnsyncedJobsForWorkspace(wsId).size +
+            val retainedLocalCount = basicCustomerDao.unsyncedCount(wsId) + jobEntryDao.getUnsyncedJobsForWorkspace(wsId).size +
                 expenseDao.getUnsyncedExpensesForWorkspace(wsId).size +
                 withdrawalDao.getUnsyncedWithdrawalsForWorkspace(wsId).size +
                 customerDao.getUnsyncedCustomersForWorkspace(wsId).size +

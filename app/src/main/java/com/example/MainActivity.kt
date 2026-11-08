@@ -116,6 +116,7 @@ fun MainAppContent(
     val checklistItems by viewModel.checklistItems.collectAsState()
     val workTypeExtensions by viewModel.workTypeExtensions.collectAsState()
     val expenseCategories by viewModel.expenseCategories.collectAsState()
+    val syncCapabilities by viewModel.syncCapabilities.collectAsState()
     val authenticatedUserName by viewModel.authenticatedUserName.collectAsState()
     val authenticatedUserRole by viewModel.authenticatedUserRole.collectAsState()
     val profitShareAllocations by viewModel.profitShareAllocations.collectAsState()
@@ -610,7 +611,7 @@ fun MainAppContent(
                             BottomTab.REPORT -> {
                                 ReportScreen(
                                     customExpenseCategories = expenseCategories.map { it.name },
-                                    onAddExpenseCategory = viewModel::addExpenseCategory,
+                                    onAddExpenseCategory = if (syncCapabilities.expenseCategoriesV1) viewModel::addExpenseCategory else null,
                                     currentSubPage = currentReportSubPage,
                                     onSubPageSelected = { subPage ->
                                         val pageKey = when (subPage) {
@@ -864,7 +865,8 @@ fun MainAppContent(
 
                                 NewEntryScreen(
                                     customExpenseCategories = expenseCategories.map { it.name },
-                                    onAddExpenseCategory = viewModel::addExpenseCategory,
+                                    onAddExpenseCategory = if (syncCapabilities.expenseCategoriesV1) viewModel::addExpenseCategory else null,
+                                    basicCustomerCreationEnabled = syncCapabilities.basicCustomerProfilesV1,
                                     settings = settings,
                                     tractors = tractors,
                                     customers = customers,

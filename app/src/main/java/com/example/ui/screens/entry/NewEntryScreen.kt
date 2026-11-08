@@ -180,7 +180,8 @@ fun NewEntryScreen(
     onUpdateLockedPerson: ((String) -> Unit)? = null,
     onResolvePersonalRate: (String) -> Double = { 1100.0 },
     customExpenseCategories: List<String> = emptyList(),
-    onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null
+    onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null,
+    basicCustomerCreationEnabled: Boolean = false
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -1421,6 +1422,7 @@ fun NewEntryScreen(
                     ) {
                         CustomerSuggestionsCard(
                             suggestions = nameSuggestions,
+                            showBalances = actorRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR,
                             isTamil = isTamil,
                             currency = settings.currency,
                             onSelect = onSelectCustomer
@@ -1430,7 +1432,8 @@ fun NewEntryScreen(
                     if (matchedCustomerId > 0L) {
                         Text(if (isTamil) "தேர்ந்தெடுக்கப்பட்ட வாடிக்கையாளர்: $customerNameInput" else "Selected customer: $customerNameInput",
                             color = DeepSageGreen, fontSize = 12.sp, modifier = Modifier.testTag("entry_selected_customer"))
-                    } else if (customerNameInput.isNotBlank() && actorRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR) {
+                    } else if (customerNameInput.isNotBlank() &&
+                        (actorRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR || basicCustomerCreationEnabled)) {
                         TextButton(onClick = {
                             onUpdateDraft(draft.copy(matchedCustomerId = com.example.data.util.IdGenerator.generateId(), createNewCustomer = true))
                             showSuggestions = false
@@ -1506,6 +1509,7 @@ fun NewEntryScreen(
                     ) {
                         CustomerSuggestionsCard(
                             suggestions = phoneSuggestions,
+                            showBalances = actorRole != com.example.data.auth.RoleUtils.ROLE_OPERATOR,
                             isTamil = isTamil,
                             currency = settings.currency,
                             onSelect = onSelectCustomer
@@ -2576,7 +2580,8 @@ private fun CustomerSuggestionsCard(
     suggestions: List<CustomerEntity>,
     isTamil: Boolean,
     currency: String,
-    onSelect: (CustomerEntity) -> Unit
+    onSelect: (CustomerEntity) -> Unit,
+    showBalances: Boolean = true
 ) {
     Card(
         shape = RoundedCornerShape(12.dp),
@@ -2616,9 +2621,9 @@ private fun CustomerSuggestionsCard(
                                 color = TextMutedDark
                             )
                         }
-                        if (c.balanceDue > 0) {
+                        if (showBalances && c.balanceDue > 0) {
                             Text(
-                                "Due: ${formatInr(c.balanceDue, currency)}",
+                                if (isTamil) "நிலுவை: ${formatInr(c.balanceDue, currency)}" else "Due: ${formatInr(c.balanceDue, currency)}",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = AlertDueRed

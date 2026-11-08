@@ -1,5 +1,7 @@
 package com.example.ui.viewmodel
 
+import com.example.data.firebase.asCustomerChoice
+
 import com.example.data.repository.awaitWorkspaceRequest
 import com.example.data.repository.onWorkspaceFailure
 import android.app.Activity
@@ -228,6 +230,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun isAccountBlocked(): Boolean = com.example.data.auth.AuthorizationManager.isAccountBlocked()
+    val syncCapabilities = workspaceRepository.syncCapabilities
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val expenseCategories: StateFlow<List<com.example.data.entity.ExpenseCategoryEntity>> = activeWorkspaceId.flatMapLatest { ws ->
@@ -537,7 +540,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // 4. Customers scoped to active workspace
     @OptIn(ExperimentalCoroutinesApi::class)
     val customers: StateFlow<List<CustomerEntity>> = combine(activeWorkspaceId, currentUserRole, authState) { wsId, role, state -> Triple(wsId, role, state) }.flatMapLatest { (target, role, state) ->
-        if (target.isNullOrBlank() || state !is AuthState.Authenticated || !(role in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER))) MutableStateFlow(emptyList())
+        if (target.isNullOrBlank() || state !is AuthState.Authenticated) MutableStateFlow(emptyList())
+        else if (role == com.example.data.auth.RoleUtils.ROLE_OPERATOR)
+            workspaceRepository.getBasicCustomersFlow(target).map { profiles -> profiles.filter { it.name.isNotBlank() }.map { it.asCustomerChoice() } }
+        else if (!(role in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER))) MutableStateFlow(emptyList())
         else database.customerDao().getCustomersForWorkspace(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 

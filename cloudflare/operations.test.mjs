@@ -204,6 +204,62 @@ test('Missing Customer without a matching receipt never receives success acknowl
   await assert.rejects(deleteWorkspaceCustomer(db, owner, command), { status: 'FAILED_PRECONDITION' });
   assert.equal([...db.records.keys()].some(path => path.includes('customerDeleteReceipts')), false);
 });
+
+test('Worker Customer deletion atomically removes its basic directory and keeps the original creation receipt identity', async()=>{
+  const customerPath=`workspaces/${ws}/customers/${large}`,directoryPath=`workspaces/${ws}/customerDirectory/${large}`;
+  const db=new MemoryStore({...base(),[customerPath]:{workspaceId:ws},
+    [directoryPath]:{workspaceId:ws,creationOperationId:'original-profile-operation'}});
+  const command=protocol('DELETE_CUSTOMER',{customerId:large});
+  const result=await deleteWorkspaceCustomer(db,owner,command);
+  assert.equal(db.records.has(customerPath),false);assert.equal(db.records.has(directoryPath),false);
+  const receipt=db.records.get(`workspaces/${ws}/customerDeleteReceipts/${command.operationId}`);
+  assert.equal(receipt.deletedCustomerDirectoryId,large);
+  assert.equal(receipt.deletedCustomerDirectoryCreationOperationId,'original-profile-operation');
+  const tombstone=db.records.get(`workspaces/${ws}/customerDeletionProofs/${large}`);
+  assert.equal(tombstone.operationId,command.operationId);assert.equal(tombstone.recordId,large);
+  assert.deepEqual(await deleteWorkspaceCustomer(db,owner,command),result);
+});
+
+test('Worker cannot partially delete a Customer with a mismatched basic-directory workspace',async()=>{
+  const customerPath=`workspaces/${ws}/customers/${large}`,directoryPath=`workspaces/${ws}/customerDirectory/${large}`;
+  const db=new MemoryStore({...base(),[customerPath]:{workspaceId:ws},[directoryPath]:{workspaceId:'foreign'}});
+  await assert.rejects(deleteWorkspaceCustomer(db,owner,protocol('DELETE_CUSTOMER',{customerId:large})),{status:'FAILED_PRECONDITION'});
+  assert.equal(db.records.has(customerPath),true);assert.equal(db.records.has(directoryPath),true);
+  assert.equal([...db.records.keys()].some(key=>key.includes('customerDeleteReceipts')),false);
+});
+
+for(const retained of [false,true]) test('Worker Entry deletion '+(retained?'retains referenced':'removes unused')+' basic directory',async()=>{
+  const entryId='777',customerId='778',now=Date.now(),customerPath=`workspaces/${ws}/customers/${customerId}`;
+  const directoryPath=`workspaces/${ws}/customerDirectory/${customerId}`;
+  const entry={workspaceId:ws,customerId,createdAt:now-1000,createdByUid:owner,entryForUid:owner,
+    isHistorical:false,totalAmount:100,amountReceived:0,pendingAmount:100};
+  const db=new MemoryStore({...base(),[customerPath]:{workspaceId:ws},[directoryPath]:{workspaceId:ws,creationOperationId:'original-profile'},
+    [`workspaces/${ws}/entries/${entryId}`]:entry,...(retained?{[`workspaces/${ws}/entries/779`]:{...entry,totalAmount:200,pendingAmount:200}}:{})});
+  const command=protocol('DELETE_ENTRY',{entryId,actionTime:now});await deleteWorkspaceEntry(db,owner,command);
+  assert.equal(db.records.has(customerPath),retained);assert.equal(db.records.has(directoryPath),retained);
+  if(retained) assert.equal(db.records.get(customerPath).balanceDue,200);
+  else assert.equal(db.records.get(`workspaces/${ws}/entryDeleteReceipts/${command.operationId}`).deletedCustomerDirectoryCreationOperationId,'original-profile');
+  const proof=db.records.get(`workspaces/${ws}/entryDeletionProofs/${entryId}`);
+  assert.equal(proof.operationId,command.operationId);assert.equal(proof.actionTime,command.actionTime);
+  assert.equal(proof.sourceCreatorUid,owner);assert.equal(proof.totalAmount,100);
+  assert.equal(db.records.has(`workspaces/${ws}/customerDeletionProofs/${customerId}`),!retained);
+});
+
+test('Worker immutable deletion marker retains original edit and reassignment audits with exact long IDs',async()=>{
+  const entryId='9007199254740995',customerId='9007199254740997',now=Date.now();
+  const history=[{operationId:'original-edit',actorUid:owner,before:{customerId:BigInt(customerId),amount:1234.56},after:{amount:1250.25}}];
+  const reassignment=[{operationId:'original-move',fromCustomerId:9007199254740993n,toCustomerId:BigInt(customerId)}];
+  const db=new MemoryStore({...base(),[`workspaces/${ws}/customers/${customerId}`]:{workspaceId:ws},
+    [`workspaces/${ws}/entries/${entryId}`]:{workspaceId:ws,customerId:BigInt(customerId),createdAt:now-1000,
+      createdByUid:owner,entryForUid:owner,isHistorical:false,totalAmount:1250.25,amountReceived:0,pendingAmount:1250.25,
+      jobEditHistory:history,customerReassignmentHistory:reassignment}});
+  const command=protocol('DELETE_ENTRY',{entryId,actionTime:now});await deleteWorkspaceEntry(db,owner,command);
+  const proof=db.records.get(`workspaces/${ws}/entryDeletionProofs/${entryId}`);
+  assert.equal(proof.recordId,entryId);assert.equal(proof.customerId,BigInt(customerId));
+  assert.deepEqual(proof.deletedJobEditHistory,history);assert.deepEqual(proof.deletedCustomerReassignmentHistory,reassignment);
+  const before=structuredClone(proof);await deleteWorkspaceEntry(db,owner,command);
+  assert.deepEqual(db.records.get(`workspaces/${ws}/entryDeletionProofs/${entryId}`),before);
+});
 test('Owner deletion removes an active payment and source in one transaction with an audit receipt', async () => {
   const now = Date.now(), entryId = '9007199254740995', customerId = '90';
   const entryPath = `workspaces/${ws}/entries/${entryId}`;

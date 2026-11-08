@@ -2,6 +2,7 @@
 const test=require("node:test"),assert=require("node:assert/strict");
 if(process.env.FIRESTORE_EMULATOR_HOST!=="127.0.0.1:18180" || process.env.GCLOUD_PROJECT!=="demo-aidhunt-v16") throw Error("Deletion tests require the existing local demo Emulator");
 const command=require("./index").deleteWorkspaceEntry;
+const customerCommand=require("./index").deleteWorkspaceCustomer;
 const {getFirestore,Timestamp}=require("firebase-admin/firestore");
 const db=getFirestore();let counter=0;
 test.after(()=>db.terminate());
@@ -27,6 +28,55 @@ for(const role of ["OWNER","PARTNER","OPERATOR"]) test(role+" hard-deletes autho
 test("duplicate acknowledged command returns same result; missing unacknowledged command fails",async()=>{const f=await fixture();await f.run();await f.run();await assert.rejects(f.run(f.creator,"another"));await assert.rejects(f.run("other"));});
 for(const extra of [{isHistorical:true},{authorizationCreatedAt:Timestamp.fromMillis(Date.now()-72*3600000)},{authorizationCreatedAt:null}]) test("non-Owner historical, expired or untrusted creation blocks deletion "+JSON.stringify(extra),async()=>{const f=await fixture("PARTNER",extra);await assert.rejects(f.run());assert.equal((await f.ws.collection("entries").doc("1").get()).exists,true);});
 test("Owner may delete historical source",async()=>{const f=await fixture("OWNER",{isHistorical:true});await f.run();});
+
+test('Functions direct Customer deletion removes basic directory atomically and preserves command identity',async()=>{
+ const f=await fixture('OWNER');await f.ws.collection('entries').doc('1').delete();
+ const directory=f.ws.collection('customerDirectory').doc('2');await directory.set({workspaceId:f.wsId,creationOperationId:'original-basic'});
+ const actionTime=Date.now(),data={workspaceId:f.wsId,protocolVersion:2,actorContext:'owner',operationType:'DELETE_CUSTOMER',
+  dependencies:[],customerId:'2',operationId:'delete-profile',actionTime};
+ const first=await customerCommand.run({auth:{uid:'owner'},data});
+ assert.equal((await directory.get()).exists,false);assert.equal((await f.ws.collection('customers').doc('2').get()).exists,false);
+ const receipt=(await f.ws.collection('customerDeleteReceipts').doc('delete-profile').get()).data();
+ assert.equal(receipt.operationId,'delete-profile');assert.equal(Number(receipt.actionTime),actionTime);
+ assert.equal(receipt.deletedCustomerDirectoryCreationOperationId,'original-basic');
+ const proof=(await f.ws.collection('customerDeletionProofs').doc('2').get()).data();
+ assert.equal(proof.operationId,'delete-profile');assert.equal(proof.actorUid,'owner');assert.equal(proof.recordId,'2');
+ assert.deepEqual(await customerCommand.run({auth:{uid:'owner'},data}),first);
+});
+for(const retained of [false,true])test('Functions Entry deletion '+(retained?'keeps referenced':'removes unused')+' basic directory',async()=>{
+ const f=await fixture('OWNER'),directory=f.ws.collection('customerDirectory').doc('2');
+ await directory.set({workspaceId:f.wsId,creationOperationId:'original-basic'});
+ if(retained) await f.ws.collection('entries').doc('3').set({...f.entry,id:3n,totalAmount:200,pendingAmount:200});
+ await f.run();assert.equal((await directory.get()).exists,retained);
+ const customer=await f.ws.collection('customers').doc('2').get();assert.equal(customer.exists,retained);
+ if(retained) assert.equal(Number(customer.get('balanceDue')),200);
+ else assert.equal((await f.ws.collection('entryDeleteReceipts').doc('delete-one').get()).get('deletedCustomerDirectoryId'),'2');
+ const proof=(await f.ws.collection('entryDeletionProofs').doc('1').get()).data();
+ assert.equal(proof.operationId,'delete-one');assert.equal(proof.sourceCreatorUid,'owner');
+ assert.equal(Number(proof.totalAmount),100);assert.equal(Number(proof.pendingAmount),100);
+ assert.equal((await f.ws.collection('customerDeletionProofs').doc('2').get()).exists,!retained);
+});
+test('Functions mismatched directory blocks the whole financial deletion',async()=>{
+ const f=await fixture('OWNER');await f.ws.collection('customerDirectory').doc('2').set({workspaceId:'foreign'});
+ await assert.rejects(f.run());assert.equal((await f.ws.collection('entries').doc('1').get()).exists,true);
+ assert.equal((await f.ws.collection('customers').doc('2').get()).exists,true);
+ assert.equal((await f.ws.collection('entryDeleteReceipts').doc('delete-one').get()).exists,false);
+});
+test('Functions deletion marker preserves nested native Timestamp audit precision and original command',async()=>{
+ const stamp=new Timestamp(1794135600,123456789);
+ const history=[{operationId:'original-edit',actorUid:'owner',before:{observedAt:stamp,amount:100},after:{amount:100}}];
+ const f=await fixture('OWNER',{jobEditHistory:history,customerReassignmentHistory:[{operationId:'original-move',fromCustomerId:'3',toCustomerId:'2'}]});
+ // Compare the actual persisted source, not an input precision the datastore may canonicalize on creation.
+ const original=(await f.ws.collection('entries').doc('1').get()).get('jobEditHistory')[0].before.observedAt;
+ const first=await f.run();const ref=f.ws.collection('entryDeletionProofs').doc('1');
+ const proof=(await ref.get()).data();assert.equal(proof.operationId,'delete-one');assert.equal(proof.recordId,'1');
+ console.log(JSON.stringify({syntheticTimestampEvidence:true,inputNanos:stamp.nanoseconds,sourceNanos:original.nanoseconds,
+  proofNanos:proof.deletedJobEditHistory[0].before.observedAt.nanoseconds}));
+ assert.equal(proof.deletedJobEditHistory[0].before.observedAt.isEqual(original),true);
+ assert.equal(proof.deletedJobEditHistory[0].operationId,'original-edit');
+ assert.equal(proof.deletedCustomerReassignmentHistory[0].fromCustomerId,'3');
+ assert.deepEqual(await f.run(),first);assert.equal((await ref.get()).get('deletedJobEditHistory')[0].before.observedAt.isEqual(original),true);
+});
 test("other creator and inactive membership are denied",async()=>{const f=await fixture();await assert.rejects(f.run("other"));await f.ws.collection("members").doc(f.creator).update({status:"REMOVED"});await assert.rejects(f.run());});
 for(const creator of ["actor","other"]) test("linked Expense owned by "+creator+" is retained and blocks Entry deletion",async()=>{const f=await fixture();await f.ws.collection("expenses").doc("10").set({workspaceId:f.wsId,relatedJobId:1n,createdByUid:creator,amount:5});await assert.rejects(f.run());assert.equal((await f.ws.collection("expenses").doc("10").get()).exists,true);assert.equal((await f.ws.collection("entries").doc("1").get()).exists,true);});
 for(const paid of [40,100]) test("paid Entry "+paid+" blocks without changing balances",async()=>{const f=await fixture("PARTNER",{amountReceived:paid,pendingAmount:100-paid});await assert.rejects(f.run());assert.equal(Number((await f.ws.collection("entries").doc("1").get()).get("amountReceived")),paid);});

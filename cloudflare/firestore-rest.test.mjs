@@ -52,3 +52,29 @@ test('compound deletion serializes nested Collection audit objects without losin
   assert.equal(audit.metadata.mapValue.fields.status.stringValue, 'ACTIVE');
   assert.equal(commit.writes[0].updateTransforms[0].setToServerValue, 'REQUEST_TIME');
 });
+
+test('Firestore timestamp provenance retains nanoseconds and distinguishes literal date strings in nested audits',async()=>{
+  const stamp='2026-11-08T11:00:00.123456789Z';let commit;
+  const db=new FirestoreRest('trac-aidhunt',async()=> 'synthetic-token',async(url,options)=>{
+    const body=JSON.parse(options.body);
+    if(url.endsWith(':beginTransaction'))return Response.json({transaction:'synthetic-transaction'});
+    if(url.endsWith(':batchGet'))return Response.json([{found:{name:body.documents[0],fields:{
+      createdAt:{timestampValue:stamp},literal:{stringValue:stamp},jobEditHistory:{arrayValue:{values:[{mapValue:{fields:{
+        at:{timestampValue:stamp},before:{mapValue:{fields:{id:{integerValue:'9007199254740995'}}}}
+      }}}]}}
+    }}}]);
+    if(url.endsWith(':commit')){commit=body;return Response.json({writeResults:[{}]});}
+    throw Error('Unexpected request');
+  });
+  await db.transaction(async tx=>{
+    const source=await tx.get('workspaces/ws/entries/9007199254740993');
+    assert.equal(source.data.literal,stamp);assert.equal(source.data.jobEditHistory[0].before.id,9007199254740995n);
+    assert.deepEqual(source.timestampProvenance,[{path:['createdAt'],value:stamp},{path:['jobEditHistory',0,'at'],value:stamp}]);
+    tx.create('workspaces/ws/entryDeletionProofs/9007199254740993',{
+      deletedJobEditHistory:source.data.jobEditHistory,sourceTimestampAudit:source.timestampProvenance
+    });
+  });
+  const fields=commit.writes[0].update.fields;
+  assert.equal(fields.deletedJobEditHistory.arrayValue.values[0].mapValue.fields.before.mapValue.fields.id.integerValue,'9007199254740995');
+  assert.equal(fields.sourceTimestampAudit.arrayValue.values[1].mapValue.fields.value.stringValue,stamp);
+});
