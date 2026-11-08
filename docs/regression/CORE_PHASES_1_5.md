@@ -89,6 +89,16 @@ Its actual execution is separate from compilation and must be reported honestly.
 
 ## Acceptance and rollback
 
+Local verification at core source `0b02a84` on 7 November 2026: 686/686 full
+Kotlin/Room tests, 310/310 Firestore Rules tests, 131/131 backend tests and
+110/110 Python harness tests passed, without skipped cases. This includes the
+five-receipt Partner deletion and exact retained-history proof cases. The earlier
+1,000-expression Firestore evaluation-budget failure was corrected by removing
+duplicate equivalent role checks; receipt limits and financial protections stay
+unchanged. The initial backend CLI fixture needed a workspace-owned temporary
+directory; the unchanged full backend suite then passed. Current APK build/lint,
+GitHub Android instrumentation and real-phone tests are separate gates.
+
 Manual physical tests: **NOT TESTED**. Automated physical instrumentation: **NOT TESTED**.
 Use approved isolated staging accounts/storage; manual two-phone testing needs no USB.
 
