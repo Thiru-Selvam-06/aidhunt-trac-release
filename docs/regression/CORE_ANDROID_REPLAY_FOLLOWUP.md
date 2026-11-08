@@ -65,3 +65,29 @@ The separate local software-emulator attempt never reached usable ADB state and
 executed no tests. Its owned test processes were stopped. Production Rules,
 customer records, existing SQLite files and live pending operations were not
 modified by this investigation or these synthetic tests.
+
+## Corrected run and final fixture alignment
+
+At `ce0b6a6`, the full local run passed **691/691 tests with zero skips**. Android
+push run **42452607705**, job **128644840364**, finished all **31 tests** with
+**29 pass / 2 fail / zero skips**. All previous synchronization timeout journeys
+passed, including offline jobs/collections/expenses, independent Partner readback,
+profile editing, paid reassignment, original-clock confirmation and the new Partner
+historical-job audit journey. Non-device CI jobs passed.
+
+The two remaining failures do not justify changing financial or authorization rules:
+
+1. Journey b still expected a Partner's 26-hour edit to fail, contrary to the newly
+   approved unrestricted existing-job edit policy. It now verifies successful
+   Partner edits/retries and original creator/time, then separately verifies a
+   seeded existing Operator's 26-hour edit is denied. The original rejected-payload,
+   actor/time, unchanged server state and Room recovery assertions remain mandatory.
+2. Journey d copied the newly populated audit from its template into a different,
+   supposedly fresh job. A fresh synthetic fixture now starts with no inherited
+   history/editor fields. Production transport does not erase audit data. A new
+   Rules case explicitly rejects importing another job's history on creation.
+
+The updated Rules suite passed **311/311**. Updated Android instrumentation
+compilation passed. The corrected runtime journey must still execute in CI; it
+is not counted as a pass at this checkpoint. No timeout or required gate was
+removed, and no expected financial amount was changed merely to hide a failure.
