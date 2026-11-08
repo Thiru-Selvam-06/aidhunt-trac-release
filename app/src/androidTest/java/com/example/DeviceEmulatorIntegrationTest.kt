@@ -91,7 +91,7 @@ class DeviceEmulatorIntegrationTest {
   finally { android.util.Log.i("DEVICE_ROLE_TRACE", "END " + stage) }
  }
  private suspend fun awaitCustomerCommand(db:AppDatabase, operation:PendingOperationEntity, stage:String) {
-  val rows=kotlinx.coroutines.withTimeout(60000){db.pendingOperationDao().observe(ws).first{rows->
+  val rows=kotlinx.coroutines.withTimeout(60000){db.pendingOperationDao().observe(operation.workspaceId).first{rows->
    rows.any{it.operationId==operation.operationId && it.state in setOf("ACKNOWLEDGED","REJECTED")}
   }}
   val actual=rows.single{it.operationId==operation.operationId}
@@ -515,9 +515,14 @@ class DeviceEmulatorIntegrationTest {
      assertEquals(desired.name,reopened.customerDao().getCustomerById(ws,originalCustomer.id)!!.name)} finally {reopened.close()}
     val independentActionTime=System.currentTimeMillis()
     ServerActionTimeBarrier({FirestoreServerTime.read(ws,"device-partner",app)}).awaitEligible(independentActionTime)
-    otherCloud.document("workspaces/$ws/customers/${originalCustomer.id}").update(mapOf(
+    val independentChanges=mapOf(
      "phone" to "9876543210","actorUid" to "device-partner","operationId" to "independent-phone-$now",
-     "actionTime" to independentActionTime,"protocolVersion" to 2,"operationType" to "UPSERT","dependencies" to emptyList<Any>(),"isDeleted" to false)).await()
+     "actionTime" to independentActionTime,"protocolVersion" to 2,"operationType" to "UPSERT","dependencies" to emptyList<Any>(),"isDeleted" to false)
+    // The independent new-protocol client must mirror metadata atomically too.
+    val independentBatch=otherCloud.batch()
+    independentBatch.update(otherCloud.document("workspaces/$ws/customers/${originalCustomer.id}"),independentChanges)
+    independentBatch.update(otherCloud.document("workspaces/$ws/customerDirectory/${originalCustomer.id}"),independentChanges)
+    independentBatch.commit().await()
    } finally {cloud.enableNetwork().await()}
    val result=workspace.pushUnsyncedToCloud(isOnline=true)
    android.util.Log.i("CUSTOMER_EDIT_TEST","profile reconnect: $result; "+db.pendingOperationDao().getOperation(operation.operationId))
@@ -798,6 +803,124 @@ class DeviceEmulatorIntegrationTest {
   val restored=db.expenseDao().getExpenseById(ws,id)!!
   assertEquals(150.0,restored.amount,0.0);assertEquals("Business Paid",restored.paidBy)
   assertEquals(formBase.createdByUid,restored.createdByUid);assertEquals(formBase.expenseForUid,restored.expenseForUid)
+  Unit
+ }
+
+ @Test(timeout=180000) fun wOperatorOfflineBasicCustomerAndJobConfirmOnceWithoutExposingCustomerFinances():Unit=runBlocking {
+  login("operator");val actor="device-operator";val db=AppDatabase.getInstance(context)
+  val profiles=com.example.data.repository.AuthRepository.getInstance(context);profiles.startListening()
+  val profile=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid==actor}}!!
+  val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db)
+  assertTrue(workspace.initializeForUser(profile).isSuccess)
+  val now=System.currentTimeMillis();val customerId=com.example.data.util.IdGenerator.generateId()
+  val name="QA Operator தமிழ் ? $now";val jobId:Long;val original:PendingOperationEntity;val jobCommand:PendingOperationEntity
+  cloud.disableNetwork().await()
+  try {
+   jobId=workspace.saveJobEntry(com.example.data.entity.JobEntryEntity(workspaceId=ws,customerId=customerId,
+    customerName=name,customerPhone="",customerLocation="Raw entered location",operatorName="Operator",tractorId=3,
+    tractorLabel="Disposable Tractor",workType="Rotavator",startTimeMillis=now-60000,endTimeMillis=now,
+    durationMinutes=1,totalAmount=850.25,amountReceived=0.0,pendingAmount=850.25,addedByPartner="Operator",
+    entryForUid=actor,createdAt=now),createNewCustomer=true)
+   val commands=db.pendingOperationDao().outstandingOperations(ws).filter{it.actorUid==actor}
+   original=commands.single{it.entityType=="CUSTOMER"&&it.entityId==customerId}
+   jobCommand=commands.single{it.entityType=="JOB"&&it.entityId==jobId}
+   assertTrue(original.sequence<jobCommand.sequence);assertTrue(JSONObject(original.payloadJson).getBoolean("basicProfileCreate"))
+   assertEquals(name,db.basicCustomerDao().find(ws,customerId)!!.name)
+   assertNull(db.customerDao().getCustomerById(ws,customerId))
+   assertTrue(commands.none{it.entityType=="PAYMENT"&&JSONObject(it.payloadJson).optLong("jobEntryId")==jobId})
+   val reopened=androidx.room.Room.databaseBuilder(context,AppDatabase::class.java,"aidhunt_device_test_v18.db").build()
+   try {
+    assertEquals(original,reopened.pendingOperationDao().getOperation(original.operationId))
+    assertEquals(jobCommand,reopened.pendingOperationDao().getOperation(jobCommand.operationId))
+    assertEquals(name,reopened.basicCustomerDao().find(ws,customerId)!!.name)
+    assertNotNull(reopened.jobEntryDao().getJobById(ws,jobId))
+   } finally {reopened.close()}
+  } finally {cloud.enableNetwork().await()}
+  workspace.pushUnsyncedToCloud(isOnline=true)
+  awaitCustomerCommand(db,original,"Operator basic profile confirmation")
+  awaitCustomerCommand(db,jobCommand,"Operator dependent job confirmation")
+  val directory=cloud.document("workspaces/$ws/customerDirectory/$customerId").get(Source.SERVER).await().data!!
+  assertEquals(original.operationId,directory["creationOperationId"]);assertEquals(actor,directory["createdByUid"])
+  assertEquals(name,directory["name"]);assertFalse(directory.containsKey("balanceDue"));assertFalse(directory.containsKey("totalPaid"))
+  assertTrue(db.basicCustomerDao().find(ws,customerId)!!.isSynced)
+  val confirmed=cloud.document("workspaces/$ws/entries/$jobId").get(Source.SERVER).await().data!!
+  assertEquals(actor,confirmed["createdByUid"]);assertEquals(actor,confirmed["entryForUid"])
+  assertEquals(850.25,confirmed["totalAmount"] as Double,0.0);assertEquals(jobCommand.operationId,confirmed["operationId"])
+  try {cloud.document("workspaces/$ws/customers/$customerId").get(Source.SERVER).await();fail("Operator read customer finances")}
+  catch(error:com.google.firebase.firestore.FirebaseFirestoreException){assertEquals(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,error.code)}
+  FirestoreRepository(context).applyPendingOperation(original)
+  assertEquals(directory,cloud.document("workspaces/$ws/customerDirectory/$customerId").get(Source.SERVER).await().data)
+  assertEquals(1,cloud.collection("workspaces/$ws/customerDirectory").whereEqualTo("creationOperationId",original.operationId).get(Source.SERVER).await().size())
+  login("operator-peer")
+  val peerProfile=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid=="device-operator-peer"}}!!
+  val fresh=androidx.room.Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build()
+  val peerScope=kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()+kotlinx.coroutines.Dispatchers.IO)
+  val peerCloud=FirestoreRepository(context,peerScope)
+  try {
+   assertNull(fresh.basicCustomerDao().find(ws,customerId))
+   val peer=com.example.data.repository.WorkspaceRepository(context,fresh,peerCloud,peerScope)
+   assertTrue(peer.initializeForUser(peerProfile).isSuccess)
+   val downloaded=kotlinx.coroutines.withTimeout(30000){fresh.basicCustomerDao().observe(ws).first{rows->rows.any{it.id==customerId}}}.single{it.id==customerId}
+   assertEquals(name,downloaded.name);assertEquals(actor,downloaded.createdByUid)
+   assertEquals(original.operationId,downloaded.creationOperationId);assertTrue(downloaded.isSynced)
+   assertNull(fresh.customerDao().getCustomerById(ws,customerId))
+   val peerJob=kotlinx.coroutines.withTimeout(30000){fresh.jobEntryDao().getJobsForWorkspace(ws).first{rows->rows.any{it.id==jobId}}}.single{it.id==jobId}
+   assertEquals(actor,peerJob.createdByUid);assertEquals(actor,peerJob.entryForUid);assertEquals(850.25,peerJob.totalAmount,0.0)
+  } finally {peerCloud.stopRealtimeListeners();peerScope.coroutineContext[kotlinx.coroutines.Job]?.cancel();fresh.close()}
+  login("owner")
+  val owner=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid=="device-owner"}}!!
+  assertTrue(workspace.initializeForUser(owner).isSuccess)
+  kotlinx.coroutines.withTimeout(30000){db.customerDao().getCustomersForWorkspace(ws).first{rows->rows.any{it.id==customerId&&it.balanceDue==850.25}}}
+  assertEquals(confirmed,cloud.document("workspaces/$ws/entries/$jobId").get(Source.SERVER).await().data)
+  assertEquals(name,cloud.document("workspaces/$ws/customers/$customerId").get(Source.SERVER).await().getString("name"))
+  assertEquals(original.payloadJson,db.pendingOperationDao().getOperation(original.operationId)!!.payloadJson)
+  assertEquals(jobCommand.payloadJson,db.pendingOperationDao().getOperation(jobCommand.operationId)!!.payloadJson)
+  Unit
+ }
+
+ @Test(timeout=180000) fun xDisabledProtocolsKeepLegacyCustomerEditAndCheckedDeletionWorking():Unit=runBlocking {
+  login("owner");val legacy="ws_legacy_protocol_test";val actor="device-owner"
+  val db=AppDatabase.getInstance(context)
+  val profiles=com.example.data.repository.AuthRepository.getInstance(context);profiles.startListening()
+  val profile=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid==actor}}!!
+  val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db)
+  assertEquals(legacy,workspace.initializeForUser(profile,legacy).getOrThrow())
+  assertEquals(WorkspaceSyncCapabilities(),VerifiedWorkspaceCapabilityCache(context).restore(actor,legacy))
+  for(collection in listOf("customerDirectory","expenseCategories")) {
+   try {cloud.collection("workspaces/$legacy/$collection").get(Source.SERVER).await();fail("Disabled collection was readable")}
+   catch(error:com.google.firebase.firestore.FirebaseFirestoreException){assertEquals(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,error.code)}
+  }
+  val now=System.currentTimeMillis();val customerId=com.example.data.util.IdGenerator.generateId();val jobId:Long
+  cloud.disableNetwork().await()
+  try {
+   jobId=workspace.saveJobEntry(com.example.data.entity.JobEntryEntity(workspaceId=legacy,customerId=customerId,
+    customerName="Legacy protocol தமிழ் $now",customerPhone="",customerLocation="Untranslated location",
+    operatorName="Owner",tractorId=3,tractorLabel="Legacy tractor",workType="Rotavator",
+    startTimeMillis=now-60000,endTimeMillis=now,durationMinutes=1,totalAmount=123.45,amountReceived=0.0,
+    pendingAmount=123.45,addedByPartner="Owner",entryForUid=actor,createdAt=now),createNewCustomer=true)
+  } finally {cloud.enableNetwork().await()}
+  workspace.pushUnsyncedToCloud()
+  val created=db.pendingOperationDao().observe(legacy).first().filter{it.entityId==customerId||it.entityId==jobId}
+  for(operation in created) awaitCustomerCommand(db,operation,"legacy initial confirmation")
+  val base=kotlinx.coroutines.withTimeout(30000){db.customerDao().getCustomersForWorkspace(legacy).first{rows->rows.any{it.id==customerId}}}.single{it.id==customerId}
+  cloud.disableNetwork().await()
+  try {workspace.updateCustomer(base.copy(name="Edited legacy தமிழ் $now"),base)}
+  finally {cloud.enableNetwork().await()}
+  val edit=db.pendingOperationDao().outstandingOperations(legacy).single{it.entityType=="CUSTOMER"&&it.entityId==customerId}
+  workspace.pushUnsyncedToCloud();awaitCustomerCommand(db,edit,"legacy profile edit without directory access")
+  val source=cloud.document("workspaces/$legacy/customers/$customerId").get(Source.SERVER).await()
+  assertEquals("Edited legacy தமிழ் $now",source.getString("name"))
+  val job=db.jobEntryDao().getJobById(legacy,jobId)!!
+  workspace.deleteJob(job)
+  val deletion=db.pendingOperationDao().observe(legacy).first().single{it.entityType=="JOB"&&it.entityId==jobId&&it.mutationType=="DELETE"}
+  workspace.pushUnsyncedToCloud();awaitCustomerCommand(db,deletion,"legacy checked deletion without directory access")
+  assertFalse(cloud.document("workspaces/$legacy/entries/$jobId").get(Source.SERVER).await().exists())
+  assertFalse(cloud.document("workspaces/$legacy/customers/$customerId").get(Source.SERVER).await().exists())
+  val proof=cloud.document("workspaces/$legacy/entryDeletionProofs/$jobId").get(Source.SERVER).await()
+  assertEquals(deletion.operationId,proof.getString("operationId"));assertEquals(actor,proof.getString("actorUid"))
+  assertEquals(123.45,proof.getDouble("totalAmount")!!,0.0)
+  assertEquals(edit.payloadJson,db.pendingOperationDao().getOperation(edit.operationId)!!.payloadJson)
+  assertTrue(workspace.initializeForUser(profile,ws).isSuccess)
   Unit
  }
 }

@@ -11,10 +11,21 @@ const category=actor=>({...command(actor,'create-'+actor),id:1,name:'Engine Oil'
 test.before(async()=>{env=await initializeTestEnvironment({projectId:'demo-aidhunt-v16',firestore:{host:'127.0.0.1',port:18180,rules:fs.readFileSync(path.join(__dirname,'../firestore.rules'),'utf8')}});});
 test.after(async()=>env?.cleanup());
 test.beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRulesDisabled(async context=>{
-  const d=context.firestore();await setDoc(doc(d,`workspaces/${ws}`),{workspaceId:ws,ownerUid:'owner'});
+  const d=context.firestore();await setDoc(doc(d,`workspaces/${ws}`),{workspaceId:ws,ownerUid:'owner',syncCapabilities:{expenseCategoriesV1:true}});
   for(const [uid,role,status] of [['owner','OWNER','ACTIVE'],['partner','PARTNER','ACTIVE'],['operator','OPERATOR','ACTIVE'],['removed','PARTNER','REMOVED'],['fakeOwner','OWNER','ACTIVE']])
     await setDoc(doc(d,`workspaces/${ws}/members/${uid}`),{workspaceId:ws,uid,role,status});
 });});
+
+test('disabled categories cannot be read, created or acknowledged by an ordinary client',async()=>{
+ await assertSucceeds(setDoc(ref(db('owner')),category('owner')));
+ await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),`workspaces/${ws}`),{syncCapabilities:{}}));
+ await assertFails(getDoc(ref(db('owner'))));
+ await assertFails(setDoc(ref(db('partner'),'2'),{...category('partner'),id:2}));
+ await assertFails(updateDoc(ref(db('owner')),command('owner','later-ack')));
+ await env.withSecurityRulesDisabled(async c=>{
+  const kept=(await getDoc(ref(c.firestore()))).data();assert.equal(kept.operationId,'create-owner');assert.equal(kept.name,'Engine Oil');
+ });
+});
 for(const actor of ['owner','partner']) test(`${actor}: valid category is committed once with original identity`,async()=>{
   const value=category(actor),database=db(actor);await assertSucceeds(setDoc(ref(database),value));
   await assertSucceeds(setDoc(ref(database),value));assert.deepEqual((await getDoc(ref(database))).data(),value);

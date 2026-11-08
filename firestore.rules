@@ -353,6 +353,50 @@ service cloud.firestore {
         target.get('workspaceId', ws) == ws &&
         target.role in ['OWNER', 'Owner', 'owner', 'PARTNER', 'Partner', 'partner', 'OPERATOR', 'Operator', 'operator'];
     }
+    function customerDirectoryPath(ws, id) { return /databases/$(database)/documents/workspaces/$(ws)/customerDirectory/$(id); }
+    function syncCapability(ws, feature) {
+      return get(/databases/$(database)/documents/workspaces/$(ws)).data.get('syncCapabilities', {}).get(feature, false) == true;
+    }
+    function basicText(value) { return value is string ? value : ''; }
+    function basicTime(value) { return value is int && value >= 0 ? value : 0; }
+    function directoryMatchesCustomer(directory, customer) {
+      return directory.workspaceId == customer.workspaceId && directory.id == customer.id &&
+        directory.name == basicText(customer.get('name', '')) && directory.phone == basicText(customer.get('phone', '')) &&
+        directory.location == basicText(customer.get('location', '')) &&
+        directory.createdByUid == basicText(customer.get('createdByUid', '')) &&
+        directory.createdAt == basicTime(customer.get('createdAt', 0)) && directory.updatedAt == basicTime(customer.get('updatedAt', 0));
+    }
+    function validBasicDirectory(ws, id) {
+      let data = request.resource.data;
+      let source = getAfter(/databases/$(database)/documents/workspaces/$(ws)/customers/$(id)).data;
+      return syncCapability(ws, 'basicCustomerProfilesV1') && envelope(ws) && data.operationType == 'UPSERT' && data.isDeleted == false &&
+        data.keys().hasOnly(['id','workspaceId','name','phone','location','createdByUid','createdAt',
+          'creationOperationId','updatedAt','protocolVersion','operationType','dependencies','operationId','actorUid','actionTime','isDeleted']) &&
+        data.id is int && data.id > 0 && string(data.id) == id &&
+        data.name is string && data.phone is string && data.location is string && data.createdByUid is string &&
+        data.createdAt is int && data.createdAt >= 0 && data.updatedAt is int && data.updatedAt >= 0 &&
+        data.creationOperationId is string && data.creationOperationId.matches('[A-Za-z0-9-]{1,128}') &&
+        source.get('isDeleted', false) == false && directoryMatchesCustomer(data, source);
+    }
+    function operatorBasicCustomerCreate(ws, id) {
+      let data = request.resource.data;
+      let directory = getAfter(customerDirectoryPath(ws, id)).data;
+      return syncCapability(ws, 'basicCustomerProfilesV1') && operator(ws) && data.keys().hasOnly(['id','workspaceId','name','phone','location','createdByUid',
+          'createdAt','updatedAt','createdBy','totalBilled','totalPaid','balanceDue','protocolVersion','operationType',
+          'dependencies','operationId','actorUid','actionTime','isDeleted']) &&
+        data.id is int && data.id > 0 && string(data.id) == id && data.operationType == 'UPSERT' &&
+        data.name is string && data.name.size() > 0 && data.name.size() <= 256 &&
+        data.phone is string && data.phone.matches('([0-9]{10})?') &&
+        data.location is string && data.location.size() <= 1024 &&
+        data.totalBilled == 0 && data.totalPaid == 0 && data.balanceDue == 0 &&
+        data.updatedAt == data.createdAt && data.createdAt == data.actionTime &&
+        directory.creationOperationId == data.operationId && directory.operationId == data.operationId &&
+        directory.actorUid == request.auth.uid && directoryMatchesCustomer(directory, data);
+    }
+    function customerDirectoryCurrentAfter(ws, id, customer) {
+      return !exists(customerDirectoryPath(ws, id)) ||
+        directoryMatchesCustomer(getAfter(customerDirectoryPath(ws, id)).data, customer);
+    }
     match /users/{uid} { allow read, write: if signed() && request.auth.uid == uid; }
     // Directory is a server-maintained discovery aid, never authorization or OTP proof.
     match /phoneDirectory/{phone} { allow get: if signed(); allow list, write: if false; }
@@ -364,8 +408,10 @@ service cloud.firestore {
     match /workspaces/{ws} {
       allow get: if member(ws) || (signed() && resource.data.ownerUid == request.auth.uid);
       allow list: if false;
-      allow create: if verifiedPhone() && request.resource.data.ownerUid == request.auth.uid && request.resource.data.workspaceId == ws;
-      allow update: if owner(ws) && same(['ownerUid', 'workspaceId', 'createdAt']);
+      allow create: if verifiedPhone() && request.resource.data.ownerUid == request.auth.uid && request.resource.data.workspaceId == ws &&
+        request.resource.data.get('syncCapabilities', {}) == {};
+      // Protocol activation is a reviewed backend rollout, never an ordinary client setting.
+      allow update: if owner(ws) && same(['ownerUid', 'workspaceId', 'createdAt', 'syncCapabilities']);
       allow delete: if false;
       match /members/{uid} {
         allow read: if member(ws) || (signed() && request.auth.uid == uid);
@@ -456,12 +502,31 @@ service cloud.firestore {
       }
       match /customers/{id} {
         allow read: if finance(ws);
-        allow create: if !exists(/databases/$(database)/documents/workspaces/$(ws)/customerDeletionProofs/$(id)) && envelope(ws) && finance(ws) && creationTime() && request.resource.data.createdByUid == request.auth.uid && request.resource.data.isDeleted == false;
+        allow create: if !exists(/databases/$(database)/documents/workspaces/$(ws)/customerDeletionProofs/$(id)) && envelope(ws) &&
+          (finance(ws) || operatorBasicCustomerCreate(ws, id)) && creationTime() &&
+          (!syncCapability(ws, 'basicCustomerProfilesV1') || directoryMatchesCustomer(getAfter(customerDirectoryPath(ws, id)).data, request.resource.data)) &&
+          request.resource.data.createdByUid == request.auth.uid && request.resource.data.isDeleted == false;
         allow update: if (!customerLocked(ws, id) || deletionCustomerUpdate(ws, id)) && envelope(ws) && original() && notDeleted() &&
+          customerDirectoryCurrentAfter(ws, id, request.resource.data) &&
           ((finance(ws) && request.resource.data.isDeleted == false) || (owner(ws) && request.resource.data.isDeleted == true));
         allow delete: if owner(ws) && resource.data.workspaceId == ws &&
           getAfter(/databases/$(database)/documents/workspaces/$(ws)/customerDeletionProofs/$(id)).data.actorUid == request.auth.uid &&
-          getAfter(/databases/$(database)/documents/workspaces/$(ws)/customerDeletionProofs/$(id)).data.sourceCreatedAt == resource.data.get('createdAt', null);
+          getAfter(/databases/$(database)/documents/workspaces/$(ws)/customerDeletionProofs/$(id)).data.sourceCreatedAt == resource.data.get('createdAt', null) &&
+          !existsAfter(customerDirectoryPath(ws, id));
+      }
+      match /customerDirectory/{id} {
+        allow read: if member(ws) && syncCapability(ws, 'basicCustomerProfilesV1');
+        allow create: if !customerLocked(ws, id) && validBasicDirectory(ws, id) && (finance(ws) ||
+          (operator(ws) && !exists(/databases/$(database)/documents/workspaces/$(ws)/customers/$(id)) &&
+           request.resource.data.createdByUid == request.auth.uid && request.resource.data.createdAt == request.resource.data.actionTime &&
+           request.resource.data.creationOperationId == request.resource.data.operationId));
+        allow update: if !customerLocked(ws, id) && finance(ws) && validBasicDirectory(ws, id) &&
+          same(['id','workspaceId','createdByUid','createdAt','creationOperationId']);
+        allow delete: if owner(ws) && resource.data.workspaceId == ws &&
+          !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/customers/$(id)) &&
+          getAfter(/databases/$(database)/documents/workspaces/$(ws)/customerDeletionProofs/$(id)).data.actorUid == request.auth.uid &&
+          getAfter(/databases/$(database)/documents/workspaces/$(ws)/customerDeletionProofs/$(id)).data.sourceCreatedAt ==
+            get(/databases/$(database)/documents/workspaces/$(ws)/customers/$(id)).data.get('createdAt', null);
       }
       match /entryDeletionProofs/{id} {
         allow read: if finance(ws);
@@ -491,8 +556,8 @@ service cloud.firestore {
         allow update, delete: if false;
       }
       match /expenseCategories/{id} {
-        allow read: if member(ws);
-        allow create: if finance(ws) && envelope(ws) && request.resource.data.operationType == 'UPSERT' &&
+        allow read: if member(ws) && syncCapability(ws, 'expenseCategoriesV1');
+        allow create: if syncCapability(ws, 'expenseCategoriesV1') && finance(ws) && envelope(ws) && request.resource.data.operationType == 'UPSERT' &&
           request.resource.data.isDeleted == false && request.resource.data.id is int &&
           request.resource.data.id > 0 && string(request.resource.data.id) == id &&
           request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 120 &&
@@ -505,7 +570,7 @@ service cloud.firestore {
             'createdByRole', 'protocolVersion', 'operationType', 'dependencies', 'operationId', 'actorUid', 'actionTime', 'isDeleted']);
         // Equivalent concurrent additions may acknowledge their command, never rename
         // another member's category, change its identity/provenance, or touch money.
-        allow update: if finance(ws) && envelope(ws) && request.resource.data.operationType == 'UPSERT' &&
+        allow update: if syncCapability(ws, 'expenseCategoriesV1') && finance(ws) && envelope(ws) && request.resource.data.operationType == 'UPSERT' &&
           request.resource.data.isDeleted == false && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['operationId', 'actorUid', 'actionTime', 'protocolVersion', 'operationType', 'dependencies']);
         allow delete: if false;

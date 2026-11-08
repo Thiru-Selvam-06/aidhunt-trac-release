@@ -46,7 +46,14 @@ object OperationPolicy {
             "WITHDRAWAL" -> owner || (partner && creator == op.actorUid && target == op.actorUid && timely)
             "TRACTOR", "EXTENSION" -> owner || (partner && creator == op.actorUid)
             "EXPENSE_CATEGORY" -> (owner || partner) && creator == op.actorUid && op.mutationType == "UPSERT"
-            "CUSTOMER" -> owner || (partner && op.mutationType != "DELETE")
+            "CUSTOMER" -> owner || (partner && op.mutationType != "DELETE") ||
+                (operator && op.mutationType == "UPSERT" && data.optBoolean("basicProfileCreate") &&
+                 creator == op.actorUid && data.optLong("id") == op.entityId &&
+                 data.optLong("createdAt") == op.actionTime && data.optLong("updatedAt") == op.actionTime &&
+                 !data.has(com.example.data.sync.CustomerProfileEdit.PAYLOAD_KEY) &&
+                 listOf("totalBilled", "totalPaid", "balanceDue").all { field ->
+                    data.has(field) && data.optDouble(field, Double.NaN) == 0.0
+                 })
             "PAYMENT" -> owner || (partner && data.optString("collectedByUid") == op.actorUid &&
                 (data.optString("status") == "ACTIVE" || AuthorizationManager.within24Hours(data.optLong("createdAt"), op.actionTime)))
             else -> false

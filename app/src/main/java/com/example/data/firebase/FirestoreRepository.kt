@@ -34,6 +34,9 @@ class FirestoreRepository(
     private val TAG = "FirestoreRepository"
     private val listenerHealth = CloudListenerHealth()
     val cloudListenerStates = listenerHealth.states
+    private val capabilityCache = VerifiedWorkspaceCapabilityCache(context)
+    val workspaceCapabilityStates = capabilityCache.states
+    fun restoreWorkspaceCapabilities(uid: String, workspaceId: String) = capabilityCache.restore(uid, workspaceId)
     private val listenerEpoch = java.util.concurrent.atomic.AtomicLong(0)
     private val actionTimeBarriers = java.util.concurrent.ConcurrentHashMap<Pair<String, String>, com.example.data.sync.ServerActionTimeBarrier>()
 
@@ -60,6 +63,8 @@ class FirestoreRepository(
 
     // Real-time listener registrations per workspace (workspaceId -> Map of listener registrations)
     private val activeWorkspaceListeners = mutableMapOf<String, MutableList<ListenerRegistration>>()
+    private val activeListenerCapabilities = mutableMapOf<String, WorkspaceSyncCapabilities>()
+    private fun WorkspaceSyncCapabilities?.orDefaultCapabilities() = this ?: WorkspaceSyncCapabilities()
 
     /**
      * Completes strict deterministic workspace bootstrap for an authenticated user.
@@ -123,7 +128,10 @@ class FirestoreRepository(
         val workspace = firestore.collection("workspaces").document(workspaceId)
             .get(com.google.firebase.firestore.Source.SERVER).await()
         if (!workspace.exists()) return null
-        return WorkspaceDiscoveryPolicy.role(uid, workspaceId, member.data.orEmpty(), workspace.getString("ownerUid").orEmpty())
+        val role = WorkspaceDiscoveryPolicy.role(uid, workspaceId, member.data.orEmpty(), workspace.getString("ownerUid").orEmpty())
+        if (role != null && com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid == uid)
+            capabilityCache.record(uid, workspaceId, WorkspaceSyncCapabilities.fromWorkspace(workspace.data.orEmpty()))
+        return role
     }
 
     suspend fun discoverAuthoritativeMemberships(uid: String, preferredWorkspaceId: String? = null): List<AuthoritativeMembership> {
@@ -318,9 +326,9 @@ class FirestoreRepository(
         onExtensionsUpdated: (List<WorkTypeExtensionEntity>, String) -> Unit = { _, _ -> },
         onExpenseCategoriesUpdated: (List<com.example.data.entity.ExpenseCategoryEntity>, String) -> Unit = { _, _ -> },
         operatorWorkspaceIds: Set<String> = emptySet(),
-        onMembershipUpdated: (List<WorkspaceMember>, String) -> Unit = { _, _ -> }
+        onMembershipUpdated: (List<WorkspaceMember>, String) -> Unit = { _, _ -> },
+        onBasicCustomersUpdated: (List<com.example.data.entity.BasicCustomerEntity>, String) -> Unit = { _, _ -> }
     ) {
-        val epoch = listenerEpoch.get()
         val firestore = db ?: return
         val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: ""
         if (currentUid.isBlank()) {
@@ -329,6 +337,15 @@ class FirestoreRepository(
         }
 
         // Stop listeners for workspaces no longer in the set
+        // Reattach on a verified protocol change, rather than keeping stale health expectations.
+        val changed = activeWorkspaceListeners.keys.filter { ws ->
+            activeListenerCapabilities[ws] != capabilityCache.states.value[currentUid to ws].orDefaultCapabilities()
+        }
+        if (changed.isNotEmpty()) {
+            // Invalidate already-dispatched callbacks too; removing a registration alone is insufficient.
+            stopRealtimeListeners()
+        }
+        val epoch = listenerEpoch.get()
         val existingWorkspaces = activeWorkspaceListeners.keys.toSet()
         val toRemove = existingWorkspaces - workspaceIds
         for (wsId in toRemove) {
@@ -342,9 +359,14 @@ class FirestoreRepository(
         for (workspaceId in toAdd) {
             if (workspaceId.isBlank()) continue
             val wsRef = firestore.collection("workspaces").document(workspaceId)
+            val capabilities = capabilityCache.states.value[currentUid to workspaceId].orDefaultCapabilities()
+            activeListenerCapabilities[workspaceId] = capabilities
             val regList = mutableListOf<ListenerRegistration>()
-            val operational = setOf("actorMembership", "members", "entries", "tractors", "attendees", "settings", "accessControl", "extensions", "expenseCategories")
-            listenerHealth.begin(workspaceId, operational + if (workspaceId in operatorWorkspaceIds) emptySet() else setOf("customers", "expenses", "withdrawals", "payments"))
+            val operational = setOf("actorMembership", "members", "entries", "tractors", "attendees", "settings", "accessControl", "extensions") +
+                if (capabilities.expenseCategoriesV1) setOf("expenseCategories") else emptySet()
+            listenerHealth.begin(workspaceId, operational + if (workspaceId in operatorWorkspaceIds) {
+                if (capabilities.basicCustomerProfilesV1) setOf("customerDirectory") else emptySet()
+            } else setOf("customers", "expenses", "withdrawals", "payments"))
             // The full members query loses permission after removal. The actor's own
             // member document remains readable so revocation still reaches this device.
             regList.add(wsRef.collection("members").document(currentUid).addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
@@ -423,6 +445,20 @@ class FirestoreRepository(
             }
 
             // 3. Customers Listener
+            if (workspaceId in operatorWorkspaceIds && capabilities.basicCustomerProfilesV1) {
+                regList.add(wsRef.collection("customerDirectory").addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
+                    if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                    if (error != null) { listenerHealth.failed(workspaceId, "customerDirectory"); return@addSnapshotListener }
+                    if (snapshot != null) listenerHealth.snapshot(workspaceId, "customerDirectory", snapshot.metadata.isFromCache)
+                    if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
+                        // Fail the whole malformed snapshot, never silently drop one row and infer deletion.
+                        val profiles = runCatching { snapshot.documents.map { doc ->
+                            basicCustomerFromFirestoreMap(requireNotNull(doc.data), workspaceId, parseLongId(doc.id))
+                        } }.getOrElse { listenerHealth.failed(workspaceId, "customerDirectory"); return@addSnapshotListener }
+                        onBasicCustomersUpdated(profiles, workspaceId)
+                    }
+                })
+            }
             if (workspaceId !in operatorWorkspaceIds) {
             val regCustomers = wsRef.collection("customers")
                 .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
@@ -596,7 +632,7 @@ class FirestoreRepository(
                 }
             regList.add(regExtensions)
 
-            regList.add(wsRef.collection("expenseCategories")
+            if (capabilities.expenseCategoriesV1) regList.add(wsRef.collection("expenseCategories")
                 .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
                     if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
                     if (error != null) {
@@ -711,6 +747,7 @@ class FirestoreRepository(
             list.forEach { it.remove() }
         }
         activeWorkspaceListeners.clear()
+        activeListenerCapabilities.clear()
         Log.d(TAG, "All Firestore snapshot listeners stopped.")
     }
 
@@ -860,7 +897,7 @@ class FirestoreRepository(
     suspend fun getOperationRecordFromServer(op: com.example.data.entity.PendingOperationEntity): Map<String, Any?>? {
         val collection = when(op.entityType) {
             "JOB" -> "entries"; "EXPENSE" -> "expenses"; "WITHDRAWAL" -> "withdrawals"; "PAYMENT" -> "collections"
-            "CUSTOMER" -> "customers"
+            "CUSTOMER" -> if (org.json.JSONObject(op.payloadJson).optBoolean("basicProfileCreate")) "customerDirectory" else "customers"
             else -> throw IllegalArgumentException("Unsupported recovery record")
         }
         val snapshot = (db ?: throw IllegalStateException("Firestore unavailable")).collection("workspaces")
@@ -889,6 +926,11 @@ class FirestoreRepository(
             else -> throw SecurityException("Unsupported queued operation")
         }
         val json = org.json.JSONObject(op.payloadJson)
+        val capabilities = if (op.entityType in setOf("CUSTOMER", "EXPENSE_CATEGORY")) {
+            val workspace = firestore.collection("workspaces").document(op.workspaceId)
+                .get(com.google.firebase.firestore.Source.SERVER).await()
+            WorkspaceSyncCapabilities.fromWorkspace(workspace.data.orEmpty()).also { it.requireSupported(op) }
+        } else WorkspaceSyncCapabilities()
         if (json.optInt("operationProtocolVersion") != 2 || op.actionTime <= 0) throw WorkspaceUpgradeRequiredException()
         // Server Rules reject even milliseconds of future skew. Confirm eligibility
         // before the first mutation, retaining original IDs/times and rejected states.
@@ -902,6 +944,7 @@ class FirestoreRepository(
         payload.remove("operationProtocolVersion")
         payload.remove("expectedBaseJson")
         payload.remove(com.example.data.sync.CustomerProfileEdit.PAYLOAD_KEY)
+        payload.remove("basicProfileCreate")
         payload["protocolVersion"] = 2
         payload["operationType"] = op.mutationType
         payload["dependencies"] = (0 until dependencies.length()).map { index -> val item = dependencies.getJSONObject(index); mapOf("entityType" to item.getString("entityType"), "entityId" to item.getString("entityId")) }
@@ -993,10 +1036,36 @@ class FirestoreRepository(
                 } else transaction.set(ref, payload)
                 null
             }.await()
+        } else if (op.entityType == "CUSTOMER" && json.optBoolean("basicProfileCreate")) {
+            val directory = firestore.collection("workspaces").document(op.workspaceId)
+                .collection("customerDirectory").document(op.entityId.toString())
+            // Operators cannot read canonical financial profiles. An immutable creation receipt
+            // in the basic directory proves the original atomic create after an ACK was lost.
+            val prior = directory.get(com.google.firebase.firestore.Source.SERVER).await()
+            if (prior.exists()) {
+                val confirmed = basicCustomerFromFirestoreMap(prior.data.orEmpty(), op.workspaceId, op.entityId)
+                require(confirmed.creationOperationId == op.operationId && confirmed.createdByUid == op.actorUid &&
+                    confirmed.createdAt == json.getLong("createdAt")) { "Customer identity belongs to another action; original retained" }
+                return
+            }
+            require(payload["createdByUid"] == op.actorUid && listOf("totalBilled", "totalPaid", "balanceDue").all {
+                (payload[it] as? Number)?.toDouble() == 0.0
+            }) { "Basic profile creation cannot include financial balances" }
+            val batch = firestore.batch()
+            batch.set(ref, payload)
+            batch.set(directory, basicCustomerProjection(payload, null, op))
+            batch.commit().await()
         } else if (op.entityType == "CUSTOMER") {
             firestore.runTransaction { transaction ->
                 val existing = transaction.get(ref)
-                if (existing.getString("operationId") == op.operationId) return@runTransaction null
+                val directory = firestore.collection("workspaces").document(op.workspaceId)
+                    .collection("customerDirectory").document(op.entityId.toString())
+                val priorDirectory = if (capabilities.basicCustomerProfilesV1) transaction.get(directory) else null
+                if (existing.getString("operationId") == op.operationId) {
+                    if (capabilities.basicCustomerProfilesV1 && priorDirectory?.exists() != true)
+                        transaction.set(directory, basicCustomerProjection(existing.data.orEmpty(), null, op))
+                    return@runTransaction null
+                }
                 val patch = json.optString(com.example.data.sync.CustomerProfileEdit.PAYLOAD_KEY)
                 if (patch.isNotBlank()) {
                     require(existing.exists() && existing.getString("workspaceId") == op.workspaceId && existing.getBoolean("isDeleted") != true) {
@@ -1006,9 +1075,12 @@ class FirestoreRepository(
                     // Updating only editable fields preserves immutable provenance, unrelated edits and totals.
                     transaction.update(ref, changes + payload.filterKeys { it in setOf(
                         "protocolVersion", "operationType", "dependencies", "operationId", "actorUid", "actionTime", "isDeleted", "updatedAt") })
+                    if (capabilities.basicCustomerProfilesV1) transaction.set(directory, basicCustomerProjection(existing.data.orEmpty() + changes +
+                        mapOf("updatedAt" to payload["updatedAt"]), priorDirectory?.data, op))
                 } else {
                     require(!existing.exists()) { "Customer edit base is unavailable; original action retained for review" }
                     transaction.set(ref, payload)
+                    if (capabilities.basicCustomerProfilesV1) transaction.set(directory, basicCustomerProjection(payload, priorDirectory?.data, op))
                 }
                 null
             }.await()

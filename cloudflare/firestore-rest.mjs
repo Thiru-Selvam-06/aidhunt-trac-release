@@ -53,8 +53,19 @@ function stream(text) {
   if (trimmed.startsWith('[')) return JSON.parse(trimmed);
   return trimmed.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
 }
+function timestampsOf(fields, prefix = []) {
+  const result = [];
+  const visit = (value, path) => {
+    if ('timestampValue' in value) result.push({ path, value: value.timestampValue });
+    else if ('mapValue' in value) result.push(...timestampsOf(value.mapValue.fields || {}, path));
+    else if ('arrayValue' in value) (value.arrayValue.values || []).forEach((item, index) => visit(item, [...path, index]));
+  };
+  for (const [key, value] of Object.entries(fields)) visit(value, [...prefix, key]);
+  return result;
+}
 function snapshot(document, name) {
-  return document ? { exists: true, id: document.name.split('/').at(-1), name: document.name, data: fieldsOf(document.fields || {}), get(key) { return this.data[key]; } }
+  return document ? { exists: true, id: document.name.split('/').at(-1), name: document.name, data: fieldsOf(document.fields || {}),
+    timestampProvenance: timestampsOf(document.fields || {}), get(key) { return this.data[key]; } }
     : { exists: false, id: name.split('/').at(-1), name, data: null, get() { return undefined; } };
 }
 
