@@ -27,7 +27,11 @@ fun percentageMoneyShares(amount: Double, percentages: Map<String, Int>): Map<St
         .setScale(2, RoundingMode.HALF_UP).movePointRight(2).toBigIntegerExact()
     val divisor = BigInteger.valueOf(100)
     val portions = percentages.mapValues { (_, weight) -> paisa.multiply(BigInteger.valueOf(weight.toLong())).divideAndRemainder(divisor) }
-    val remaining = (paisa - portions.values.fold(BigInteger.ZERO) { sum, part -> sum + part[0] }).intValueExact()
+    val undistributed = paisa - portions.values.fold(BigInteger.ZERO) { sum, part -> sum + part[0] }
+    // Each recipient loses less than one paisa to flooring, so this count fits in Int.
+    // Check before using the conversion supported on the app's older Android versions.
+    check(undistributed.signum() >= 0 && undistributed < BigInteger.valueOf(portions.size.toLong()))
+    val remaining = undistributed.toInt()
     val extra = portions.entries.sortedWith(compareByDescending<Map.Entry<String, Array<BigInteger>>> { it.value[1] }
         .thenBy { it.key }).take(remaining).map { it.key }.toSet()
     return portions.mapValues { (uid, part) -> BigDecimal(part[0] + if (uid in extra) BigInteger.ONE else BigInteger.ZERO)

@@ -46,6 +46,16 @@ still display without a trailing `.00`.
 | `DeviceEmulatorIntegrationTest.kt`, `CollectionFormDeviceTest.kt` | Check offline persistence, exact ACK/replay and partner records; exercise a Tamil quarter-rupee due and its payment prefill. Update only the Operator summary expectation that deliberately changes on this branch. |
 | `docs/regression/interaction-inventory.*`, `docs/regression/asset-inventory.json` | Regenerate the source inventory. An inventory reference alone does not prove runtime coverage. |
 
+## Regression evidence
+
+The initial precision commit `c08c056` passed 738 local app/Room/JUnit tests, 378
+Firestore Rules tests, 137 backend tests and 110 Python checks. The GitHub Android
+emulator job completed all 38 tests. Its overall gate failed because lint found
+`BigInteger.intValueExact()` requires Android API 31 while this app supports API 24.
+The remainder is bounded by the number of recipients before converting to an `Int`
+with the older compatible method. The allocation rule and all lint gates remain
+unchanged. Verify the new commit's checks separately from the initial run.
+
 ## Release and rollback
 
 This development change does not migrate Room, change backend services, rewrite
