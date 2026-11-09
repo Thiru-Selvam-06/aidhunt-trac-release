@@ -1153,7 +1153,7 @@ fun AccountMainDashboard(
                     AccountSectionItem(
                         icon = Icons.Default.Settings,
                         title = if (isTamil) "வணிக விருப்பத்தேர்வுகள்" else "Business Preferences",
-                        badgeText = "${settings.currency}${personalRateForBadge.toInt()}/hr",
+                        badgeText = "${settings.currency}${com.example.ui.components.formatAmountText(personalRateForBadge)}/hr",
                         testTag = "btn_nav_settings",
                         onClick = { onNavigate(AccountSubPage.SETTINGS) }
                     )
@@ -4068,7 +4068,7 @@ fun BusinessSettingsPage(
     var businessName by remember { mutableStateOf(settings.businessName) }
     var ownerName by remember { mutableStateOf(settings.ownerName) }
     var businessPhone by remember { mutableStateOf(settings.businessPhone) }
-    var ratePerHour by remember { mutableStateOf((currentPersonalHourlyRate ?: settings.defaultHourlyRate).toInt().toString()) }
+    var ratePerHour by remember { mutableStateOf(com.example.ui.util.storedMoneyInput(currentPersonalHourlyRate ?: settings.defaultHourlyRate)) }
     var address by remember { mutableStateOf(settings.businessAddress) }
     var profilePhotoUri by remember { mutableStateOf(settings.profilePhotoUri) }
     var photoToCropUri by remember { mutableStateOf<Uri?>(null) }

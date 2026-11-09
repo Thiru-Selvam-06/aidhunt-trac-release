@@ -1177,8 +1177,7 @@ fun TakeAmountDialog(
     var amountText by remember(initialTargetStatus) {
         mutableStateOf(
             if (initialTargetStatus != null && initialTargetStatus.totalToGet > 0) {
-                val rounded = Math.round(initialTargetStatus.totalToGet)
-                rounded.toString()
+                com.example.ui.util.storedMoneyInput(initialTargetStatus.totalToGet)
             } else ""
         )
     }

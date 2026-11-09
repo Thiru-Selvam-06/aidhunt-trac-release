@@ -145,7 +145,7 @@ data class NewEntryDraft(
         ): NewEntryDraft {
             val now = Calendar.getInstance()
             val tractor = if (lockedTractor.isNotBlank()) lockedTractor else defaultTractor
-            val rateStr = if (defaultHourlyRate > 0.0) defaultHourlyRate.toInt().toString() else ""
+            val rateStr = if (defaultHourlyRate > 0.0) com.example.ui.util.storedMoneyInput(defaultHourlyRate) else ""
             val personUid = if (lockedPersonUid.isNotBlank()) lockedPersonUid else defaultPersonUid
             val personName = if (lockedPersonName.isNotBlank()) lockedPersonName else defaultPersonName
             return NewEntryDraft(
@@ -175,17 +175,18 @@ data class NewEntryDraft(
             val endCal = if (job.endTimeMillis > 0L) Calendar.getInstance().apply { timeInMillis = job.endTimeMillis } else null
 
             val calculatedAmt = if (job.hourlyRate > 0.0 && job.durationMinutes > 0L) {
-                (job.durationMinutes / 60.0) * job.hourlyRate
+                com.example.ui.util.WorkBillingCalculator.calculateAmount(job.durationMinutes, job.hourlyRate)
             } else 0.0
 
-            val isCustomAmt = (job.totalAmount > 0.0 && Math.abs(job.totalAmount - calculatedAmt) > 1.0) || (job.totalAmount > 0.0 && job.hourlyRate <= 0.0)
+            // A legacy whole-rupee quote must not be repriced when only notes/customer details change.
+            val isCustomAmt = (job.totalAmount > 0.0 && com.example.ui.util.FinancialCalculationEngine.roundMoney(job.totalAmount) != calculatedAmt) || (job.totalAmount > 0.0 && job.hourlyRate <= 0.0)
             val amountStr = if (job.totalAmount > 0.0) {
-                Math.round(job.totalAmount).toString()
+                com.example.ui.util.storedMoneyInput(job.totalAmount)
             } else ""
 
             val entryForName = job.operatorName.ifBlank { job.addedByPartner }
             val amountReceivedStr = if (job.amountReceived > 0.0) {
-                Math.round(job.amountReceived).toString()
+                com.example.ui.util.storedMoneyInput(job.amountReceived)
             } else if (job.pendingAmount <= 0.0 && job.totalAmount > 0.0) {
                 amountStr
             } else "0"
@@ -238,7 +239,7 @@ data class NewEntryDraft(
                 endMinute = endCal?.get(Calendar.MINUTE),
                 manualHoursInput = (job.durationMinutes / 60).toString(),
                 manualMinutesInput = (job.durationMinutes % 60).toString(),
-                hourlyRateInput = if (job.hourlyRate > 0.0) job.hourlyRate.toInt().toString() else "",
+                hourlyRateInput = if (job.hourlyRate > 0.0) com.example.ui.util.storedMoneyInput(job.hourlyRate) else "",
                 customWorkAmountInput = if (isCustomAmt) amountStr else (if (job.totalAmount > 0.0 && calculatedAmt <= 0.0) amountStr else ""),
                 isWorkAmountManuallyEdited = isCustomAmt,
                 extraChargesInput = "",

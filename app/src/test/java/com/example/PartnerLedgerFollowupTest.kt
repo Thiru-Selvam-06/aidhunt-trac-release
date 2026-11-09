@@ -112,8 +112,8 @@ class PartnerLedgerFollowupTest {
     @Test fun pendingCacheAndFractionalRoundingCannotMakeHomeAndCustomerTotalsDisagree() {
         val rows = listOf(job().copy(totalAmount = 100.4, amountReceived = 40.5, pendingAmount = 1.0))
         val ledger = FinancialCalculationEngine.calculateSummary(rows, emptyList(), emptyList(), scope)
-        assertEquals(59.0, ledger.totalDue, 0.0)
-        assertEquals(ledger.totalRecorded - ledger.totalReceived, ledger.totalDue, 0.0)
+        assertEquals(59.90, ledger.totalDue, 0.0)
+        assertEquals(FinancialCalculationEngine.roundMoney(ledger.totalRecorded - ledger.totalReceived), ledger.totalDue, 0.0)
         val customer = FinancialCalculationEngine.customersWithLedger(emptyList(), rows).single()
         assertEquals(ledger.totalDue, customer.balanceDue, 0.0)
         val overview = FinancialCalculationEngine.calculatePartnerBreakdown(rows, emptyList(), emptyList(), emptyList(), members, scope)

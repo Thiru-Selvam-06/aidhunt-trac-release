@@ -88,7 +88,8 @@ class ExampleUnitTest {
         val clockAmount = WorkBillingCalculator.calculateAmount(clockDuration, rate)
         val manualAmount = WorkBillingCalculator.calculateAmount(manualDuration, rate)
         assertEquals(clockAmount, manualAmount, 0.001)
-        val expectedAmount = Math.round((230.0 / 60.0) * 1100.0).toDouble()
+        // Approved paise policy: 230 minutes at ₹1,100/hour is ₹4,216.67.
+        val expectedAmount = 4216.67
         assertEquals(expectedAmount, clockAmount, 0.001)
     }
 

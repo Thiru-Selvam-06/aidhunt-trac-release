@@ -878,12 +878,11 @@ class DeviceEmulatorIntegrationTest {
   login("owner")
   val owner=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid=="device-owner"}}!!
   assertTrue(workspace.initializeForUser(owner).isSuccess)
-  val ownerCustomer=syncStage("Owner customer summary under existing whole-rupee policy after account switch") {
-   // customerLedger intentionally rounds the customer summary to whole rupees;
-   // raw job/queue/peer paise are independently asserted above and remain unchanged.
-   kotlinx.coroutines.withTimeout(30000){db.customerDao().getCustomersForWorkspace(ws).first{rows->rows.any{it.id==customerId&&it.balanceDue==850.0}}}.single{it.id==customerId}
+  val ownerCustomer=syncStage("Owner customer summary under approved paise policy after account switch") {
+   // The separately approved precision change now keeps the summary equal to the raw job.
+   kotlinx.coroutines.withTimeout(30000){db.customerDao().getCustomersForWorkspace(ws).first{rows->rows.any{it.id==customerId&&it.balanceDue==850.25}}}.single{it.id==customerId}
   }
-  assertEquals(850.0,ownerCustomer.totalBilled,0.0);assertEquals(0.0,ownerCustomer.totalPaid,0.0)
+  assertEquals(850.25,ownerCustomer.totalBilled,0.0);assertEquals(0.0,ownerCustomer.totalPaid,0.0)
   assertEquals(850.25,db.jobEntryDao().getJobById(ws,jobId)!!.totalAmount,0.0)
   assertEquals(850.25,db.jobEntryDao().getJobById(ws,jobId)!!.pendingAmount,0.0)
   assertEquals(confirmed,cloud.document("workspaces/$ws/entries/$jobId").get(Source.SERVER).await().data)
@@ -938,6 +937,127 @@ class DeviceEmulatorIntegrationTest {
   login("owner")
   val originalOwner=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid=="device-owner"}}!!
   assertTrue(workspace.initializeForUser(originalOwner,ws).isSuccess)
+  Unit
+ }
+
+ @Test(timeout=180000) fun yOfflineDecimalCollectionsSurviveRoomReloadAndReconcileOnPartnerReplica():Unit=runBlocking {
+  login("owner");val actor="device-owner";val db=AppDatabase.getInstance(context)
+  val profiles=com.example.data.repository.AuthRepository.getInstance(context);profiles.startListening()
+  val profile=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid==actor}}!!
+  val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db)
+  assertTrue(workspace.initializeForUser(profile,ws).isSuccess)
+  val now=System.currentTimeMillis();val jobId:Long;val original:List<PendingOperationEntity>
+  cloud.disableNetwork().await()
+  try {
+   jobId=workspace.saveJobEntry(com.example.data.entity.JobEntryEntity(workspaceId=ws,
+    customerName="Paise தமிழ் ? $now",operatorName="Device OWNER",tractorId=3,
+    tractorLabel="Disposable Tractor",workType="Rotavator",startTimeMillis=now-60000,endTimeMillis=now,
+    durationMinutes=1,totalAmount=0.30,amountReceived=0.10,pendingAmount=0.20,
+    addedByPartner="Device OWNER",entryForUid=actor,createdAt=now))
+   original=db.pendingOperationDao().outstandingOperations(ws).filter{it.actorUid==actor&&
+    ((it.entityType=="JOB"&&it.entityId==jobId)||
+     (it.entityType=="PAYMENT"&&JSONObject(it.payloadJson).optLong("jobEntryId")==jobId))}
+   assertEquals(setOf("JOB","PAYMENT"),original.map{it.entityType}.toSet())
+   assertTrue(original.all{it.state=="PENDING"})
+   val reopened=androidx.room.Room.databaseBuilder(context,AppDatabase::class.java,db.openHelper.databaseName!!).build()
+   try {
+    original.forEach{assertEquals(it,reopened.pendingOperationDao().getOperation(it.operationId))}
+    val retained=reopened.jobEntryDao().getJobById(ws,jobId)!!
+    assertEquals(0.30,retained.totalAmount,0.0);assertEquals(0.10,retained.amountReceived,0.0)
+    assertEquals(0.20,retained.pendingAmount,0.0);assertEquals(actor,retained.createdByUid)
+   } finally {reopened.close()}
+  } finally {cloud.enableNetwork().await()}
+  workspace.pushUnsyncedToCloud(isOnline=true)
+  original.forEach{awaitCustomerCommand(db,it,"paise initial ${it.entityType}")}
+  val job=db.jobEntryDao().getJobById(ws,jobId)!!;val customerId=job.customerId
+  val customer=syncStage("paise customer due before final collection") {
+   kotlinx.coroutines.withTimeout(30000){db.customerDao().getCustomersForWorkspace(ws).first{rows->
+    rows.any{it.id==customerId&&it.totalPaid==0.10&&it.balanceDue==0.20}}}.single{it.id==customerId}
+  }
+  val second:PendingOperationEntity
+  cloud.disableNetwork().await()
+  try {
+   val paymentId=workspace.recordCustomerPayment(customer,0.20,System.currentTimeMillis(),"Cash","Raw தமிழ் ? note","Device OWNER")
+   second=db.pendingOperationDao().outstandingOperations(ws).single{it.entityType=="PAYMENT"&&it.entityId==paymentId}
+   assertEquals("PENDING",second.state);assertEquals(actor,second.actorUid)
+   val payload=JSONObject(second.payloadJson)
+   assertEquals(0.20,payload.getDouble("amount"),0.0)
+   assertEquals(0.10,payload.getDouble("baseAmountReceived"),0.0)
+   assertEquals(0.20,payload.getDouble("basePendingAmount"),0.0)
+   val reopened=androidx.room.Room.databaseBuilder(context,AppDatabase::class.java,db.openHelper.databaseName!!).build()
+   try {
+    assertEquals(second,reopened.pendingOperationDao().getOperation(second.operationId))
+    assertEquals(0.20,reopened.paymentDao().getPaymentById(ws,paymentId)!!.amount,0.0)
+    assertEquals(0.30,reopened.jobEntryDao().getJobById(ws,jobId)!!.amountReceived,0.0)
+    assertEquals(0.0,reopened.jobEntryDao().getJobById(ws,jobId)!!.pendingAmount,0.0)
+   } finally {reopened.close()}
+  } finally {cloud.enableNetwork().await()}
+  workspace.pushUnsyncedToCloud(isOnline=true);awaitCustomerCommand(db,second,"paise final collection")
+  val commands=original+second
+  for(command in commands){
+   val ack=db.pendingOperationDao().getOperation(command.operationId)!!
+   assertEquals(command.payloadJson,ack.payloadJson);assertEquals(command.actionTime,ack.actionTime)
+   assertEquals("ACKNOWLEDGED",ack.state)
+  }
+  val confirmed=cloud.document("workspaces/$ws/entries/$jobId").get(Source.SERVER).await().data!!
+  assertEquals(0.30,(confirmed["totalAmount"] as Number).toDouble(),0.0)
+  assertEquals(0.30,(confirmed["amountReceived"] as Number).toDouble(),0.0)
+  assertEquals(0.0,(confirmed["pendingAmount"] as Number).toDouble(),0.0)
+  val before=cloud.collection("workspaces/$ws/collections").whereEqualTo("jobEntryId",jobId).get(Source.SERVER).await()
+  assertEquals(2,before.size());assertEquals(listOf(0.10,0.20),before.documents.map{it.getDouble("amount")!!}.sorted())
+  assertEquals(commands.filter{it.entityType=="PAYMENT"}.map{it.operationId}.toSet(),before.documents.map{it.getString("operationId")}.toSet())
+  assertTrue(before.documents.all{it.getString("collectedByUid")==actor&&it.getString("collectorUid")==actor})
+  val transport=FirestoreRepository(context)
+  commands.filter{it.entityType=="PAYMENT"}.forEach{transport.applyPendingOperation(it)}
+  assertEquals(confirmed,cloud.document("workspaces/$ws/entries/$jobId").get(Source.SERVER).await().data)
+  val after=cloud.collection("workspaces/$ws/collections").whereEqualTo("jobEntryId",jobId).get(Source.SERVER).await()
+  assertEquals(before.documents.associate{it.id to it.data},after.documents.associate{it.id to it.data})
+  login("partner")
+  val peerProfile=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid=="device-partner"}}!!
+  val fresh=androidx.room.Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build()
+  val peerScope=kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()+kotlinx.coroutines.Dispatchers.IO)
+  val peerCloud=FirestoreRepository(context,peerScope)
+  try {
+   val peer=com.example.data.repository.WorkspaceRepository(context,fresh,peerCloud,peerScope)
+   assertTrue(peer.initializeForUser(peerProfile,ws).isSuccess)
+   val replicaJob=syncStage("partner paise job download") {
+    kotlinx.coroutines.withTimeout(30000){fresh.jobEntryDao().getJobsForWorkspace(ws).first{rows->
+     rows.any{it.id==jobId&&it.amountReceived==0.30&&it.pendingAmount==0.0}}}.single{it.id==jobId}
+   }
+   val replicaPayments=syncStage("partner paise receipt download") {
+    kotlinx.coroutines.withTimeout(30000){fresh.paymentDao().getPaymentsForWorkspace(ws).first{rows->rows.count{it.jobEntryId==jobId}==2}}
+     .filter{it.jobEntryId==jobId}
+   }
+   val replicaCustomer=syncStage("partner paise customer summary") {
+    kotlinx.coroutines.withTimeout(30000){fresh.customerDao().getCustomersForWorkspace(ws).first{rows->
+     rows.any{it.id==customerId&&it.totalBilled==0.30&&it.totalPaid==0.30&&it.balanceDue==0.0}}}.single{it.id==customerId}
+   }
+   assertEquals(actor,replicaJob.createdByUid);assertEquals(actor,replicaJob.entryForUid)
+   assertEquals(customer.name,replicaCustomer.name);assertEquals(listOf(0.10,0.20),replicaPayments.map{it.amount}.sorted())
+   assertEquals(before.documents.map{it.id.toLong()}.toSet(),replicaPayments.map{it.id}.toSet())
+   assertTrue(replicaPayments.all{it.isSynced&&it.collectorUid==actor&&it.collectedByUid==actor})
+   assertEquals(0.30,com.example.ui.util.FinancialCalculationEngine.cashAvailable(replicaPayments,emptyList(),emptyList(),
+    com.example.ui.util.FinancialScope(workspaceId=ws),listOf(replicaJob)),0.0)
+  } finally {peerCloud.stopRealtimeListeners();peerScope.coroutineContext[kotlinx.coroutines.Job]?.cancel();fresh.close()}
+  login("owner");assertTrue(workspace.initializeForUser(profile,ws).isSuccess)
+  val reversal:PendingOperationEntity
+  cloud.disableNetwork().await()
+  try {
+   workspace.deletePayment(second.entityId)
+   reversal=db.pendingOperationDao().outstandingOperations(ws).single{it.entityType=="PAYMENT"&&it.entityId==second.entityId}
+   val payload=JSONObject(reversal.payloadJson)
+   assertEquals("REVERSED",payload.getString("status"));assertEquals(0.20,payload.getDouble("amount"),0.0)
+   assertEquals(0.30,payload.getDouble("baseAmountReceived"),0.0);assertEquals(0.0,payload.getDouble("basePendingAmount"),0.0)
+   assertEquals(0.10,db.jobEntryDao().getJobById(ws,jobId)!!.amountReceived,0.0)
+   assertEquals(0.20,db.jobEntryDao().getJobById(ws,jobId)!!.pendingAmount,0.0)
+  } finally {cloud.enableNetwork().await()}
+  workspace.pushUnsyncedToCloud(isOnline=true);awaitCustomerCommand(db,reversal,"paise reversal")
+  val reversed=cloud.document("workspaces/$ws/collections/${second.entityId}").get(Source.SERVER).await()
+  assertEquals("REVERSED",reversed.getString("status"));assertEquals(0.20,reversed.getDouble("amount")!!,0.0)
+  assertEquals(actor,reversed.getString("collectedByUid"));assertEquals(actor,reversed.getString("collectorUid"))
+  assertEquals(before.documents.single{it.id==second.entityId.toString()}.getLong("createdAt"),reversed.getLong("createdAt"))
+  val reopenedDue=cloud.document("workspaces/$ws/entries/$jobId").get(Source.SERVER).await()
+  assertEquals(0.10,reopenedDue.getDouble("amountReceived")!!,0.0);assertEquals(0.20,reopenedDue.getDouble("pendingAmount")!!,0.0)
   Unit
  }
 }

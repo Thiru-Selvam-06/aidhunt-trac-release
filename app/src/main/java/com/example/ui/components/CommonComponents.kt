@@ -373,12 +373,13 @@ fun formatInr(amount: Double, currency: String = "₹"): String {
     val cents = java.math.BigDecimal.valueOf(amount.takeIf { it.isFinite() } ?: 0.0)
         .setScale(2, java.math.RoundingMode.HALF_UP)
     if (cents.stripTrailingZeros().scale() > 0) return currency + String.format(Locale.US, "%,.2f", cents)
-    val rounded = Math.round(amount)
-    return currency + String.format(Locale.US, "%,d", rounded)
+    return currency + String.format(Locale.US, "%,.0f", cents)
 }
 
 fun formatInrWithDecimals(amount: Double, currency: String = "₹"): String {
-    return currency + String.format(Locale.US, "%,.2f", amount)
+    val value = if (amount.isFinite()) java.math.BigDecimal.valueOf(amount)
+        .setScale(2, java.math.RoundingMode.HALF_UP) else amount
+    return currency + String.format(Locale.US, "%,.2f", value)
 }
 
 fun formatDate(timeMillis: Long): String {
@@ -452,8 +453,10 @@ fun sanitizePhoneNumberForStorage(phoneNumber: String?): String {
 }
 
 fun formatAmountText(amount: Double): String {
-    val rounded = Math.round(amount)
-    return rounded.toString()
+    val value = java.math.BigDecimal.valueOf(amount.takeIf { it.isFinite() } ?: 0.0)
+        .setScale(2, java.math.RoundingMode.HALF_UP)
+    return if (value.stripTrailingZeros().scale() > 0) value.toPlainString()
+        else value.toBigIntegerExact().toString()
 }
 
 fun buildJobWhatsAppMessage(job: JobEntryEntity, businessName: String, isTamil: Boolean = false): String {

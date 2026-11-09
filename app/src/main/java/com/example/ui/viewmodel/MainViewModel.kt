@@ -1209,9 +1209,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess()
             } catch (e: Exception) {
                 val code = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code?.name ?: "SYNC_FAILED"
-                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
                 android.util.Log.e("TRAC_FIRESTORE", "Cloud payment recording failed: $code ${e.message}", e)
-                _syncMessage.value = "Action failed: ${e.message ?: "please retry"}"
+                _syncMessage.value = if (e is com.example.data.sync.SavedCollectionAmountsNeedReview) {
+                    if (settings.value.language.equals("TA", true)) "பணத்தைப் பதிவு செய்வதற்கு முன் சேமிக்கப்பட்ட வேலைத் தொகைகளைச் சரிபார்க்கவும்."
+                    else "Review the saved job amounts before collecting this payment."
+                } else "Action failed: ${e.message ?: "please retry"}"
             }
         }
     }

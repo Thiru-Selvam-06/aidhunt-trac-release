@@ -16,14 +16,14 @@ async function seed(collection, data, id='1') {
    ? data : {...data, authorizationCreatedAt: data.authorizationCreatedAt instanceof Timestamp ? data.authorizationCreatedAt : Timestamp.fromMillis(now-1000)};
  await env.withSecurityRulesDisabled(async c => setDoc(doc(c.firestore(),path(collection,id)),trusted));
 }
-async function collect(actor, id, amount, before, status='ACTIVE', original=null) {
+async function collect(actor, id, amount, before, status='ACTIVE', original=null, exactAfter=null) {
  const database=db(actor); const batch=writeBatch(database); const opId=`collection-${id}-${status}`;
  const persisted=await getDoc(doc(db('owner'),path('collections',id)));
  const collection={...envelope(actor), operationId:opId, id:Number(id), jobEntryId:1, customerId:2, amount, collectedByUid:uid[actor], collectedByName:actor, collectedByRole:actor, collectedAt:now-1000, createdAt:now-1000, allocationsJson:`[{"jobId":1,"amount":${amount}}]`, status, ...(original||{}), authorizationCreatedAt:persisted.exists()?persisted.data().authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:persisted.exists()?persisted.data().serverReceivedAt:serverTimestamp(), status, actorUid:uid[actor],operationId:opId};
  if(status==='REVERSED') { collection.reversedByUid=uid[actor];collection.reversedAt=now; }
  const delta=status==='ACTIVE'?amount:-amount;
  batch.set(doc(database,path('collections',id)),collection);
- batch.update(doc(database,path('entries')), {...envelope(actor),operationId:opId,collectionId:id,amountReceived:before.amountReceived+delta,pendingAmount:before.pendingAmount-delta});
+ batch.update(doc(database,path('entries')), {...envelope(actor),operationId:opId,collectionId:id,amountReceived:before.amountReceived+delta,pendingAmount:before.pendingAmount-delta,...(exactAfter||{})});
  return { commit:()=>batch.commit(), collection };
 }
 test.before(async()=>{ env=await initializeTestEnvironment({projectId:'demo-aidhunt-v16',firestore:{host:'127.0.0.1',port:18180,rules:fs.readFileSync(require('node:path').join(__dirname, '../firestore.rules'),'utf8')}}); });
@@ -34,6 +34,45 @@ test.beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRules
  for(const [role,id] of Object.entries(uid)) if(role!=='outsider') await setDoc(doc(database,`workspaces/${ws}/members/${id}`),{uid:id,workspaceId:ws,role:role==='other'?'PARTNER':role.toUpperCase(),status:'ACTIVE'});
 });});
 for(const role of ['owner','partner','operator']) test(`${role} creates own ordinary entry`,async()=>assertSucceeds(setDoc(doc(db(role),path('entries')),entry(role))));
+
+for(const actor of ['owner','partner']) test(`decimal paisa ${actor}: exact 0.10 plus 0.20 receipts and reversals preserve 0.30`,async()=>{
+ await assertSucceeds(setDoc(doc(db(actor),path('entries')),entry(actor,{totalAmount:0.30,amountReceived:0,pendingAmount:0.30})));
+ const first=await collect(actor,'20',0.10,{amountReceived:0,pendingAmount:0.30},'ACTIVE',null,{amountReceived:0.10,pendingAmount:0.20});
+ await assertSucceeds(first.commit());
+ let source=(await getDoc(doc(db(actor),path('entries')))).data();
+ assert.equal(source.totalAmount,0.30);assert.equal(source.amountReceived,0.10);assert.equal(source.pendingAmount,0.20);
+ const second=await collect(actor,'30',0.20,source,'ACTIVE',null,{amountReceived:0.30,pendingAmount:0});
+ await assertSucceeds(second.commit());
+ source=(await getDoc(doc(db(actor),path('entries')))).data();
+ assert.equal(source.amountReceived,0.30);assert.equal(source.pendingAmount,0);
+ const reverseSecond=await collect(actor,'30',0.20,source,'REVERSED',second.collection,{amountReceived:0.10,pendingAmount:0.20});
+ await assertSucceeds(reverseSecond.commit());
+ source=(await getDoc(doc(db(actor),path('entries')))).data();
+ const reverseFirst=await collect(actor,'20',0.10,source,'REVERSED',first.collection,{amountReceived:0,pendingAmount:0.30});
+ await assertSucceeds(reverseFirst.commit());
+ source=(await getDoc(doc(db(actor),path('entries')))).data();
+ assert.equal(source.amountReceived,0);assert.equal(source.pendingAmount,0.30);
+});
+
+for(const forged of [0.01,0.001]) test(`decimal paisa denial: a collection cannot add an unrecorded ${forged} rupees`,async()=>{
+ await seed('entries',entry('owner',{totalAmount:0.30,amountReceived:0,pendingAmount:0.30}));
+ const action=await collect('owner','20',0.10,{amountReceived:0,pendingAmount:0.30},'ACTIVE',null,
+  {amountReceived:0.10+forged,pendingAmount:0.20-forged});
+ await assertFails(action.commit());
+ const source=(await getDoc(doc(db('owner'),path('entries')))).data();
+ assert.equal(source.amountReceived,0);assert.equal(source.pendingAmount,0.30);
+ assert.equal((await getDoc(doc(db('owner'),path('collections','20')))).exists(),false);
+});
+
+test('decimal paisa denial: tolerance cannot create a receipt with no source balance change',async()=>{
+ const before={amountReceived:0.10,pendingAmount:0.20};
+ await seed('entries',entry('owner',{totalAmount:0.30,...before}));
+ const action=await collect('owner','20',0.0000000001,before,'ACTIVE',null,before);
+ await assertFails(action.commit());
+ const source=(await getDoc(doc(db('owner'),path('entries')))).data();
+ assert.equal(source.amountReceived,before.amountReceived);assert.equal(source.pendingAmount,before.pendingAmount);
+ assert.equal((await getDoc(doc(db('owner'),path('collections','20')))).exists(),false);
+});
 test('a new job cannot import another records edit history',async()=>
  assertFails(setDoc(doc(db('owner'),path('entries')),entry('owner',{jobEditHistory:[{operationId:'copied-history',actorUid:uid.partner}]}))));
 for(const role of ['owner','partner']) test(`${role} creates tractor job for another active partner`,async()=>{
