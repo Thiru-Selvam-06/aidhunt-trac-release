@@ -23,10 +23,11 @@ object CollectionPolicy {
     }
     fun allocatedJobs(jobs: List<JobEntryEntity>, workspaceId: String, customerId: Long, amount: Double): List<JobEntryEntity> {
         if (!amount.isFinite() || amount <= 0) return emptyList()
-        var remaining = amount
+        var remaining = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(amount)
         return jobs.filter { it.workspaceId == workspaceId && it.customerId == customerId && it.pendingAmount > 0 }
             .sortedWith(compareBy<JobEntryEntity> { it.startTimeMillis }.thenBy { it.id })
-            .filter { job -> (remaining > 0).also { if (it) remaining -= minOf(remaining, job.pendingAmount) } }
+            .filter { job -> (remaining > 0).also { if (it) remaining = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(
+                remaining - minOf(remaining, com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(job.pendingAmount))) } }
     }
     fun earliestDate(jobs: List<JobEntryEntity>): Long {
         require(jobs.isNotEmpty()) { "No source Entries available for this collection" }

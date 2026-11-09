@@ -337,8 +337,8 @@ fun CustomerCreditDueTab(
             val hasActivity = c.totalBilled > 0.0 || c.totalPaid > 0.0
             val matchesStatus = when (selectedStatusFilter) {
                 CreditDueStatusFilter.ALL -> true
-                CreditDueStatusFilter.PENDING_DUE -> com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(c.balanceDue) > 0.0
-                CreditDueStatusFilter.PAID -> com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(c.balanceDue) <= 0.0 && hasActivity
+                CreditDueStatusFilter.PENDING_DUE -> com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(c.balanceDue) > 0.0
+                CreditDueStatusFilter.PAID -> com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(c.balanceDue) <= 0.0 && hasActivity
             }
             val matchesDate = if (selectedDateFilter == CreditDueDateFilter.ALL) {
                 true
@@ -364,7 +364,7 @@ fun CustomerCreditDueTab(
         }
     }
     val rankedCustomers = com.example.ui.util.CustomerIdentity.ranked(filteredCustomers, searchQuery, isTamil)
-    val totalOutstanding = filteredCustomers.map { com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(it.balanceDue) }.filter { it > 0.0 }.sum()
+    val totalOutstanding = filteredCustomers.map { com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(it.balanceDue) }.filter { it > 0.0 }.sum()
     fun showCustomDatePickers() {
         val cal = Calendar.getInstance()
         cal.timeInMillis = customStartDateMillis
@@ -601,8 +601,8 @@ fun CustomerCreditDueTab(
                                         val isSelected = selectedStatusFilter == statusFilter
                                         val count = when (statusFilter) {
                                             CreditDueStatusFilter.ALL -> synchronizedCustomers.size
-                                            CreditDueStatusFilter.PENDING_DUE -> synchronizedCustomers.count { com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(it.balanceDue) > 0.0 }
-                                            CreditDueStatusFilter.PAID -> synchronizedCustomers.count { com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(it.balanceDue) <= 0.0 }
+                                            CreditDueStatusFilter.PENDING_DUE -> synchronizedCustomers.count { com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(it.balanceDue) > 0.0 }
+                                            CreditDueStatusFilter.PAID -> synchronizedCustomers.count { com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(it.balanceDue) <= 0.0 }
                                         }
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),
@@ -1135,7 +1135,7 @@ fun CustomerCreditDueCard(
 ) {
     val responsive = com.example.ui.theme.rememberResponsiveDimensions()
     val hasActivity = customer.totalBilled > 0.0 || customer.totalPaid > 0.0
-    val isPaid = hasActivity && com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customer.balanceDue) <= 0.0
+    val isPaid = hasActivity && com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(customer.balanceDue) <= 0.0
     val avatarColor = getCustomerAvatarColor(customer.name)
     val initials = getCustomerInitials(customer.name)
 
@@ -1473,7 +1473,7 @@ fun CustomerDetailSheet(
                             }
                         }
                     }
-                    val roundedCustomerDue = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customer.balanceDue)
+                    val roundedCustomerDue = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(customer.balanceDue)
                     val hasCustomerActivity = customer.totalBilled > 0.0 || customer.totalPaid > 0.0
                     StatusBadge(isPaid = roundedCustomerDue <= 0.0 && hasCustomerActivity, pendingAmount = roundedCustomerDue)
                 }
@@ -1481,7 +1481,7 @@ fun CustomerDetailSheet(
             // Quick Actions: Add Payment, Call, WhatsApp, Share PDF Statement
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val roundedCustomerDue = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customer.balanceDue)
+                    val roundedCustomerDue = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(customer.balanceDue)
                     if (roundedCustomerDue > 0.0) {
                         Button(
                             onClick = onAddPayment,
@@ -1961,14 +1961,14 @@ fun RecordCustomerPaymentDialog(
     val coroutineScope = rememberCoroutineScope()
     val dialogAmountRequester = remember { BringIntoViewRequester() }
     val dialogNotesRequester = remember { BringIntoViewRequester() }
-    val roundedCustomerBalance = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customer.balanceDue)
-    var amountInput by remember { mutableStateOf(if (roundedCustomerBalance > 0.0) String.format(Locale.US, "%.0f", roundedCustomerBalance) else "") }
+    val roundedCustomerBalance = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(customer.balanceDue)
+    var amountInput by remember { mutableStateOf(if (roundedCustomerBalance > 0.0) String.format(Locale.US, "%.2f", roundedCustomerBalance) else "") }
     var paymentDateMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var selectedPaymentMethod by remember { mutableStateOf("Cash") }
     var noteInput by remember { mutableStateOf("") }
     var hasAttemptedSubmit by remember { mutableStateOf(false) }
     val amountValue = amountInput.toDoubleOrNull() ?: 0.0
-    val roundedAmountValue = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(amountValue)
+    val roundedAmountValue = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(amountValue)
     val isAmountInvalid = amountValue <= 0.0 || roundedAmountValue > roundedCustomerBalance
     val paymentMethods = listOf("Cash", "UPI / GPay", "Bank Transfer", "Cheque")
 

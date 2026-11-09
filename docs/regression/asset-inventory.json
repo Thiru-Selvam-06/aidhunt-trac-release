@@ -104,6 +104,7 @@
     "app/src/test/java/com/example/OfflineSyncReliabilityTest.kt",
     "app/src/test/java/com/example/OperationDiagnosticTest.kt",
     "app/src/test/java/com/example/OperationRoleMatrixTest.kt",
+    "app/src/test/java/com/example/PaiseConsistencyTest.kt",
     "app/src/test/java/com/example/PartnerEarningsChartTest.kt",
     "app/src/test/java/com/example/PartnerLedgerFollowupTest.kt",
     "app/src/test/java/com/example/PartnerWithdrawalsProfitShareTest.kt",

@@ -55,8 +55,10 @@ object WorkBillingCalculator {
         if (durationMinutes <= 0L || hourlyRate <= 0.0 || hourlyRate.isNaN() || hourlyRate.isInfinite()) {
             return 0.0
         }
-        val amount = durationMinutes * (hourlyRate / 60.0)
-        return if (amount.isNaN() || amount.isInfinite() || amount < 0.0) 0.0 else Math.round(amount).toDouble()
+        val amount = java.math.BigDecimal.valueOf(hourlyRate)
+            .multiply(java.math.BigDecimal.valueOf(durationMinutes))
+            .divide(java.math.BigDecimal.valueOf(60), 2, java.math.RoundingMode.HALF_UP).toDouble()
+        return if (amount.isNaN() || amount.isInfinite() || amount < 0.0) 0.0 else amount
     }
 
     /**

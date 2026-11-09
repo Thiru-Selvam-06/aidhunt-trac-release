@@ -104,10 +104,17 @@ service cloud.firestore {
            'before': jobEditValues(before), 'after': jobEditValues(after)
          }])));
     }
+    // Keep exact historical equality; permit only binary noise around the same paisa.
+    // A mismatched paisa or a newly fabricated sub-paisa delta never satisfies this.
+    function sameMoney(actual, expected) {
+      return actual == expected || (math.abs(actual - expected) < 0.000000001 &&
+        math.abs(actual * 100 - math.round(actual * 100)) < 0.000001 &&
+        math.abs(expected * 100 - math.round(expected * 100)) < 0.000001);
+    }
     function validEntryAmounts(data) {
       return data.totalAmount is number && data.totalAmount >= 0 && data.amountReceived is number &&
         data.amountReceived >= 0 && data.pendingAmount is number && data.pendingAmount >= 0 &&
-        data.totalAmount == data.amountReceived + data.pendingAmount;
+        sameMoney(data.totalAmount, data.amountReceived + data.pendingAmount);
     }
     // Append-only evidence for future customer moves; pre-existing entries need no migration.
     function validCustomerReassignment(before, after) {
@@ -177,8 +184,8 @@ service cloud.firestore {
       return finance(ws) && cid != '' && (created || reversal) && next.jobEntryId == resource.data.id &&
         next.operationId == request.resource.data.operationId && next.actorUid == request.auth.uid &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['protocolVersion', 'operationType', 'dependencies', 'amountReceived', 'pendingAmount', 'collectionId', 'operationId', 'actorUid', 'actionTime', 'isDeleted', 'updatedAt']) &&
-        request.resource.data.amountReceived == resource.data.amountReceived + delta &&
-        request.resource.data.pendingAmount == resource.data.pendingAmount - delta && validEntryAmounts(request.resource.data);
+        sameMoney(request.resource.data.amountReceived, resource.data.amountReceived + delta) &&
+        sameMoney(request.resource.data.pendingAmount, resource.data.pendingAmount - delta) && validEntryAmounts(request.resource.data);
     }
     function collectionMatchesEntry(ws, id, reversal) {
       let jobId = request.resource.data.jobEntryId;
@@ -192,7 +199,8 @@ service cloud.firestore {
         (before.customerId == request.resource.data.customerId || (reversal && singleSourceCollectionData(request.resource.data))) &&
         before.get('isDeleted', false) == false && !memberPurging(ws, before.createdByUid) && !memberPurging(ws, before.entryForUid) &&
         after.collectionId == id && after.operationId == request.resource.data.operationId &&
-        after.amountReceived == before.amountReceived + delta && after.pendingAmount == before.pendingAmount - delta &&
+        after.amountReceived != before.amountReceived && after.pendingAmount != before.pendingAmount &&
+        sameMoney(after.amountReceived, before.amountReceived + delta) && sameMoney(after.pendingAmount, before.pendingAmount - delta) &&
         validEntryAmounts(after);
     }
     // Spark-compatible deletion: per-Entry/Customer guards stabilize dependency reads.

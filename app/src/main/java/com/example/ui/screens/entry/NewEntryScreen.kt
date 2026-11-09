@@ -313,14 +313,14 @@ fun NewEntryScreen(
     } else if (customWorkAmountInput.isNotBlank() && calculatedWorkAmount <= 0.0) {
         customWorkAmountInput
     } else {
-        if (calculatedWorkAmount > 0.0) String.format(Locale.US, "%.0f", calculatedWorkAmount) else ""
+        if (calculatedWorkAmount > 0.0) String.format(Locale.US, "%.2f", calculatedWorkAmount) else ""
     }
     val baseWorkAmount = if (isWorkAmountManuallyEdited && customWorkAmountInput.isNotBlank()) {
-        com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customWorkAmountInput.toDoubleOrNull() ?: 0.0)
+        com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(customWorkAmountInput.toDoubleOrNull() ?: 0.0)
     } else if (customWorkAmountInput.isNotBlank() && calculatedWorkAmount <= 0.0) {
-        com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(customWorkAmountInput.toDoubleOrNull() ?: 0.0)
+        com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(customWorkAmountInput.toDoubleOrNull() ?: 0.0)
     } else {
-        com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(calculatedWorkAmount)
+        com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(calculatedWorkAmount)
     }
 
     val extraChargesInput = draft.extraChargesInput
@@ -328,14 +328,14 @@ fun NewEntryScreen(
         mutableStateOf(draft.extraChargesInput.isNotBlank() && (draft.extraChargesInput.toDoubleOrNull() ?: 0.0) > 0.0)
     }
     val extraCharges = if (isExtraChargesEnabled || extraChargesInput.isNotBlank()) {
-        com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(extraChargesInput.toDoubleOrNull() ?: 0.0)
+        com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(extraChargesInput.toDoubleOrNull() ?: 0.0)
     } else 0.0
 
-    val finalTotalAmount = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(baseWorkAmount + extraCharges)
+    val finalTotalAmount = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(baseWorkAmount + extraCharges)
 
     val amountReceivedInput = draft.amountReceivedInput
-    val amountReceived = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(amountReceivedInput.toDoubleOrNull() ?: 0.0)
-    val pendingAmount = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(maxOf(0.0, finalTotalAmount - amountReceived))
+    val amountReceived = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(amountReceivedInput.toDoubleOrNull() ?: 0.0)
+    val pendingAmount = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(maxOf(0.0, finalTotalAmount - amountReceived))
 
     // 6. Optional Linked Expense
     val includeLinkedExpense = draft.includeLinkedExpense
@@ -406,10 +406,15 @@ fun NewEntryScreen(
     }
 
     // Scoped strictly to active canonical workspace
-    val activeWsCustomers = remember(customers, settings.workspaceId) {
+    val activeWsCustomers = remember(customers, jobs, settings.workspaceId, canReceivePayment) {
         val currentWs = settings.workspaceId.trim()
         if (currentWs.isNotBlank()) {
-            customers.filter { it.workspaceId == currentWs }
+            val scoped = customers.filter { it.workspaceId == currentWs }
+            if (canReceivePayment) {
+                val byCustomer = jobs.filter { it.workspaceId == currentWs }.groupBy { it.customerId }
+                scoped.map { com.example.ui.util.FinancialCalculationEngine.synchronizeCustomerWithJobs(
+                    it, byCustomer[it.id].orEmpty()) }
+            } else scoped
         } else {
             emptyList()
         }
@@ -469,7 +474,7 @@ fun NewEntryScreen(
     val onSelectCustomer: (CustomerEntity) -> Unit = { c ->
         val resolvedRate = resolveRateForCustomer(c)
         val rateStr = if (resolvedRate > 0.0) {
-            if (resolvedRate % 1.0 == 0.0) resolvedRate.toInt().toString() else resolvedRate.toString()
+            com.example.ui.util.storedMoneyInput(resolvedRate)
         } else {
             draft.hourlyRateInput
         }
@@ -1056,7 +1061,7 @@ fun NewEntryScreen(
                                         val newDraft = draft.copy(
                                             selectedPersonUid = ownerUid,
                                             selectedPersonName = ownerDisplayName,
-                                            hourlyRateInput = if (personalRate > 0.0) personalRate.toInt().toString() else draft.hourlyRateInput
+                                            hourlyRateInput = if (personalRate > 0.0) com.example.ui.util.storedMoneyInput(personalRate) else draft.hourlyRateInput
                                         )
                                         onUpdateDraft(newDraft)
                                         if (draft.isPersonLocked) {
@@ -1104,7 +1109,7 @@ fun NewEntryScreen(
                                             val newDraft = draft.copy(
                                                 selectedPersonUid = partner.uid,
                                                 selectedPersonName = pName,
-                                                hourlyRateInput = if (personalRate > 0.0) personalRate.toInt().toString() else draft.hourlyRateInput
+                                                hourlyRateInput = if (personalRate > 0.0) com.example.ui.util.storedMoneyInput(personalRate) else draft.hourlyRateInput
                                             )
                                             onUpdateDraft(newDraft)
                                             if (draft.isPersonLocked) {
@@ -2652,7 +2657,7 @@ fun AddExpenseModal(
     var amountInput by remember(initialExpense) {
         mutableStateOf(
             if (initialExpense != null && initialExpense.amount > 0) {
-                if (initialExpense.amount % 1.0 == 0.0) initialExpense.amount.toLong().toString() else initialExpense.amount.toString()
+                com.example.ui.util.storedMoneyInput(initialExpense.amount)
             } else ""
         )
     }

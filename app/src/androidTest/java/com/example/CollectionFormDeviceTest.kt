@@ -55,4 +55,21 @@ class CollectionFormDeviceTest {
         compose.onNodeWithTag("btn_confirm_record_payment").assertIsNotEnabled().performClick()
         assertFalse(submitted)
     }
+
+    @Test fun quarterRupeeDueStaysVisibleAndPrefillsTheExactPaymentInTamil() {
+        var result: Pair<String, Double>? = null
+        val customer = CustomerEntity(id=2,workspaceId="a",name="Raw தமிழ் ? customer",phone="")
+        val sources = listOf(job(System.currentTimeMillis()-86400000).copy(
+            customerName=customer.name,totalAmount=0.25,pendingAmount=0.25))
+        compose.setContent { MyApplicationTheme { com.example.ui.screens.report.CustomerCreditDueTab(
+            settings=AppSettingsEntity(workspaceId="a",language="TA"),customers=listOf(customer),jobs=sources,
+            actorUid="owner",actorName="Owner",isOwner=true,workspaceMembers=members,
+            onRecordPaymentWithCollector={ row,amount,_,_,_,_,_,_ -> result=row.name to amount }) } }
+        compose.onNodeWithText(customer.name).assertExists()
+        compose.onAllNodesWithText("₹0.25").onFirst().assertExists()
+        compose.onNodeWithTag("btn_add_payment_card_2").performScrollTo().performClick()
+        compose.onNodeWithTag("input_payment_amount").assertTextContains("0.25")
+        compose.onNodeWithTag("btn_confirm_record_payment").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(customer.name to 0.25,result) }
+    }
 }

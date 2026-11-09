@@ -19,6 +19,21 @@ fun equalMoneyShares(amount: Double, memberUids: Collection<String>): Map<String
     }.toMap()
 }
 
+/** Allocate the actual paisa once; independently rounding many percentage shares can overspend it. */
+fun percentageMoneyShares(amount: Double, percentages: Map<String, Int>): Map<String, Double> {
+    require(percentages.isNotEmpty() && percentages.keys.all { it.isNotBlank() } &&
+        percentages.values.all { it in 0..100 } && percentages.values.sum() == 100) { "A complete percentage allocation is required" }
+    val paisa = BigDecimal.valueOf(amount.takeIf { it.isFinite() && it > 0 } ?: 0.0)
+        .setScale(2, RoundingMode.HALF_UP).movePointRight(2).toBigIntegerExact()
+    val divisor = BigInteger.valueOf(100)
+    val portions = percentages.mapValues { (_, weight) -> paisa.multiply(BigInteger.valueOf(weight.toLong())).divideAndRemainder(divisor) }
+    val remaining = (paisa - portions.values.fold(BigInteger.ZERO) { sum, part -> sum + part[0] }).intValueExact()
+    val extra = portions.entries.sortedWith(compareByDescending<Map.Entry<String, Array<BigInteger>>> { it.value[1] }
+        .thenBy { it.key }).take(remaining).map { it.key }.toSet()
+    return portions.mapValues { (uid, part) -> BigDecimal(part[0] + if (uid in extra) BigInteger.ONE else BigInteger.ZERO)
+        .movePointLeft(2).toDouble() }
+}
+
 /** Older equal-share presets used integer 34/33/33 solely to make percentages add to 100. */
 fun isEqualShareAllocation(memberUids: Set<String>, allocation: Map<String, Int>): Boolean {
     if (memberUids.isEmpty()) return false

@@ -2719,25 +2719,23 @@ class WorkspaceRepository(
         if (!com.example.data.auth.AuthorizationManager.canCollectPayment(isOwnerOfWorkspace(wsId), role)) throw SecurityException("Collections are forbidden for this role")
         val storedCustomer = customerDao.getCustomerById(_activeWorkspaceId.value.orEmpty(), customer.id) ?: throw SecurityException("Customer not found")
         if (storedCustomer.workspaceId != wsId) throw SecurityException("Customer workspace mismatch")
-        val value = com.example.ui.util.FinancialCalculationEngine.roundToPositiveWholeRupee(amount)
+        val value = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(amount)
         require(value > 0 && amount.isFinite()) { "Collection amount must be positive" }
         val actorName = _activeWorkspaceMembers.value.first { it.uid == actorUid && it.workspaceId == wsId }.displayName.orEmpty()
         val collector = com.example.data.auth.CollectionPolicy.requireCollector(wsId, actorUid,
             isOwnerOfWorkspace(wsId), collectedByUid, _activeWorkspaceMembers.value)
         val collections = mutableListOf<PaymentEntity>()
-        val updates = mutableListOf<JobEntryEntity>()
         database.withTransaction {
             val jobs = jobEntryDao.getJobsForWorkspaceOnce(wsId).filter { it.customerId == customer.id && it.pendingAmount > 0 }
                 .sortedWith(compareBy<JobEntryEntity> { it.startTimeMillis }.thenBy { it.id })
-            require(value <= jobs.sumOf { it.pendingAmount }) { "Collection exceeds the outstanding job dues" }
+            val plan = com.example.data.sync.planCollectionAmounts(jobs, wsId, customer.id, value)
             // Validate the complete split before changing Room or writing any outbox command.
-            com.example.data.auth.CollectionPolicy.allocatedJobs(jobs, wsId, customer.id, value).forEach {
-                com.example.data.auth.CollectionPolicy.requireDate(dateTimestamp, it.createdAt)
+            plan.forEach {
+                com.example.data.auth.CollectionPolicy.requireDate(dateTimestamp, it.job.createdAt)
             }
-            var remaining = value
-            for (job in jobs) {
-                if (remaining <= 0) break
-                val allocated = minOf(remaining, job.pendingAmount)
+            for (allocation in plan) {
+                val job = allocation.job
+                val allocated = allocation.amount
                 val collection = PaymentEntity(id = IdGenerator.generateId(), workspaceId = wsId,
                     jobEntryId = job.id, customerId = customer.id, customerName = storedCustomer.name,
                     tractorId = job.tractorId, tractorLabel = job.tractorLabel, amount = allocated,
@@ -2746,15 +2744,14 @@ class WorkspaceRepository(
                     collectorUid = collector.uid, collectorName = collector.displayName.orEmpty(), collectorRole = collector.role,
                     isSynced = false, status = "ACTIVE",
                     allocationsJson = org.json.JSONArray().put(org.json.JSONObject().put("jobId", job.id).put("amount", allocated)).toString())
-                val updated = job.copy(amountReceived = job.amountReceived + allocated,
-                    pendingAmount = maxOf(0.0, job.pendingAmount - allocated), isSynced = false)
+                val updated = job.copy(amountReceived = allocation.amountReceived,
+                    pendingAmount = allocation.pendingAmount, isSynced = false)
                 jobEntryDao.insertJob(updated)
                 paymentDao.insertPayment(collection)
                 enqueue("PAYMENT", collection.id, collection.toFirestoreMap() + mapOf(
                     "entrySnapshotJson" to org.json.JSONObject(updated.toFirestoreMap()).toString(),
                     "baseAmountReceived" to job.amountReceived, "basePendingAmount" to job.pendingAmount), expectedActorUid = operationActorUid, actionTime = operationTime)
-                collections.add(collection); updates.add(updated)
-                remaining -= allocated
+                collections.add(collection)
             }
             recalculateCustomerStats(customer.id)
         }
@@ -2786,32 +2783,27 @@ class WorkspaceRepository(
         val wsId = getOrResolveWorkspaceId().orEmpty()
         val role = requireWorkspaceActor(wsId)
         val actorUid = getEffectiveActorUid().orEmpty()
-        var reversed: PaymentEntity? = null
-        val updates = mutableListOf<JobEntryEntity>()
         database.withTransaction {
             val original = paymentDao.getPaymentById(_activeWorkspaceId.value.orEmpty(), paymentId) ?: throw SecurityException("Collection requires verified migration before reversal")
             if (original.workspaceId != wsId) throw SecurityException("Collection workspace mismatch")
             if (!com.example.data.auth.AuthorizationManager.canReverseCollection(original, isOwnerOfWorkspace(wsId), actorUid, role, actionTime = operationTime)) throw SecurityException("Collection reversal is not permitted")
             val allocations = org.json.JSONArray(original.allocationsJson)
             if (allocations.length() == 0) throw IllegalStateException("Collection allocation must be migrated before reversal")
-            var total = 0.0
-            for (i in 0 until allocations.length()) {
-                val allocation = allocations.getJSONObject(i)
-                val job = jobEntryDao.getJobById(_activeWorkspaceId.value.orEmpty(), allocation.getLong("jobId")) ?: throw IllegalStateException("Collection source job is missing")
-                val amount = allocation.getDouble("amount")
-                require(com.example.data.sync.JobCustomerReassignment.singleSource(original, job) && amount > 0 && job.amountReceived >= amount) { "Invalid or shared collection allocation; separate review required" }
-                val updated = job.copy(amountReceived = job.amountReceived - amount, pendingAmount = job.pendingAmount + amount, isSynced = false)
-                jobEntryDao.insertJob(updated); updates.add(updated); total += amount
-            }
-            require(kotlin.math.abs(total - original.amount) < 0.001) { "Collection allocation does not match the collection amount" }
-            reversed = original.copy(status = "REVERSED", reversedByUid = actorUid, reversedAt = operationTime, isSynced = false)
-            paymentDao.insertPayment(reversed!!)
-            require(updates.size == 1) { "Legacy aggregate allocation requires reviewed migration" }
-            val updated = updates.single()
-            enqueue("PAYMENT", reversed!!.id, reversed!!.toFirestoreMap() + mapOf(
+            require(allocations.length() == 1) { "Legacy aggregate allocation requires reviewed migration" }
+            val allocation = allocations.getJSONObject(0)
+            val job = jobEntryDao.getJobById(wsId, allocation.getLong("jobId")) ?: throw IllegalStateException("Collection source job is missing")
+            require(com.example.data.sync.JobCustomerReassignment.singleSource(original, job)) { "Invalid or shared collection allocation; separate review required" }
+            val amount = allocation.getDouble("amount")
+            require(kotlin.math.abs(amount - original.amount) < 0.000001) { "Collection allocation does not match the collection amount" }
+            val reversal = com.example.data.sync.planCollectionReversal(job, original.amount)
+            val updated = job.copy(amountReceived = reversal.amountReceived, pendingAmount = reversal.pendingAmount, isSynced = false)
+            jobEntryDao.insertJob(updated)
+            val reversed = original.copy(status = "REVERSED", reversedByUid = actorUid, reversedAt = operationTime, isSynced = false)
+            paymentDao.insertPayment(reversed)
+            enqueue("PAYMENT", reversed.id, reversed.toFirestoreMap() + mapOf(
                 "entrySnapshotJson" to org.json.JSONObject(updated.toFirestoreMap()).toString(),
-                "baseAmountReceived" to (updated.amountReceived + original.amount),
-                "basePendingAmount" to (updated.pendingAmount - original.amount)), actionTime = operationTime, expectedActorUid = operationActorUid)
+                "baseAmountReceived" to job.amountReceived,
+                "basePendingAmount" to job.pendingAmount), actionTime = operationTime, expectedActorUid = operationActorUid)
             recalculateCustomerStats(original.customerId)
             if (updated.customerId != original.customerId) recalculateCustomerStats(updated.customerId, wsId)
         }

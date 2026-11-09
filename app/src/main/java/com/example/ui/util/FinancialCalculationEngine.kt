@@ -162,10 +162,13 @@ object FinancialCalculationEngine {
 
         val equalAllocation = isEqualShareAllocation(eligibleParticipants.map { it.uid }.toSet(), profitShareAllocations)
         if (hasCustomAllocation && !equalAllocation) {
+            val weights = eligibleParticipants.associate { it.uid to maxOf(0, it.percentage) }
+            val preciseShares = if (weights.isNotEmpty() && weights.values.all { it in 0..100 } && weights.values.sum() == 100)
+                percentageMoneyShares(distributableAmount, weights) else null
             eligibleParticipants.forEach { info ->
                 val pct = maxOf(0, info.percentage)
-                val shareAmount = if (distributableAmount > 0 && pct > 0) {
-                    roundToWholeRupee(distributableAmount * pct / 100.0)
+                val shareAmount = preciseShares?.get(info.uid) ?: if (distributableAmount > 0 && pct > 0) {
+                    roundMoney(distributableAmount * pct / 100.0)
                 } else {
                     0.0
                 }
@@ -174,15 +177,15 @@ object FinancialCalculationEngine {
 
             // Monetary reconciliation for rounding differences
             val distributedSum = participantsWithShares.filter { it.effectivePercentage > 0 }.sumOf { it.calculatedShare }
-            val diff = if (distributableAmount > 0) distributableAmount - distributedSum else 0.0
-            if (diff != 0.0) {
+            val diff = if (distributableAmount > 0) roundMoney(distributableAmount - distributedSum) else 0.0
+            if (preciseShares == null && diff != 0.0) {
                 val targetIndex = participantsWithShares.indices
                     .filter { participantsWithShares[it].effectivePercentage > 0 }
                     .maxByOrNull { participantsWithShares[it].effectivePercentage }
                 if (targetIndex != null) {
                     val target = participantsWithShares[targetIndex]
                     participantsWithShares[targetIndex] = target.copy(
-                        calculatedShare = maxOf(0.0, target.calculatedShare + diff)
+                        calculatedShare = roundMoney(maxOf(0.0, target.calculatedShare + diff))
                     )
                 }
             }
@@ -338,9 +341,11 @@ object FinancialCalculationEngine {
         return if (rounded <= 0.0) 0.0 else rounded
     }
 
-    /** Partner shares and payouts retain paisa; invoice rounding remains its existing policy. */
+    /** Monetary projections retain paisa; raw historical records are never rewritten here. */
     fun roundMoney(value: Double): Double = if (!value.isFinite()) 0.0 else
         java.math.BigDecimal.valueOf(value).setScale(2, java.math.RoundingMode.HALF_UP).toDouble()
+
+    fun roundNonNegativeMoney(value: Double): Double = roundMoney(value).coerceAtLeast(0.0)
 
     fun isSyntheticPayment(job: JobEntryEntity): Boolean {
         return job.tractorLabel.equals("Payment", ignoreCase = true) ||
@@ -403,9 +408,9 @@ object FinancialCalculationEngine {
         // Legacy payment-only entries settle an obligation, never add sales.
         val ledgers = scopedJobs.groupBy { Triple(it.workspaceId, it.customerId, if (it.customerId > 0) 0L else it.id) }
             .values.map(::customerLedger)
-        val totalRecorded = ledgers.sumOf { it.totalBilled }
-        val totalReceived = ledgers.sumOf { it.totalPaid }
-        val totalDue = ledgers.sumOf { it.balanceDue }
+        val totalRecorded = roundMoney(ledgers.sumOf { it.totalBilled })
+        val totalReceived = roundMoney(ledgers.sumOf { it.totalPaid })
+        val totalDue = roundMoney(ledgers.sumOf { it.balanceDue })
 
         val totalExpenses = roundMoney(scopedExpenses.sumOf { it.amount }).coerceAtLeast(0.0)
 
@@ -545,13 +550,13 @@ object FinancialCalculationEngine {
         val paid = customerJobs.sumOf { it.amountReceived }
         // pendingAmount is a denormalized cache. Derive the current obligation
         // from billed minus received so a stale cache cannot understate dues.
-        val displayedBilled = roundToPositiveWholeRupee(billed)
-        val displayedPaid = roundToPositiveWholeRupee(paid)
+        val displayedBilled = roundNonNegativeMoney(billed)
+        val displayedPaid = roundNonNegativeMoney(paid)
 
         return CustomerFinancialBreakdown(
             totalBilled = displayedBilled,
             totalPaid = displayedPaid,
-            balanceDue = maxOf(0.0, displayedBilled - displayedPaid)
+            balanceDue = roundNonNegativeMoney(displayedBilled - displayedPaid)
         )
     }
 

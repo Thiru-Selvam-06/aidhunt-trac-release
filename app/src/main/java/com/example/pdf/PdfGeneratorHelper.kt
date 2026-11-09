@@ -42,7 +42,7 @@ object PdfGeneratorHelper {
     private val currencyFormat = NumberFormat.getCurrencyInstance(Locale("en", "IN"))
 
     fun formatInr(amount: Double, currency: String = "₹"): String {
-        return currency + String.format(Locale.US, "%,.2f", amount)
+        return com.example.ui.components.formatInrWithDecimals(amount, currency)
     }
 
     private fun checkPdfExportAllowed(context: Context, settings: AppSettingsEntity): Boolean {
@@ -383,7 +383,7 @@ object PdfGeneratorHelper {
             paint.textSize = 8.5f
             paint.color = Color.rgb(40, 40, 40)
             canvas.drawText(hoursStr, 290f, yPos + 16f, paint)
-            canvas.drawText("₹${job.hourlyRate.toInt()}", 340f, yPos + 16f, paint)
+            canvas.drawText(formatInr(job.hourlyRate), 340f, yPos + 16f, paint)
             canvas.drawText(formatInr(job.totalAmount), 400f, yPos + 16f, paint)
 
             paint.color = Color.rgb(46, 125, 50)

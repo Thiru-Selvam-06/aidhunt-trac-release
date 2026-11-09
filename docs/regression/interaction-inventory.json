@@ -2954,7 +2954,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::AppTopHeader::onClick::1",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 881,
+    "line": 884,
     "component": "AppTopHeader",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -2972,7 +2972,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::AppTopHeader::clickable::1",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 921,
+    "line": 924,
     "component": "AppTopHeader",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -2990,7 +2990,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::AppTopHeader::onClick::2",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1013,
+    "line": 1016,
     "component": "AppTopHeader",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3008,7 +3008,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::CollapsibleFilterCard::clickable::1",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1356,
+    "line": 1359,
     "component": "CollapsibleFilterCard",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3026,7 +3026,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::CollapsibleFilterCard::onClick::1",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1356,
+    "line": 1359,
     "component": "CollapsibleFilterCard",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3044,7 +3044,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::CollapsibleFilterCard::onClick::2",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1395,
+    "line": 1398,
     "component": "CollapsibleFilterCard",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3062,7 +3062,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::CollapsibleFilterCard::onClick::3",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1402,
+    "line": 1405,
     "component": "CollapsibleFilterCard",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3080,7 +3080,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::CollapsibleFilterCard::onClick::4",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1441,
+    "line": 1444,
     "component": "CollapsibleFilterCard",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3098,7 +3098,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::CollapsibleFilterCard::onClick::5",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1453,
+    "line": 1456,
     "component": "CollapsibleFilterCard",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3116,7 +3116,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::AppBottomNav::onClick::1",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1731,
+    "line": 1734,
     "component": "AppBottomNav",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3134,7 +3134,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::AppBottomNav::onClick::2",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1741,
+    "line": 1744,
     "component": "AppBottomNav",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3152,7 +3152,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::AppBottomNav::clickable::1",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1749,
+    "line": 1752,
     "component": "AppBottomNav",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3170,7 +3170,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::AppBottomNav::onClick::3",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1804,
+    "line": 1807,
     "component": "AppBottomNav",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3188,7 +3188,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::BottomNavItem::clickable::1",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1826,
+    "line": 1829,
     "component": "BottomNavItem",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3206,7 +3206,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::BottomNavItem::onClick::1",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1826,
+    "line": 1829,
     "component": "BottomNavItem",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3224,7 +3224,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::PdfOptionsDialog::onDismissRequest::1",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1923,
+    "line": 1926,
     "component": "PdfOptionsDialog",
     "callback": "onDismissRequest",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3242,7 +3242,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::PdfOptionsDialog::onClick::1",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 1958,
+    "line": 1961,
     "component": "PdfOptionsDialog",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3260,7 +3260,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::PdfOptionsDialog::onClick::2",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 2007,
+    "line": 2010,
     "component": "PdfOptionsDialog",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -3278,7 +3278,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/components/CommonComponents.kt::PdfOptionsDialog::onClick::3",
     "source": "app/src/main/java/com/example/ui/components/CommonComponents.kt",
-    "line": 2055,
+    "line": 2058,
     "component": "PdfOptionsDialog",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8318,7 +8318,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onBackToEdit::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 585,
+    "line": 590,
     "component": "formatTimeDisplay",
     "callback": "onBackToEdit",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8336,7 +8336,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onConfirmSave::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 590,
+    "line": 595,
     "component": "formatTimeDisplay",
     "callback": "onConfirmSave",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8354,7 +8354,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 802,
+    "line": 807,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8372,7 +8372,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::2",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 902,
+    "line": 907,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8390,7 +8390,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::clickable::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 954,
+    "line": 959,
     "component": "formatTimeDisplay",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8408,7 +8408,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onExpandedChange::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 990,
+    "line": 995,
     "component": "formatTimeDisplay",
     "callback": "onExpandedChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8426,7 +8426,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 995,
+    "line": 1000,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8444,7 +8444,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onDismissRequest::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1021,
+    "line": 1026,
     "component": "formatTimeDisplay",
     "callback": "onDismissRequest",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8462,7 +8462,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::3",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1053,
+    "line": 1058,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8480,7 +8480,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::4",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1101,
+    "line": 1106,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8498,7 +8498,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::clickable::2",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1193,
+    "line": 1198,
     "component": "formatTimeDisplay",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8516,7 +8516,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onExpandedChange::2",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1237,
+    "line": 1242,
     "component": "formatTimeDisplay",
     "callback": "onExpandedChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8534,7 +8534,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::2",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1246,
+    "line": 1251,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8552,7 +8552,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onDismissRequest::2",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1274,
+    "line": 1279,
     "component": "formatTimeDisplay",
     "callback": "onDismissRequest",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8570,7 +8570,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::5",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1279,
+    "line": 1284,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8588,7 +8588,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onExpandedChange::3",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1295,
+    "line": 1300,
     "component": "formatTimeDisplay",
     "callback": "onExpandedChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8606,7 +8606,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::3",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1306,
+    "line": 1311,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8624,7 +8624,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onDismissRequest::3",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1320,
+    "line": 1325,
     "component": "formatTimeDisplay",
     "callback": "onDismissRequest",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8642,7 +8642,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::6",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1328,
+    "line": 1333,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8660,7 +8660,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::7",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1361,
+    "line": 1366,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8678,7 +8678,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::4",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1390,
+    "line": 1395,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8696,7 +8696,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onSelect::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1428,
+    "line": 1433,
     "component": "formatTimeDisplay",
     "callback": "onSelect",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8714,7 +8714,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::8",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1437,
+    "line": 1442,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8732,7 +8732,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::5",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1457,
+    "line": 1462,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8750,7 +8750,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::6",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1493,
+    "line": 1498,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8768,7 +8768,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onSelect::2",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1515,
+    "line": 1520,
     "component": "formatTimeDisplay",
     "callback": "onSelect",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8786,7 +8786,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::clickable::3",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1551,
+    "line": 1556,
     "component": "formatTimeDisplay",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8804,7 +8804,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::clickable::4",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1571,
+    "line": 1576,
     "component": "formatTimeDisplay",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8822,7 +8822,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::9",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1600,
+    "line": 1605,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8840,7 +8840,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::10",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1636,
+    "line": 1641,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8858,7 +8858,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::7",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1679,
+    "line": 1684,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8876,7 +8876,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::8",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1694,
+    "line": 1699,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8894,7 +8894,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::9",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1752,
+    "line": 1757,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8912,7 +8912,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::10",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1766,
+    "line": 1771,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8930,7 +8930,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::11",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1781,
+    "line": 1786,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8948,7 +8948,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::clickable::5",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1815,
+    "line": 1820,
     "component": "formatTimeDisplay",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8966,7 +8966,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::11",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1862,
+    "line": 1867,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -8984,7 +8984,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::12",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 1884,
+    "line": 1889,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9002,7 +9002,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::clickable::6",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2000,
+    "line": 2005,
     "component": "formatTimeDisplay",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9020,7 +9020,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::clickable::7",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2034,
+    "line": 2039,
     "component": "formatTimeDisplay",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9038,7 +9038,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::12",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2112,
+    "line": 2117,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9056,7 +9056,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::13",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2126,
+    "line": 2131,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9074,7 +9074,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onValueChange::13",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2162,
+    "line": 2167,
     "component": "formatTimeDisplay",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9092,7 +9092,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::14",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2193,
+    "line": 2198,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9110,7 +9110,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onDismissRequest::4",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2251,
+    "line": 2256,
     "component": "formatTimeDisplay",
     "callback": "onDismissRequest",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9128,7 +9128,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::15",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2268,
+    "line": 2273,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9146,7 +9146,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onClick::16",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2288,
+    "line": 2293,
     "component": "formatTimeDisplay",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9164,7 +9164,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onAddExpenseCategory::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2301,
+    "line": 2306,
     "component": "formatTimeDisplay",
     "callback": "onAddExpenseCategory",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9182,7 +9182,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onDismiss::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2305,
+    "line": 2310,
     "component": "formatTimeDisplay",
     "callback": "onDismiss",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9200,7 +9200,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::formatTimeDisplay::onAddExpense::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2309,
+    "line": 2314,
     "component": "formatTimeDisplay",
     "callback": "onAddExpense",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9218,7 +9218,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::FullReviewAndSaveScreen::onClick::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2366,
+    "line": 2371,
     "component": "FullReviewAndSaveScreen",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9236,7 +9236,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::FullReviewAndSaveScreen::onClick::2",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2521,
+    "line": 2526,
     "component": "FullReviewAndSaveScreen",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9254,7 +9254,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::FullReviewAndSaveScreen::onClick::3",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2533,
+    "line": 2538,
     "component": "FullReviewAndSaveScreen",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9272,7 +9272,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::CustomerSuggestionsCard::clickable::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2607,
+    "line": 2612,
     "component": "CustomerSuggestionsCard",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9290,7 +9290,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::onAddExpenseCategory::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2665,
+    "line": 2670,
     "component": "AddExpenseModal",
     "callback": "onAddExpenseCategory",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9308,7 +9308,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::onDismiss::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2668,
+    "line": 2673,
     "component": "AddExpenseModal",
     "callback": "onDismiss",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9326,7 +9326,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::onSave::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2668,
+    "line": 2673,
     "component": "AddExpenseModal",
     "callback": "onSave",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9344,7 +9344,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::onSelected::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2669,
+    "line": 2674,
     "component": "AddExpenseModal",
     "callback": "onSelected",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9362,7 +9362,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::onDismissRequest::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2675,
+    "line": 2680,
     "component": "AddExpenseModal",
     "callback": "onDismissRequest",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9380,7 +9380,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::clickable::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2715,
+    "line": 2720,
     "component": "AddExpenseModal",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9398,7 +9398,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::onExpandedChange::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2745,
+    "line": 2750,
     "component": "AddExpenseModal",
     "callback": "onExpandedChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9416,7 +9416,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::onDismissRequest::2",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2798,
+    "line": 2803,
     "component": "AddExpenseModal",
     "callback": "onDismissRequest",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9434,7 +9434,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::onClick::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2803,
+    "line": 2808,
     "component": "AddExpenseModal",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9452,7 +9452,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::onClick::2",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2812,
+    "line": 2817,
     "component": "AddExpenseModal",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9470,7 +9470,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::onValueChange::1",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2831,
+    "line": 2836,
     "component": "AddExpenseModal",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9488,7 +9488,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::clickable::2",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2889,
+    "line": 2894,
     "component": "AddExpenseModal",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9506,7 +9506,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::clickable::3",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2923,
+    "line": 2928,
     "component": "AddExpenseModal",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -9524,7 +9524,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt::AddExpenseModal::onClick::3",
     "source": "app/src/main/java/com/example/ui/screens/entry/NewEntryScreen.kt",
-    "line": 2949,
+    "line": 2954,
     "component": "AddExpenseModal",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15788,7 +15788,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::onDismissRequest::1",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1227,
+    "line": 1226,
     "component": "TakeAmountDialog",
     "callback": "onDismissRequest",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15806,7 +15806,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::clickable::1",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1273,
+    "line": 1272,
     "component": "TakeAmountDialog",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15824,7 +15824,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::onClick::1",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1310,
+    "line": 1309,
     "component": "TakeAmountDialog",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15842,7 +15842,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::onExpandedChange::1",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1340,
+    "line": 1339,
     "component": "TakeAmountDialog",
     "callback": "onExpandedChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15860,7 +15860,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::onDismissRequest::2",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1390,
+    "line": 1389,
     "component": "TakeAmountDialog",
     "callback": "onDismissRequest",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15878,7 +15878,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::onClick::2",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1397,
+    "line": 1396,
     "component": "TakeAmountDialog",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15896,7 +15896,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::onExpandedChange::2",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1420,
+    "line": 1419,
     "component": "TakeAmountDialog",
     "callback": "onExpandedChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15914,7 +15914,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::onDismissRequest::3",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1468,
+    "line": 1467,
     "component": "TakeAmountDialog",
     "callback": "onDismissRequest",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15932,7 +15932,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::onClick::3",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1473,
+    "line": 1472,
     "component": "TakeAmountDialog",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15950,7 +15950,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::onValueChange::1",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1527,
+    "line": 1526,
     "component": "TakeAmountDialog",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15968,7 +15968,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::onValueChange::2",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1622,
+    "line": 1621,
     "component": "TakeAmountDialog",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -15986,7 +15986,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::TakeAmountDialog::onClick::4",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1699,
+    "line": 1698,
     "component": "TakeAmountDialog",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16004,7 +16004,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::WithdrawalItemCard::onClick::1",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1838,
+    "line": 1837,
     "component": "WithdrawalItemCard",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16022,7 +16022,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::WithdrawalItemCard::onClick::2",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1846,
+    "line": 1845,
     "component": "WithdrawalItemCard",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16040,7 +16040,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::ConfigurePercentagesDialog::onDismissRequest::1",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1921,
+    "line": 1920,
     "component": "ConfigurePercentagesDialog",
     "callback": "onDismissRequest",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16058,7 +16058,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::ConfigurePercentagesDialog::onClick::1",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1957,
+    "line": 1956,
     "component": "ConfigurePercentagesDialog",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16076,7 +16076,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::ConfigurePercentagesDialog::onClick::2",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 1972,
+    "line": 1971,
     "component": "ConfigurePercentagesDialog",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16094,7 +16094,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::ConfigurePercentagesDialog::clickable::1",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 2022,
+    "line": 2021,
     "component": "ConfigurePercentagesDialog",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16112,7 +16112,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::ConfigurePercentagesDialog::onCheckedChange::1",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 2043,
+    "line": 2042,
     "component": "ConfigurePercentagesDialog",
     "callback": "onCheckedChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16130,7 +16130,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::ConfigurePercentagesDialog::clickable::2",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 2093,
+    "line": 2092,
     "component": "ConfigurePercentagesDialog",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16148,7 +16148,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::ConfigurePercentagesDialog::onValueChange::1",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 2105,
+    "line": 2104,
     "component": "ConfigurePercentagesDialog",
     "callback": "onValueChange",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16166,7 +16166,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::ConfigurePercentagesDialog::clickable::3",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 2134,
+    "line": 2133,
     "component": "ConfigurePercentagesDialog",
     "callback": "clickable",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16184,7 +16184,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::ConfigurePercentagesDialog::onClick::3",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 2192,
+    "line": 2191,
     "component": "ConfigurePercentagesDialog",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16202,7 +16202,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt::ConfigurePercentagesDialog::onClick::4",
     "source": "app/src/main/java/com/example/ui/screens/report/WithdrawalTab.kt",
-    "line": 2221,
+    "line": 2220,
     "component": "ConfigurePercentagesDialog",
     "callback": "onClick",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16634,7 +16634,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt::sendPhoneOtp::onCodeSent::1",
     "source": "app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt",
-    "line": 1961,
+    "line": 1963,
     "component": "sendPhoneOtp",
     "callback": "onCodeSent",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16652,7 +16652,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt::sendPhoneOtp::onError::1",
     "source": "app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt",
-    "line": 1970,
+    "line": 1972,
     "component": "sendPhoneOtp",
     "callback": "onError",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
@@ -16670,7 +16670,7 @@
   {
     "control_id": "app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt::sendPhoneOtp::onAutoVerified::1",
     "source": "app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt",
-    "line": 1983,
+    "line": 1985,
     "component": "sendPhoneOtp",
     "callback": "onAutoVerified",
     "expected_result": "Follow callback and verify validation, persistence, acknowledgement and reopened UI",
