@@ -45,6 +45,22 @@ class BusinessMaintenancePolicyTest {
         assertEquals("OWNER", owner.role)
     }
 
+    @Test fun removedCanonicalPartnerKeepsTheFreshDeviceLabelWithoutGrantingAnyRole() {
+        val owner = members.first()
+        val removed = members[1].copy(status = "REMOVED")
+        val roster = listOf(owner, removed)
+        assertFalse(hasActiveBusinessPartner(ws, roster))
+        assertTrue(hasBusinessPartnershipHistory(ws, roster))
+        assertEquals("Partner", businessDisplayRole(owner.role, hasBusinessPartnershipHistory(ws, roster)))
+        assertTrue(RoleUtils.isOwner(owner.role))
+        assertFalse(hasBusinessPartnershipHistory("foreign", roster))
+        assertFalse(hasBusinessPartnershipHistory(ws, listOf(owner)))
+        assertFalse(hasBusinessPartnershipHistory(ws, listOf(removed.copy(uid = ""))))
+        assertFalse(hasBusinessPartnershipHistory(ws, listOf(removed.copy(role = "OPERATOR"))))
+        for (unknown in listOf("INVITED", "INACTIVE", "SUSPENDED", ""))
+            assertFalse(hasBusinessPartnershipHistory(ws, listOf(removed.copy(status = unknown))))
+    }
+
     @Test fun partnerDuesFilterScopesJobsBeforeGroupingAndNeverUsesCreatorOrNames() {
         val customers = listOf(CustomerEntity(id = 10, workspaceId = ws, name = "Raman", phone = ""))
         val jobs = listOf(job(1, "partner-a", 500.0, 200.0), job(2, "partner-b", 800.0, 100.0))

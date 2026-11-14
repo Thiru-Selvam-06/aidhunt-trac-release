@@ -14,17 +14,23 @@ fun businessDisplayRole(role: String?, hasHadActivePartner: Boolean): String =
         if (it == RoleUtils.ROLE_OWNER && hasHadActivePartner) RoleUtils.ROLE_PARTNER else it
     }
 
-fun hasActiveBusinessPartner(workspaceId: String, members: List<WorkspaceMember>): Boolean =
-    workspaceId.isNotBlank() && members.any { it.workspaceId == workspaceId && it.uid.isNotBlank() &&
-        it.status.equals("ACTIVE", true) && RoleUtils.normalizeRole(it.role) == RoleUtils.ROLE_PARTNER }
+private fun WorkspaceMember.isPartnerIn(workspaceId: String): Boolean = workspaceId.isNotBlank() &&
+    this.workspaceId == workspaceId && uid.isNotBlank() && RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER
 
-/** Retains the approved visible label on this installation after the last Partner leaves. */
+fun hasActiveBusinessPartner(workspaceId: String, members: List<WorkspaceMember>): Boolean =
+    members.any { it.isPartnerIn(workspaceId) && it.status.equals("ACTIVE", true) }
+
+/** The workspace retains the original member on removal; Rules allow ACTIVE -> REMOVED only. */
+fun hasBusinessPartnershipHistory(workspaceId: String, members: List<WorkspaceMember>): Boolean =
+    members.any { it.isPartnerIn(workspaceId) && (it.status.equals("ACTIVE", true) || it.status.equals("REMOVED", true)) }
+
+/** A fresh device uses the retained membership; the local observation also survives offline. */
 @Composable
 fun rememberBusinessPartnership(workspaceId: String, members: List<WorkspaceMember>): Boolean {
     val context = LocalContext.current
     val prefs = remember(context) { context.getSharedPreferences("business_role_presentation", Context.MODE_PRIVATE) }
     val key = "has_had_active_partner_$workspaceId"
-    val observed = hasActiveBusinessPartner(workspaceId, members)
+    val observed = hasBusinessPartnershipHistory(workspaceId, members)
     val prior = remember(workspaceId) { prefs.getBoolean(key, false) }
     val partnership = workspaceId.isNotBlank() && (observed || prior || prefs.getBoolean(key, false))
     SideEffect { if (observed && !prefs.getBoolean(key, false)) prefs.edit().putBoolean(key, true).apply() }
