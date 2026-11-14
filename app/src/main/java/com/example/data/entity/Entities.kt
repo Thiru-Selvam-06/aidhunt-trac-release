@@ -131,7 +131,10 @@ data class ExpenseEntity(
     val createdByUid: String = "",
     val createdByRole: String = "",
     val expenseForUid: String = "",
-    val financialAttributionUid: String = ""
+    val financialAttributionUid: String = "",
+    @androidx.room.ColumnInfo(defaultValue = "''") val fundingSource: String = "",
+    @androidx.room.ColumnInfo(defaultValue = "0") val externalLoanId: Long = 0L,
+    @androidx.room.ColumnInfo(defaultValue = "''") val loanFundingMode: String = ""
 )
 
 @Entity(tableName = "withdrawals", primaryKeys = ["workspaceId", "id"])

@@ -29,6 +29,12 @@ android {
 
   // Release credentials stay outside source; debug/test variants use Android's debug key.
   signingConfigs {
+    create("debugConfig") {
+      storeFile = file("${rootDir}/debug.keystore")
+      storePassword = "android"
+      keyAlias = "androiddebugkey"
+      keyPassword = "android"
+    }
     create("release") {
       val credentialsFile = rootProject.file(
         providers.gradleProperty("releaseSigningProperties").orElse("keystore.properties").get()
@@ -68,6 +74,7 @@ android {
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
+      signingConfig = signingConfigs.getByName("debugConfig")
       enableUnitTestCoverage = providers.gradleProperty("ciCoverage").orNull == "true"
     }
     create("deviceTest") {
@@ -119,6 +126,11 @@ secrets {
   ignoreList.add("FIREBASE_API_KEY")
   // Server-only CSV; an empty value is not a Java expression.
   ignoreList.add("INVITATION_TEST_PHONES")
+  ignoreList.add("FIREBASE_AUTH_EMULATOR_HOST")
+  ignoreList.add("FIRESTORE_EMULATOR_HOST")
+  ignoreList.add("FUNCTIONS_EMULATOR")
+  ignoreList.add("GCLOUD_PROJECT")
+  ignoreList.add("INVITATION_SMS_ENABLED")
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }

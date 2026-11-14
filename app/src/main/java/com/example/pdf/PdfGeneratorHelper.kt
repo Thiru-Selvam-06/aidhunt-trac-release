@@ -34,11 +34,13 @@ import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 object PdfGeneratorHelper {
 
-    private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
-    private val dateTimeFormat = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault())
+    private val istZone: TimeZone = TimeZone.getTimeZone("Asia/Kolkata")
+    private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).apply { timeZone = istZone }
+    private val dateTimeFormat = SimpleDateFormat("dd MMM yyyy, hh:mm a 'IST'", Locale.ENGLISH).apply { timeZone = istZone }
     private val currencyFormat = NumberFormat.getCurrencyInstance(Locale("en", "IN"))
 
     fun formatInr(amount: Double, currency: String = "₹"): String {
@@ -103,7 +105,12 @@ object PdfGeneratorHelper {
         paint.textSize = 9f
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
         canvas.drawText("Entry No: #${job.id}", 400f, 56f, paint)
-        canvas.drawText("Date: ${dateTimeFormat.format(Date(job.startTimeMillis))}", 400f, 72f, paint)
+        val receiptWorkDate = if (job.isHistorical) {
+            dateFormat.format(Date(job.startTimeMillis))
+        } else {
+            dateTimeFormat.format(Date(job.startTimeMillis))
+        }
+        canvas.drawText("Date: $receiptWorkDate", 400f, 72f, paint)
 
         // 2. Customer & Job Metadata Card
         paint.color = Color.rgb(243, 247, 242)
@@ -146,6 +153,10 @@ object PdfGeneratorHelper {
         canvas.drawText("Tractor: ${job.tractorLabel}", 317f, 146f, paint)
         canvas.drawText("Operator: ${job.operatorName}", 317f, 164f, paint)
         canvas.drawText("Recorded by Partner: ${job.addedByPartner}", 317f, 182f, paint)
+        if (job.createdAt > 0L) {
+            paint.textSize = 8.5f
+            canvas.drawText("Recorded: ${dateTimeFormat.format(Date(job.createdAt))}", 317f, 197f, paint)
+        }
 
         // 3. Work Details Table Header
         var yPos = 225f

@@ -66,10 +66,15 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
         val sourceCollection = if (op.entityType == "JOB") "entries" else "customers"
         val proofCollection = if (op.entityType == "JOB") "entryDeletionProofs" else "customerDeletionProofs"
         val proofName = name(ws, proofCollection, id)
+        val fsName = name(ws, "financialState", "current")
+        val cashOpName = name(ws, "cashOperations", op.operationId)
         val sources = get(transaction, listOf("$root/workspaces/$ws", name(ws, "members", op.actorUid),
-            name(ws, sourceCollection, id), proofName)).associateBy { it.getString("name") }
+            name(ws, sourceCollection, id), proofName, fsName, cashOpName)).associateBy { it.getString("name") }
         val workspace = sources["$root/workspaces/$ws"]?.let(::data) ?: error("Workspace is missing")
-        val basicDirectoryEnabled = WorkspaceSyncCapabilities.fromWorkspace(workspace).basicCustomerProfilesV1
+        val capabilities = WorkspaceSyncCapabilities.fromWorkspace(workspace)
+        val basicDirectoryEnabled = capabilities.basicCustomerProfilesV1
+        val fsDoc = sources[fsName]
+        val atomicCashEnabled = op.entityType == "JOB" && (capabilities.atomicCashControlV1 || fsDoc != null)
         val member = sources[name(ws, "members", op.actorUid)]?.let(::data) ?: error("Workspace access is missing")
         require(member["status"].toString().equals("ACTIVE", true)) { "Workspace access removed" }
         val role = member["role"].toString().uppercase()
@@ -85,6 +90,8 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
         }
         val source = sources[name(ws, sourceCollection, id)] ?: error("Record missing without a deletion acknowledgement")
         require(data(source)["workspaceId"] == ws) { "Record workspace mismatch" }
+        if (atomicCashEnabled && fsDoc == null) throw FinancialBaselinePendingException()
+        if (atomicCashEnabled) require(sources[cashOpName] == null) { "Cash receipt conflict; refresh shared records" }
         val entries = list(transaction, ws, "entries")
         val collections = list(transaction, ws, "collections")
         val writes = JSONArray()
@@ -192,6 +199,64 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
             proof.putAll(mapOf("customerId" to entry.customerId, "sourceCreatorUid" to entry.createdByUid,
                 "sourceBeneficiaryUid" to entry.entryForUid, "totalAmount" to entry.totalAmount,
                 "amountReceived" to entry.amountReceived, "pendingAmount" to entry.pendingAmount))
+            if (atomicCashEnabled && fsDoc != null) {
+                if (!owner && linkedExpenses.isNotEmpty()) {
+                    require(linkedExpenses.size <= 3) {
+                        "Jobs with more than three linked expenses must be deleted by the Owner when atomic cash control is active"
+                    }
+                }
+                val fsMap = data(fsDoc)
+                val prevVersion = (fsMap["version"] as? Number)?.toLong() ?: throw FinancialBaselinePendingException()
+                val prevCash = (fsMap["confirmedCash"] as? Number)?.toDouble() ?: throw FinancialBaselinePendingException()
+                val prevReserved = (fsMap["reservedCash"] as? Number)?.toDouble() ?: 0.0
+                val prevBank = (fsMap["confirmedBank"] as? Number)?.toDouble() ?: 0.0
+                val deletedCashCollections = deletedCollections.sumOf { doc ->
+                    val p = paymentFromFirestoreMap(data(doc))
+                    if (p.status == "ACTIVE" && AtomicCashControl.isCashMethod(p.paymentMethod)) p.amount else 0.0
+                }
+                val deletedLegacyCash = if (linked.isEmpty() && data(source)["protocolVersion"] == null &&
+                    data(source)["authorizationTimeStatus"] == null && data(source)["collectionId"] == null) entry.amountReceived else 0.0
+                val deletedBusinessExpenses = linkedExpenses.sumOf { doc ->
+                    val e = expenseFromFirestoreMap(data(doc))
+                    if (AtomicCashControl.isBusinessPaid(e.paidBy)) e.amount else 0.0
+                }
+                val netCashDelta = AtomicCashControl.addMoney(deletedBusinessExpenses, -(deletedCashCollections + deletedLegacyCash))
+                val nextCash = AtomicCashControl.addMoney(prevCash, netCashDelta)
+                val newVersion = prevVersion + 1L
+                val updatedFs = JSONObject().put("name", fsName).put("fields", JSONObject(fsDoc.getJSONObject("fields").toString()).apply {
+                    put("version", value(newVersion))
+                    put("confirmedCash", value(nextCash))
+                    put("reservedCash", value(prevReserved))
+                    put("confirmedBank", value(prevBank))
+                    put("lastOperationId", value(op.operationId))
+                    put("lastEntityType", value("JOB"))
+                    put("lastEntityId", value(id))
+                    put("lastActorUid", value(op.actorUid))
+                    put("actionTime", value(op.actionTime))
+                    remove("updatedAt")
+                })
+                writes.put(JSONObject().put("update", updatedFs).put("updateTransforms", JSONArray().put(
+                    JSONObject().put("fieldPath", "updatedAt").put("setToServerValue", "REQUEST_TIME"))))
+                val cashOpFields = linkedMapOf<String, Any?>(
+                    "workspaceId" to ws,
+                    "operationId" to op.operationId,
+                    "entityType" to "JOB",
+                    "entityId" to id,
+                    "mutationType" to "DELETE",
+                    "actorUid" to op.actorUid,
+                    "actionTime" to op.actionTime,
+                    "cashDelta" to netCashDelta,
+                    "reservedDelta" to 0.0,
+                    "expectedVersion" to prevVersion,
+                    "newVersion" to newVersion,
+                    "confirmedCashAfter" to nextCash
+                )
+                if (!owner && linkedExpenses.isNotEmpty()) {
+                    cashOpFields["verifiedExpenseIds"] = linkedExpenses.map { it.getString("name").substringAfterLast('/') }
+                }
+                writes.put(create(cashOpName, cashOpFields).put("updateTransforms", JSONArray().put(
+                    JSONObject().put("fieldPath", "createdAt").put("setToServerValue", "REQUEST_TIME"))))
+            }
         }
         writes.put(delete(source))
         writes.put(create(proofName, proof))

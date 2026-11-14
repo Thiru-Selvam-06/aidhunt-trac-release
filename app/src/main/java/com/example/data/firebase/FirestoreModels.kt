@@ -10,6 +10,12 @@ import com.example.data.entity.TractorEntity
 import com.example.data.entity.WithdrawalEntity
 import com.example.data.entity.PaymentEntity
 import com.example.data.entity.WorkTypeExtensionEntity
+import com.example.data.entity.ExternalLoanEntity
+import com.example.data.entity.ExternalLoanRepaymentEntity
+import com.example.data.entity.BorrowingRequestEntity
+import com.example.data.entity.SettlementObligationEntity
+import com.example.data.entity.SettlementRepaymentEntity
+import com.example.data.entity.AppNotificationEntity
 
 /**
  * Standard phone normalization function used across Phone Directory registration,
@@ -556,6 +562,9 @@ fun ExpenseEntity.toFirestoreMap(createdByUid: String? = null): Map<String, Any?
     "paidBy" to paidBy,
     "paidByPartner" to paidByPartner,
     "paidByUid" to paidByUid,
+    "fundingSource" to fundingSource,
+    "externalLoanId" to externalLoanId,
+    "loanFundingMode" to loanFundingMode,
     "createdAt" to createdAt,
     "updatedAt" to System.currentTimeMillis()
 )
@@ -586,7 +595,10 @@ fun expenseFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fallba
         paidByPartner = map["paidByPartner"] as? String ?: "",
         paidByUid = pUid,
         createdByUid = cUid,
-        createdByRole = cRole
+        createdByRole = cRole,
+        fundingSource = map["fundingSource"] as? String ?: "",
+        externalLoanId = (map["externalLoanId"] as? Number)?.toLong() ?: 0L,
+        loanFundingMode = map["loanFundingMode"] as? String ?: ""
     )
 }
 
@@ -785,3 +797,238 @@ fun extensionFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0, fall
         createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L
     )
 }
+
+fun ExternalLoanEntity.toFirestoreMap(): Map<String, Any?> = mapOf(
+    "id" to id,
+    "workspaceId" to workspaceId,
+    "lenderName" to lenderName,
+    "principalAmount" to principalAmount,
+    "interestAmount" to interestAmount,
+    "totalRepaidPrincipal" to totalRepaidPrincipal,
+    "totalRepaidInterest" to totalRepaidInterest,
+    "destination" to destination,
+    "linkedExpenseId" to linkedExpenseId,
+    "status" to status,
+    "note" to note,
+    "loanDateMillis" to loanDateMillis,
+    "createdAt" to createdAt,
+    "updatedAt" to (if (updatedAt > 0L) updatedAt else System.currentTimeMillis()),
+    "createdByUid" to createdByUid,
+    "createdByRole" to createdByRole
+)
+
+fun externalLoanFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0L, fallbackWorkspaceId: String = ""): ExternalLoanEntity =
+    ExternalLoanEntity(
+        id = (map["id"] as? Number)?.toLong() ?: fallbackId,
+        workspaceId = map["workspaceId"] as? String ?: fallbackWorkspaceId,
+        lenderName = map["lenderName"] as? String ?: "",
+        principalAmount = (map["principalAmount"] as? Number)?.toDouble() ?: 0.0,
+        interestAmount = (map["interestAmount"] as? Number)?.toDouble() ?: 0.0,
+        totalRepaidPrincipal = (map["totalRepaidPrincipal"] as? Number)?.toDouble() ?: 0.0,
+        totalRepaidInterest = (map["totalRepaidInterest"] as? Number)?.toDouble() ?: 0.0,
+        destination = map["destination"] as? String ?: "BUSINESS_CASH",
+        linkedExpenseId = (map["linkedExpenseId"] as? Number)?.toLong() ?: 0L,
+        status = map["status"] as? String ?: "ACTIVE",
+        note = map["note"] as? String ?: "",
+        loanDateMillis = (map["loanDateMillis"] as? Number)?.toLong() ?: 0L,
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
+        updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L,
+        createdByUid = map["createdByUid"] as? String ?: "",
+        createdByRole = map["createdByRole"] as? String ?: "",
+        isSynced = true
+    )
+
+fun ExternalLoanRepaymentEntity.toFirestoreMap(): Map<String, Any?> = mapOf(
+    "id" to id,
+    "workspaceId" to workspaceId,
+    "loanId" to loanId,
+    "principalPaid" to principalPaid,
+    "interestPaid" to interestPaid,
+    "source" to source,
+    "note" to note,
+    "repaidAt" to repaidAt,
+    "createdAt" to createdAt,
+    "createdByUid" to createdByUid,
+    "createdByRole" to createdByRole
+)
+
+fun externalLoanRepaymentFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0L, fallbackWorkspaceId: String = ""): ExternalLoanRepaymentEntity =
+    ExternalLoanRepaymentEntity(
+        id = (map["id"] as? Number)?.toLong() ?: fallbackId,
+        workspaceId = map["workspaceId"] as? String ?: fallbackWorkspaceId,
+        loanId = (map["loanId"] as? Number)?.toLong() ?: 0L,
+        principalPaid = (map["principalPaid"] as? Number)?.toDouble() ?: 0.0,
+        interestPaid = (map["interestPaid"] as? Number)?.toDouble() ?: 0.0,
+        source = map["source"] as? String ?: "BUSINESS_CASH",
+        note = map["note"] as? String ?: "",
+        repaidAt = (map["repaidAt"] as? Number)?.toLong() ?: 0L,
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
+        createdByUid = map["createdByUid"] as? String ?: "",
+        createdByRole = map["createdByRole"] as? String ?: "",
+        isSynced = true
+    )
+
+fun BorrowingRequestEntity.toFirestoreMap(): Map<String, Any?> = mapOf(
+    "id" to id,
+    "workspaceId" to workspaceId,
+    "borrowerUid" to borrowerUid,
+    "borrowerName" to borrowerName,
+    "lendingPartnerUid" to lendingPartnerUid,
+    "lendingPartnerName" to lendingPartnerName,
+    "sourceType" to sourceType,
+    "amount" to amount,
+    "note" to note,
+    "status" to status,
+    "reservedAmount" to reservedAmount,
+    "withdrawalId" to withdrawalId,
+    "obligationId" to obligationId,
+    "requestedByUid" to requestedByUid,
+    "requestedByRole" to requestedByRole,
+    "approvedByUid" to approvedByUid,
+    "approvedAt" to approvedAt,
+    "rejectedByUid" to rejectedByUid,
+    "rejectedAt" to rejectedAt,
+    "rejectionReason" to rejectionReason,
+    "executedAt" to executedAt,
+    "createdAt" to createdAt,
+    "updatedAt" to (if (updatedAt > 0L) updatedAt else System.currentTimeMillis())
+)
+
+fun borrowingRequestFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0L, fallbackWorkspaceId: String = ""): BorrowingRequestEntity =
+    BorrowingRequestEntity(
+        id = (map["id"] as? Number)?.toLong() ?: fallbackId,
+        workspaceId = map["workspaceId"] as? String ?: fallbackWorkspaceId,
+        borrowerUid = map["borrowerUid"] as? String ?: "",
+        borrowerName = map["borrowerName"] as? String ?: "",
+        lendingPartnerUid = map["lendingPartnerUid"] as? String ?: "",
+        lendingPartnerName = map["lendingPartnerName"] as? String ?: "",
+        sourceType = map["sourceType"] as? String ?: "BUSINESS_ONLY",
+        amount = (map["amount"] as? Number)?.toDouble() ?: 0.0,
+        note = map["note"] as? String ?: "",
+        status = map["status"] as? String ?: "PENDING_APPROVAL",
+        reservedAmount = (map["reservedAmount"] as? Number)?.toDouble() ?: 0.0,
+        withdrawalId = (map["withdrawalId"] as? Number)?.toLong() ?: 0L,
+        obligationId = (map["obligationId"] as? Number)?.toLong() ?: 0L,
+        requestedByUid = map["requestedByUid"] as? String ?: "",
+        requestedByRole = map["requestedByRole"] as? String ?: "",
+        approvedByUid = map["approvedByUid"] as? String ?: "",
+        approvedAt = (map["approvedAt"] as? Number)?.toLong() ?: 0L,
+        rejectedByUid = map["rejectedByUid"] as? String ?: "",
+        rejectedAt = (map["rejectedAt"] as? Number)?.toLong() ?: 0L,
+        rejectionReason = map["rejectionReason"] as? String ?: "",
+        executedAt = (map["executedAt"] as? Number)?.toLong() ?: 0L,
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
+        updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L,
+        isSynced = true
+    )
+
+fun SettlementObligationEntity.toFirestoreMap(): Map<String, Any?> = mapOf(
+    "id" to id,
+    "workspaceId" to workspaceId,
+    "borrowerUid" to borrowerUid,
+    "borrowerName" to borrowerName,
+    "creditorType" to creditorType,
+    "creditorUid" to creditorUid,
+    "creditorName" to creditorName,
+    "sourceRequestId" to sourceRequestId,
+    "principalAmount" to principalAmount,
+    "repaidAmount" to repaidAmount,
+    "directSettledAmount" to directSettledAmount,
+    "status" to status,
+    "note" to note,
+    "createdAt" to createdAt,
+    "updatedAt" to (if (updatedAt > 0L) updatedAt else System.currentTimeMillis()),
+    "createdByUid" to createdByUid
+)
+
+fun settlementObligationFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0L, fallbackWorkspaceId: String = ""): SettlementObligationEntity =
+    SettlementObligationEntity(
+        id = (map["id"] as? Number)?.toLong() ?: fallbackId,
+        workspaceId = map["workspaceId"] as? String ?: fallbackWorkspaceId,
+        borrowerUid = map["borrowerUid"] as? String ?: "",
+        borrowerName = map["borrowerName"] as? String ?: "",
+        creditorType = map["creditorType"] as? String ?: "BUSINESS",
+        creditorUid = map["creditorUid"] as? String ?: "",
+        creditorName = map["creditorName"] as? String ?: "",
+        sourceRequestId = (map["sourceRequestId"] as? Number)?.toLong() ?: 0L,
+        principalAmount = (map["principalAmount"] as? Number)?.toDouble() ?: 0.0,
+        repaidAmount = (map["repaidAmount"] as? Number)?.toDouble() ?: 0.0,
+        directSettledAmount = (map["directSettledAmount"] as? Number)?.toDouble() ?: 0.0,
+        status = map["status"] as? String ?: "OPEN",
+        note = map["note"] as? String ?: "",
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
+        updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L,
+        createdByUid = map["createdByUid"] as? String ?: "",
+        isSynced = true
+    )
+
+fun SettlementRepaymentEntity.toFirestoreMap(): Map<String, Any?> = mapOf(
+    "id" to id,
+    "workspaceId" to workspaceId,
+    "obligationId" to obligationId,
+    "payerUid" to payerUid,
+    "payerName" to payerName,
+    "creditorType" to creditorType,
+    "creditorUid" to creditorUid,
+    "creditorName" to creditorName,
+    "amount" to amount,
+    "mode" to mode,
+    "status" to status,
+    "note" to note,
+    "paidAt" to paidAt,
+    "createdAt" to createdAt,
+    "createdByUid" to createdByUid,
+    "confirmedByUid" to confirmedByUid,
+    "confirmedAt" to confirmedAt,
+    "rejectedByUid" to rejectedByUid,
+    "rejectedAt" to rejectedAt,
+    "rejectionReason" to rejectionReason
+)
+
+fun settlementRepaymentFromFirestoreMap(map: Map<String, Any?>, fallbackId: Long = 0L, fallbackWorkspaceId: String = ""): SettlementRepaymentEntity =
+    SettlementRepaymentEntity(
+        id = (map["id"] as? Number)?.toLong() ?: fallbackId,
+        workspaceId = map["workspaceId"] as? String ?: fallbackWorkspaceId,
+        obligationId = (map["obligationId"] as? Number)?.toLong() ?: 0L,
+        payerUid = map["payerUid"] as? String ?: "",
+        payerName = map["payerName"] as? String ?: "",
+        creditorType = map["creditorType"] as? String ?: "BUSINESS",
+        creditorUid = map["creditorUid"] as? String ?: "",
+        creditorName = map["creditorName"] as? String ?: "",
+        amount = (map["amount"] as? Number)?.toDouble() ?: 0.0,
+        mode = map["mode"] as? String ?: "INTO_BUSINESS",
+        status = map["status"] as? String ?: "PENDING_CONFIRMATION",
+        note = map["note"] as? String ?: "",
+        paidAt = (map["paidAt"] as? Number)?.toLong() ?: 0L,
+        createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
+        createdByUid = map["createdByUid"] as? String ?: "",
+        confirmedByUid = map["confirmedByUid"] as? String ?: "",
+        confirmedAt = (map["confirmedAt"] as? Number)?.toLong() ?: 0L,
+        rejectedByUid = map["rejectedByUid"] as? String ?: "",
+        rejectedAt = (map["rejectedAt"] as? Number)?.toLong() ?: 0L,
+        rejectionReason = map["rejectionReason"] as? String ?: "",
+        isSynced = true
+    )
+
+fun notificationFromFirestoreMap(
+    map: Map<String, Any?>,
+    fallbackId: String = "",
+    fallbackWorkspaceId: String = ""
+): AppNotificationEntity = AppNotificationEntity(
+    id = (map["id"] as? String).orEmpty().ifBlank { fallbackId },
+    workspaceId = (map["workspaceId"] as? String).orEmpty().ifBlank { fallbackWorkspaceId },
+    operationId = map["operationId"] as? String ?: "",
+    recipientUid = map["recipientUid"] as? String ?: "",
+    targetAudience = map["targetAudience"] as? String ?: AppNotificationEntity.AUDIENCE_OWNER_ONLY,
+    actorUid = map["actorUid"] as? String ?: "",
+    actorName = map["actorName"] as? String ?: "",
+    eventType = map["eventType"] as? String ?: "",
+    entityType = map["entityType"] as? String ?: "",
+    entityId = (map["entityId"] as? Number)?.toLong() ?: 0L,
+    amount = (map["amount"] as? Number)?.toDouble() ?: 0.0,
+    counterpartyName = map["counterpartyName"] as? String ?: "",
+    metadataJson = map["metadataJson"] as? String ?: "{}",
+    createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L,
+    isRead = map["isRead"] as? Boolean ?: false,
+    readAt = (map["readAt"] as? Number)?.toLong() ?: 0L
+)

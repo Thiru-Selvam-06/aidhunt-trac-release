@@ -23,6 +23,8 @@ object AuthorizationManager {
     const val PAGE_COLLECTION_HISTORY = "COLLECTION_HISTORY"
     const val PAGE_ACCOUNT = "ACCOUNT"
     const val PAGE_NEW_ENTRY = "NEW_ENTRY"
+    const val PAGE_EXTERNAL_LOANS = "EXTERNAL_LOANS"
+    const val PAGE_SETTLEMENTS = "SETTLEMENTS"
 
     // Authoritative platform access control document
     @Volatile
@@ -446,5 +448,150 @@ object AuthorizationManager {
     fun canMutateAsset(isOwner: Boolean, role: String, uid: String, createdByUid: String): Boolean =
         (isOwner && RoleUtils.isOwner(role)) || (RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER &&
             uid.isNotBlank() && uid == createdByUid)
+
+    fun canManageExternalLoans(role: String): Boolean =
+        RoleUtils.normalizeRole(role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER)
+
+    fun canManageExternalLoans(isOwner: Boolean, role: String = ""): Boolean =
+        (isOwner && (role.isBlank() || RoleUtils.isOwner(role))) ||
+            RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER
+
+    fun canRequestBorrowing(
+        actorUid: String,
+        role: String,
+        borrowerUid: String,
+        workspaceId: String,
+        workspaceMembers: List<WorkspaceMember>
+    ): Boolean {
+        if (actorUid.isBlank() || borrowerUid.isBlank() || workspaceId.isBlank()) return false
+        val normalized = RoleUtils.normalizeRole(role)
+        if (normalized !in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER)) return false
+        val borrowerActive = workspaceMembers.any {
+            it.uid == borrowerUid && it.workspaceId == workspaceId && it.status.equals("active", true) &&
+                RoleUtils.normalizeRole(it.role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER)
+        }
+        if (!borrowerActive) return false
+        return normalized == RoleUtils.ROLE_OWNER || borrowerUid == actorUid
+    }
+
+    fun canRequestBorrowing(isOwner: Boolean, role: String = "", borrowerUid: String, actorUid: String): Boolean {
+        if (actorUid.isBlank() || borrowerUid.isBlank()) return false
+        if (isOwner && (role.isBlank() || RoleUtils.isOwner(role))) return true
+        return RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER && borrowerUid == actorUid
+    }
+
+    fun canApproveOrRejectBorrowing(
+        actorUid: String,
+        role: String,
+        lendingPartnerUid: String
+    ): Boolean {
+        if (actorUid.isBlank() || lendingPartnerUid.isBlank()) return false
+        val normalized = RoleUtils.normalizeRole(role)
+        if (normalized !in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER)) return false
+        return actorUid == lendingPartnerUid
+    }
+
+    fun canApproveOrRejectBorrowing(
+        request: com.example.data.entity.BorrowingRequestEntity,
+        actorUid: String,
+        role: String = ""
+    ): Boolean {
+        if (actorUid.isBlank()) return false
+        val normalized = RoleUtils.normalizeRole(role)
+        if (normalized !in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER)) return false
+        return request.sourceType == "NAMED_PARTNER" &&
+            request.status in setOf("PENDING_APPROVAL", "APPROVED_RESERVED") &&
+            request.lendingPartnerUid == actorUid
+    }
+
+    fun canExecuteApprovedBorrowing(
+        actorUid: String,
+        role: String,
+        borrowerUid: String
+    ): Boolean {
+        if (actorUid.isBlank() || borrowerUid.isBlank()) return false
+        val normalized = RoleUtils.normalizeRole(role)
+        return normalized == RoleUtils.ROLE_OWNER || (normalized == RoleUtils.ROLE_PARTNER && borrowerUid == actorUid)
+    }
+
+    fun canExecuteApprovedBorrowing(
+        request: com.example.data.entity.BorrowingRequestEntity,
+        actorUid: String,
+        isOwner: Boolean,
+        role: String = ""
+    ): Boolean {
+        if (actorUid.isBlank() || request.status != "APPROVED_RESERVED") return false
+        if (isOwner && (role.isBlank() || RoleUtils.isOwner(role))) return true
+        return RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER &&
+            (request.borrowerUid == actorUid || request.requestedByUid == actorUid)
+    }
+
+    fun canCancelBorrowingRequest(
+        actorUid: String,
+        role: String,
+        borrowerUid: String,
+        requestedByUid: String
+    ): Boolean {
+        if (actorUid.isBlank()) return false
+        val normalized = RoleUtils.normalizeRole(role)
+        if (normalized == RoleUtils.ROLE_OWNER) return true
+        return normalized == RoleUtils.ROLE_PARTNER && (actorUid == borrowerUid || actorUid == requestedByUid)
+    }
+
+    fun canCancelBorrowingRequest(
+        request: com.example.data.entity.BorrowingRequestEntity,
+        actorUid: String,
+        isOwner: Boolean,
+        role: String = ""
+    ): Boolean {
+        if (actorUid.isBlank() || request.status !in setOf("PENDING_APPROVAL", "APPROVED_RESERVED")) return false
+        if (isOwner && (role.isBlank() || RoleUtils.isOwner(role))) return true
+        return RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER &&
+            (request.borrowerUid == actorUid || request.requestedByUid == actorUid)
+    }
+
+    fun canRecordSettlementRepayment(role: String): Boolean =
+        RoleUtils.normalizeRole(role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER)
+
+    fun canRecordSettlementRepayment(
+        obligation: com.example.data.entity.SettlementObligationEntity,
+        actorUid: String,
+        isOwner: Boolean,
+        role: String = ""
+    ): Boolean {
+        if (actorUid.isBlank() || obligation.status == "SETTLED") return false
+        if (isOwner && (role.isBlank() || RoleUtils.isOwner(role))) return true
+        return RoleUtils.normalizeRole(role) == RoleUtils.ROLE_PARTNER
+    }
+
+    fun canConfirmSettlementRepayment(
+        actorUid: String,
+        role: String,
+        mode: String,
+        creditorUid: String
+    ): Boolean {
+        if (actorUid.isBlank()) return false
+        val normalized = RoleUtils.normalizeRole(role)
+        if (normalized !in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER)) return false
+        return if (mode == "DIRECT_TO_PARTNER") creditorUid == actorUid else true
+    }
+
+    fun canConfirmSettlementRepayment(
+        repayment: com.example.data.entity.SettlementRepaymentEntity,
+        actorUid: String,
+        isOwner: Boolean,
+        role: String = ""
+    ): Boolean {
+        if (actorUid.isBlank() || repayment.status != "PENDING_CONFIRMATION") return false
+        val normalized = RoleUtils.normalizeRole(role)
+        val isFinanceMember = (isOwner && (role.isBlank() || normalized == RoleUtils.ROLE_OWNER)) ||
+            normalized == RoleUtils.ROLE_PARTNER
+        if (!isFinanceMember) return false
+        return if (repayment.mode == "DIRECT_TO_PARTNER") {
+            repayment.creditorUid == actorUid
+        } else {
+            true
+        }
+    }
 
 }

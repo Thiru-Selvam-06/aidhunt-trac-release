@@ -32,6 +32,9 @@ data class ExpenseAnalytics(
         }
 
         fun fundingKey(expense: ExpenseEntity): String = when {
+            expense.fundingSource.equals("EXTERNAL_LOAN", true) ||
+                expense.externalLoanId > 0L ||
+                expense.paidBy.equals("Loan Funded", true) -> "EXTERNAL_LOAN"
             expense.paidBy.equals("Business Paid", true) -> "BUSINESS"
             expense.paidBy.equals("I Paid", true) -> "PERSONAL"
             else -> "UNKNOWN" // Never silently classify unsupported or missing historical funding.

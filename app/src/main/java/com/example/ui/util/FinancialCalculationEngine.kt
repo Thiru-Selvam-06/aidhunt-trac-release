@@ -7,6 +7,9 @@ import com.example.data.entity.JobEntryEntity
 import com.example.data.entity.PartnerEntity
 import com.example.data.entity.PaymentEntity
 import com.example.data.entity.WithdrawalEntity
+import com.example.data.entity.ExternalLoanEntity
+import com.example.data.entity.ExternalLoanRepaymentEntity
+import com.example.data.entity.SettlementRepaymentEntity
 import com.example.data.firebase.ProfitShareAllocation
 import com.example.data.firebase.WorkspaceMember
 import java.util.Calendar
@@ -232,6 +235,9 @@ object FinancialCalculationEngine {
             pWithdrawals.forEach { w ->
                 val cat = w.category.trim().lowercase()
                 when {
+                    cat.contains("borrow") -> {
+                        // Tracked as an explicit borrowing obligation; never auto-offsets profit share.
+                    }
                     cat == "share & investment" || cat == "share and investment" || cat.contains("share & investment") -> {
                         val sharePart = Math.ceil(w.amount / 2.0)
                         val invPart = w.amount - sharePart
@@ -372,11 +378,54 @@ object FinancialCalculationEngine {
         // withdrawals from the workspace's cash drawer.
         val spent = expenses.filter { (workspace.isBlank() || it.workspaceId == workspace) &&
             it.paidBy.trim().equals("Business Paid", true) &&
+            !it.fundingSource.equals("EXTERNAL_LOAN", true) &&
+            it.externalLoanId == 0L &&
             isTimestampInScope(if (it.dateTimestamp > 0) it.dateTimestamp else it.createdAt, scope) }.sumOf { it.amount }
         val withdrawn = withdrawals.filter { (workspace.isBlank() || it.workspaceId == workspace) &&
             isTimestampInScope(if (it.timestamp > 0) it.timestamp else it.createdAt, scope) }.sumOf { it.amount }
         require(listOf(cash, spent, withdrawn).all { it.isFinite() }) { "Cash balance contains invalid amounts" }
         return roundMoney(cash - spent - withdrawn)
+    }
+
+    fun stage3CashDelta(
+        scope: FinancialScope,
+        externalLoans: List<ExternalLoanEntity> = emptyList(),
+        externalLoanRepayments: List<ExternalLoanRepaymentEntity> = emptyList(),
+        settlementRepayments: List<SettlementRepaymentEntity> = emptyList()
+    ): Double {
+        val workspace = scope.workspaceId
+        val loanCashIn = externalLoans.filter {
+            (workspace.isBlank() || it.workspaceId == workspace) &&
+                it.destination == "BUSINESS_CASH" &&
+                isTimestampInScope(if (it.loanDateMillis > 0L) it.loanDateMillis else it.createdAt, scope)
+        }.sumOf { it.principalAmount }
+        val loanRepaidCashOut = externalLoanRepayments.filter {
+            (workspace.isBlank() || it.workspaceId == workspace) &&
+                it.source == "BUSINESS_CASH" &&
+                isTimestampInScope(if (it.repaidAt > 0L) it.repaidAt else it.createdAt, scope)
+        }.sumOf { it.totalPaid }
+        val settlementCashIn = settlementRepayments.filter {
+            (workspace.isBlank() || it.workspaceId == workspace) &&
+                it.status == "CONFIRMED" &&
+                it.mode in setOf("INTO_BUSINESS", "INTO_BUSINESS_FOR_PARTNER") &&
+                isTimestampInScope(if (it.confirmedAt > 0L) it.confirmedAt else it.paidAt, scope)
+        }.sumOf { it.amount }
+        return roundMoney(loanCashIn - loanRepaidCashOut + settlementCashIn)
+    }
+
+    fun cashAvailableWithStage3(
+        payments: List<PaymentEntity>,
+        expenses: List<ExpenseEntity>,
+        withdrawals: List<WithdrawalEntity>,
+        scope: FinancialScope,
+        jobs: List<JobEntryEntity> = emptyList(),
+        externalLoans: List<ExternalLoanEntity> = emptyList(),
+        externalLoanRepayments: List<ExternalLoanRepaymentEntity> = emptyList(),
+        settlementRepayments: List<SettlementRepaymentEntity> = emptyList()
+    ): Double {
+        val base = cashAvailable(payments, expenses, withdrawals, scope, jobs)
+        val delta = stage3CashDelta(scope, externalLoans, externalLoanRepayments, settlementRepayments)
+        return roundMoney(base + delta)
     }
 
     fun calculateSummary(

@@ -1039,8 +1039,9 @@ fun NewEntryScreen(
                                                     fontWeight = FontWeight.SemiBold,
                                                     color = AppTheme.colors.textPrimary
                                                 )
+                                                val ownerRoleLabel = com.example.ui.util.businessRoleDisplayName("Owner", settings.workspaceId, workspaceMembers, isTamil)
                                                 Text(
-                                                    text = if (isTamil) "உரிமையாளர்" else if (ownerUid == currentUid) "Owner (You)" else "Owner",
+                                                    text = if (ownerUid == currentUid && !isTamil) "$ownerRoleLabel (You)" else if (ownerUid == currentUid) "$ownerRoleLabel (நீங்கள்)" else ownerRoleLabel,
                                                     fontSize = 11.sp,
                                                     color = DeepSageGreen
                                                 )
@@ -1086,7 +1087,7 @@ fun NewEntryScreen(
                                                         fontWeight = FontWeight.SemiBold,
                                                         color = AppTheme.colors.textPrimary
                                                     )
-                                                    val memberRoleLabel = com.example.data.auth.RoleUtils.getRoleDisplayName(partner.role, isTamil)
+                                                    val memberRoleLabel = com.example.ui.util.businessRoleDisplayName(partner.role, settings.workspaceId, workspaceMembers, isTamil)
                                                     Text(
                                                         text = if (!partner.phoneNumber.isNullOrBlank()) "$memberRoleLabel • ${partner.phoneNumber}" else memberRoleLabel,
                                                         fontSize = 11.sp,
@@ -1140,7 +1141,7 @@ fun NewEntryScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             val currentMember = workspaceMembers.find { it.uid == entryTargetUid && it.workspaceId == settings.workspaceId }
                             val currentRole = currentMember?.role?.ifBlank { null } ?: "Partner"
-                            val roleLabel = com.example.data.auth.RoleUtils.getRoleDisplayName(currentRole, isTamil)
+                            val roleLabel = com.example.ui.util.businessRoleDisplayName(currentRole, settings.workspaceId, workspaceMembers, isTamil)
                             Text(
                                 text = if (isTamil) "வேலை செய்பவர் ($roleLabel)" else "Entry for Operator: $roleLabel",
                                 fontSize = 10.5.sp,

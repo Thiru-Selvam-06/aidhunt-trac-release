@@ -39,6 +39,7 @@ fun ExpenseAnalyticsCard(expenses: List<ExpenseEntity>, isTamil: Boolean) {
             fun label(key: String, name: String): String = if (byFunding) when (key) {
                 "BUSINESS" -> if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid"
                 "PERSONAL" -> if (isTamil) "தனிப்பட்ட பணம் / முதலீடு" else "Personally Paid / Investment"
+                "EXTERNAL_LOAN" -> if (isTamil) "கடன் நிதி (நேரடி)" else "Loan Funded (Direct)"
                 else -> if (isTamil) "மூலம் தெரியவில்லை" else "Funding unavailable"
             } else if (key == "unknown-category") (if (isTamil) "வகை தெரியவில்லை" else "Category unavailable")
                 else ExpenseCategories.label(name, isTamil)

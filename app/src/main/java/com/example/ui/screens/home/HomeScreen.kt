@@ -802,7 +802,8 @@ fun JobEntryItemCard(
                             )
                         }
                     }
-                    Text(com.example.data.auth.RoleUtils.getCreatedByDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil),
+                    Text(com.example.data.auth.RoleUtils.getCreatedByDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil,
+                        com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers)),
                         fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -1210,12 +1211,13 @@ fun CustomerSummaryPopup(
                     }
 
                     // 4. TRACTOR / OPERATOR: Compact Surface
+                    val hasPartnership = com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
                     val (cRole, cName) = com.example.data.auth.RoleUtils.resolveCreatorRoleAndName(job, settings.ownerName, workspaceMembers, partners)
                     val createdByText = com.example.data.auth.RecordIdentityPolicy.savedCreatorLabel(
-                        com.example.data.auth.RoleUtils.formatRoleAndName(cRole, cName, isTamil), job.createdByUid, isTamil)
+                        com.example.data.auth.RoleUtils.formatRoleAndName(com.example.ui.util.businessDisplayRole(cRole, hasPartnership), cName, isTamil), job.createdByUid, isTamil)
                     val entryForDisplay = com.example.data.auth.RoleUtils.getEntryForDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil,
-                        com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers))
-                    val editedByDisplayModal = com.example.data.auth.RoleUtils.getEditedByDisplay(job, isTamil)
+                        hasPartnership)
+                    val editedByDisplayModal = com.example.data.auth.RoleUtils.getEditedByDisplay(job, isTamil, hasPartnership)
 
                     Surface(
                         shape = RoundedCornerShape(10.dp),
@@ -1382,12 +1384,11 @@ fun CustomerSummaryPopup(
                                                 val resolvedName = if (exp.paidByUid.isNotBlank()) {
                                                     val m = workspaceMembers.find { it.uid == exp.paidByUid }
                                                     if (m != null) {
-                                                        val roleName = when {
-                                                            m.role.equals("owner", ignoreCase = true) -> if (isTamil) "உரிமையாளர்" else "Owner"
-                                                            m.role.equals("partner", ignoreCase = true) -> if (isTamil) "பங்குதாரர்" else "Partner"
-                                                            m.role.equals("operator", ignoreCase = true) -> if (isTamil) "இயக்குநர்" else "Operator"
-                                                            else -> m.role
-                                                        }
+                                                        val hasPartnership = com.example.ui.util.hasBusinessPartnershipHistory(settings.workspaceId, workspaceMembers)
+                                                        val roleName = com.example.data.auth.RoleUtils.getRoleDisplayName(
+                                                            com.example.ui.util.businessDisplayRole(m.role, hasPartnership),
+                                                            isTamil
+                                                        )
                                                         "${m.displayName ?: m.phoneNumber ?: "Member"} ($roleName)"
                                                     } else {
                                                         exp.paidByPartner.ifBlank { exp.operatorName.ifBlank { exp.addedByPartner } }
@@ -1460,7 +1461,11 @@ fun CustomerSummaryPopup(
                                 color = Color(0xFF6B7280)
                             )
                             Text(
-                                text = com.example.ui.util.JobAuditPresentation.date(job.startTimeMillis, isTamil),
+                                text = if (job.isHistorical) {
+                                    com.example.ui.util.JobAuditPresentation.date(job.startTimeMillis, isTamil)
+                                } else {
+                                    com.example.ui.util.JobAuditPresentation.instant(job.startTimeMillis, isTamil)
+                                },
                                 fontSize = 12.5.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFF111827)

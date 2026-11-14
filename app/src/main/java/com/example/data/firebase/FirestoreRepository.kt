@@ -64,7 +64,7 @@ class FirestoreRepository(
     // Real-time listener registrations per workspace (workspaceId -> Map of listener registrations)
     private val activeWorkspaceListeners = mutableMapOf<String, MutableList<ListenerRegistration>>()
     private val activeListenerCapabilities = mutableMapOf<String, WorkspaceSyncCapabilities>()
-    private val activeListenerSessions = mutableMapOf<String, Pair<String, Boolean>>()
+    private val activeListenerSessions = mutableMapOf<String, Triple<String, Boolean, Boolean>>()
     private fun WorkspaceSyncCapabilities?.orDefaultCapabilities() = this ?: WorkspaceSyncCapabilities()
 
     /**
@@ -328,7 +328,15 @@ class FirestoreRepository(
         onExpenseCategoriesUpdated: (List<com.example.data.entity.ExpenseCategoryEntity>, String) -> Unit = { _, _ -> },
         operatorWorkspaceIds: Set<String> = emptySet(),
         onMembershipUpdated: (List<WorkspaceMember>, String) -> Unit = { _, _ -> },
-        onBasicCustomersUpdated: (List<com.example.data.entity.BasicCustomerEntity>, String) -> Unit = { _, _ -> }
+        onBasicCustomersUpdated: (List<com.example.data.entity.BasicCustomerEntity>, String) -> Unit = { _, _ -> },
+        onExternalLoansUpdated: (List<com.example.data.entity.ExternalLoanEntity>, String) -> Unit = { _, _ -> },
+        onExternalLoanRepaymentsUpdated: (List<com.example.data.entity.ExternalLoanRepaymentEntity>, String) -> Unit = { _, _ -> },
+        onBorrowingRequestsUpdated: (List<com.example.data.entity.BorrowingRequestEntity>, String) -> Unit = { _, _ -> },
+        onSettlementObligationsUpdated: (List<com.example.data.entity.SettlementObligationEntity>, String) -> Unit = { _, _ -> },
+        onSettlementRepaymentsUpdated: (List<com.example.data.entity.SettlementRepaymentEntity>, String) -> Unit = { _, _ -> },
+        onFinancialStateUpdated: (Double, Double, Double, String) -> Unit = { _, _, _, _ -> },
+        ownerWorkspaceIds: Set<String> = emptySet(),
+        onNotificationsUpdated: (List<com.example.data.entity.AppNotificationEntity>, String) -> Unit = { _, _ -> }
     ) {
         val firestore = db ?: return
         val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: ""
@@ -342,7 +350,7 @@ class FirestoreRepository(
         // must not reuse an Operator's listeners after another account signs in.
         val changed = activeWorkspaceListeners.keys.filter { ws ->
             activeListenerCapabilities[ws] != capabilityCache.states.value[currentUid to ws].orDefaultCapabilities() ||
-                activeListenerSessions[ws] != (currentUid to (ws in operatorWorkspaceIds))
+                activeListenerSessions[ws] != Triple(currentUid, ws in operatorWorkspaceIds, ws in ownerWorkspaceIds)
         }
         if (changed.isNotEmpty()) {
             // Invalidate already-dispatched callbacks too; removing a registration alone is insufficient.
@@ -366,7 +374,7 @@ class FirestoreRepository(
             val wsRef = firestore.collection("workspaces").document(workspaceId)
             val capabilities = capabilityCache.states.value[currentUid to workspaceId].orDefaultCapabilities()
             activeListenerCapabilities[workspaceId] = capabilities
-            activeListenerSessions[workspaceId] = currentUid to (workspaceId in operatorWorkspaceIds)
+            activeListenerSessions[workspaceId] = Triple(currentUid, workspaceId in operatorWorkspaceIds, workspaceId in ownerWorkspaceIds)
             val regList = mutableListOf<ListenerRegistration>()
             val operational = setOf("actorMembership", "members", "entries", "tractors", "attendees", "settings", "accessControl", "extensions") +
                 if (capabilities.expenseCategoriesV1) setOf("expenseCategories") else emptySet()
@@ -660,9 +668,131 @@ class FirestoreRepository(
                     }
                 })
 
+            if (workspaceId !in operatorWorkspaceIds) {
+                regList.add(wsRef.collection("externalLoans")
+                    .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
+                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (error != null) { Log.w(TAG, "ExternalLoans listener notice: ${error.message}"); return@addSnapshotListener }
+                        if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
+                            val list = snapshot.documents.mapNotNull { doc ->
+                                doc.data?.takeUnless { it["isDeleted"] == true }?.let { externalLoanFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
+                            }
+                            onExternalLoansUpdated(list, workspaceId)
+                        }
+                    })
+                regList.add(wsRef.collection("externalLoanRepayments")
+                    .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
+                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (error != null) { Log.w(TAG, "ExternalLoanRepayments listener notice: ${error.message}"); return@addSnapshotListener }
+                        if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
+                            val list = snapshot.documents.mapNotNull { doc ->
+                                doc.data?.takeUnless { it["isDeleted"] == true }?.let { externalLoanRepaymentFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
+                            }
+                            onExternalLoanRepaymentsUpdated(list, workspaceId)
+                        }
+                    })
+                regList.add(wsRef.collection("borrowingRequests")
+                    .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
+                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (error != null) { Log.w(TAG, "BorrowingRequests listener notice: ${error.message}"); return@addSnapshotListener }
+                        if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
+                            val list = snapshot.documents.mapNotNull { doc ->
+                                doc.data?.takeUnless { it["isDeleted"] == true }?.let { borrowingRequestFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
+                            }
+                            onBorrowingRequestsUpdated(list, workspaceId)
+                        }
+                    })
+                regList.add(wsRef.collection("settlementObligations")
+                    .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
+                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (error != null) { Log.w(TAG, "SettlementObligations listener notice: ${error.message}"); return@addSnapshotListener }
+                        if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
+                            val list = snapshot.documents.mapNotNull { doc ->
+                                doc.data?.takeUnless { it["isDeleted"] == true }?.let { settlementObligationFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
+                            }
+                            onSettlementObligationsUpdated(list, workspaceId)
+                        }
+                    })
+                regList.add(wsRef.collection("settlementRepayments")
+                    .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
+                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (error != null) { Log.w(TAG, "SettlementRepayments listener notice: ${error.message}"); return@addSnapshotListener }
+                        if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
+                            val list = snapshot.documents.mapNotNull { doc ->
+                                doc.data?.takeUnless { it["isDeleted"] == true }?.let { settlementRepaymentFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
+                            }
+                            onSettlementRepaymentsUpdated(list, workspaceId)
+                        }
+                    })
+                regList.add(wsRef.collection("financialState").document("current")
+                    .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
+                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (error != null) { Log.w(TAG, "FinancialState listener notice: ${error.message}"); return@addSnapshotListener }
+                        if (snapshot != null && snapshot.exists() && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
+                            val confirmedCash = (snapshot.getDouble("confirmedCash") ?: 0.0)
+                            val reservedCash = (snapshot.getDouble("reservedCash") ?: 0.0)
+                            val confirmedBank = (snapshot.getDouble("confirmedBank") ?: 0.0)
+                            onFinancialStateUpdated(confirmedCash, reservedCash, confirmedBank, workspaceId)
+                        }
+                    })
+                val notificationsQuery = if (workspaceId in ownerWorkspaceIds) {
+                    wsRef.collection("notifications")
+                } else {
+                    wsRef.collection("notifications").whereEqualTo("recipientUid", currentUid)
+                }
+                regList.add(notificationsQuery
+                    .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
+                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (error != null) { Log.w(TAG, "Notifications listener notice: ${error.message}"); return@addSnapshotListener }
+                        if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
+                            val list = snapshot.documents.mapNotNull { doc ->
+                                doc.data?.let { notificationFromFirestoreMap(it, fallbackId = doc.id, fallbackWorkspaceId = workspaceId) }
+                            }
+                            onNotificationsUpdated(list, workspaceId)
+                        }
+                    })
+            }
+
             activeWorkspaceListeners[workspaceId] = regList
             Log.d(TAG, "All Firestore snapshot listeners started for workspace: $workspaceId")
         }
+    }
+
+    suspend fun publishNotificationsIfAbsent(
+        workspaceId: String,
+        notifications: List<com.example.data.entity.AppNotificationEntity>
+    ) {
+        val firestore = db ?: return
+        if (workspaceId.isBlank() || notifications.isEmpty()) return
+        val actorUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+        for (item in notifications) {
+            if (item.workspaceId != workspaceId || item.id.isBlank()) continue
+            if (actorUid.isBlank() || item.actorUid != actorUid || item.recipientUid == actorUid) continue
+            val docRef = firestore.collection("workspaces").document(workspaceId)
+                .collection("notifications").document(item.id)
+            val existing = docRef.get(com.google.firebase.firestore.Source.SERVER).await()
+            if (!existing.exists()) {
+                docRef.set(item.toFirestoreMap()).await()
+            }
+        }
+    }
+
+    suspend fun markNotificationReadInCloud(
+        workspaceId: String,
+        notificationId: String,
+        readAt: Long
+    ) {
+        val firestore = db ?: return
+        if (workspaceId.isBlank() || notificationId.isBlank()) return
+        firestore.collection("workspaces").document(workspaceId)
+            .collection("notifications").document(notificationId)
+            .update(
+                mapOf(
+                    "isRead" to true,
+                    "readAt" to readAt
+                )
+            )
+            .await()
     }
 
     suspend fun savePartnerPermissions(
@@ -687,10 +817,13 @@ class FirestoreRepository(
 
     suspend fun recordAuditEvent(workspaceId: String, event: com.example.data.sync.AuditEvent) {
         val firestore = db ?: return
-        firestore.collection("workspaces").document(workspaceId)
+        if (workspaceId.isBlank() || event.eventId.isBlank()) return
+        val docRef = firestore.collection("workspaces").document(workspaceId)
             .collection("auditEvents").document(event.eventId)
-            .set(event.toMap(), com.google.firebase.firestore.SetOptions.merge())
-            .await()
+        val existing = docRef.get(com.google.firebase.firestore.Source.SERVER).await()
+        if (!existing.exists()) {
+            docRef.set(event.toMap()).await()
+        }
     }
 
     suspend fun updateLastSuccessfulSync(
@@ -904,6 +1037,11 @@ class FirestoreRepository(
     suspend fun getOperationRecordFromServer(op: com.example.data.entity.PendingOperationEntity): Map<String, Any?>? {
         val collection = when(op.entityType) {
             "JOB" -> "entries"; "EXPENSE" -> "expenses"; "WITHDRAWAL" -> "withdrawals"; "PAYMENT" -> "collections"
+            "EXTERNAL_LOAN" -> "externalLoans"
+            "EXTERNAL_LOAN_REPAYMENT" -> "externalLoanRepayments"
+            "BORROWING_REQUEST" -> "borrowingRequests"
+            "SETTLEMENT_OBLIGATION" -> "settlementObligations"
+            "SETTLEMENT_REPAYMENT" -> "settlementRepayments"
             "CUSTOMER" -> if (org.json.JSONObject(op.payloadJson).optBoolean("basicProfileCreate")) "customerDirectory" else "customers"
             else -> throw IllegalArgumentException("Unsupported recovery record")
         }
@@ -930,14 +1068,23 @@ class FirestoreRepository(
             "TRACTOR" -> "tractors"
             "EXTENSION" -> "extensions"
             "EXPENSE_CATEGORY" -> "expenseCategories"
+            "EXTERNAL_LOAN" -> "externalLoans"
+            "EXTERNAL_LOAN_REPAYMENT" -> "externalLoanRepayments"
+            "BORROWING_REQUEST" -> "borrowingRequests"
+            "SETTLEMENT_REPAYMENT" -> "settlementRepayments"
             else -> throw SecurityException("Unsupported queued operation")
         }
         val json = org.json.JSONObject(op.payloadJson)
-        val capabilities = if (op.entityType in setOf("CUSTOMER", "EXPENSE_CATEGORY")) {
+        val capabilities = if (op.entityType in setOf("CUSTOMER", "EXPENSE_CATEGORY", "PAYMENT", "EXPENSE", "WITHDRAWAL", "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT", "BORROWING_REQUEST", "SETTLEMENT_REPAYMENT")) {
             val workspace = firestore.collection("workspaces").document(op.workspaceId)
                 .get(com.google.firebase.firestore.Source.SERVER).await()
             WorkspaceSyncCapabilities.fromWorkspace(workspace.data.orEmpty()).also { it.requireSupported(op) }
         } else WorkspaceSyncCapabilities()
+        val atomicCashEnabled = if (op.entityType in setOf("PAYMENT", "EXPENSE", "WITHDRAWAL", "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT", "BORROWING_REQUEST", "SETTLEMENT_REPAYMENT")) {
+            capabilities.atomicCashControlV1 || firestore.collection("workspaces").document(op.workspaceId)
+                .collection("financialState").document("current")
+                .get(com.google.firebase.firestore.Source.SERVER).await().exists()
+        } else false
         if (json.optInt("operationProtocolVersion") != 2 || op.actionTime <= 0) throw WorkspaceUpgradeRequiredException()
         // Server Rules reject even milliseconds of future skew. Confirm eligibility
         // before the first mutation, retaining original IDs/times and rejected states.
@@ -960,46 +1107,31 @@ class FirestoreRepository(
         payload["actionTime"] = op.actionTime
         payload["isDeleted"] = op.mutationType == "DELETE"
         if (op.entityType == "PAYMENT") {
-            val collectionRef = firestore.collection("workspaces").document(op.workspaceId).collection("collections").document(op.entityId.toString())
-            val jobId = json.getLong("jobEntryId")
-            val jobRef = firestore.collection("workspaces").document(op.workspaceId).collection("entries").document(jobId.toString())
-            firestore.runTransaction { transaction ->
-                val existing = transaction.get(collectionRef)
-                val currentJob = transaction.get(jobRef)
-                if (existing.getString("operationId") == op.operationId) return@runTransaction null
-                if (!currentJob.exists() || currentJob.getString("workspaceId") != op.workspaceId) throw IllegalArgumentException("Collection source entry is missing")
-                require(kotlin.math.abs((currentJob.getDouble("amountReceived") ?: 0.0) - json.getDouble("baseAmountReceived")) < 0.001 &&
-                    kotlin.math.abs((currentJob.getDouble("pendingAmount") ?: 0.0) - json.getDouble("basePendingAmount")) < 0.001) { "Collection conflict: refresh the source due before retrying" }
-                val jobJson = org.json.JSONObject(json.getString("entrySnapshotJson"))
-                val entry = FirestoreQueuedJson.read(jobJson)
-                entry["collectionId"] = op.entityId.toString()
-                entry["operationId"] = op.operationId
-                entry["actorUid"] = op.actorUid
-                entry["actionTime"] = op.actionTime
-                entry["isDeleted"] = false
-                payload.remove("authorizationCreatedAt")
-                if (!existing.exists()) {
-                    com.example.data.auth.CollectionPolicy.requireDate(json.getLong("collectedAt"), currentJob.getLong("createdAt") ?: 0L)
-                    payload["authorizationTimeStatus"] = "CLIENT_ORIGINAL_V2"
-                    payload["authorizationCreatedAt"] = com.google.firebase.Timestamp(java.util.Date(json.getLong("createdAt")))
-                    payload["serverReceivedAt"] = com.google.firebase.firestore.FieldValue.serverTimestamp()
-                }
-                else {
-                    existing.getTimestamp("authorizationCreatedAt")?.let { payload["authorizationCreatedAt"] = it }
-                    existing.getTimestamp("serverReceivedAt")?.let { payload["serverReceivedAt"] = it }
-                    // The Room payment model does not contain authorization provenance. Preserve the stored value.
-                    payload.remove("authorizationTimeStatus")
-                    existing.getString("authorizationTimeStatus")?.let { payload["authorizationTimeStatus"] = it }
-                }
-                transaction.set(collectionRef, payload)
-                // A Collection changes its due, never concurrent source-record edits.
-                transaction.update(jobRef, mapOf(
-                    "amountReceived" to entry["amountReceived"], "pendingAmount" to entry["pendingAmount"],
-                    "protocolVersion" to 2, "operationType" to op.mutationType, "dependencies" to payload["dependencies"],
-                    "collectionId" to op.entityId.toString(), "operationId" to op.operationId,
-                    "actorUid" to op.actorUid, "actionTime" to op.actionTime, "isDeleted" to false))
-                null
-            }.await()
+            AtomicCashControl.applyPayment(firestore, op, json, payload, atomicCashEnabled)
+            return
+        }
+        if (atomicCashEnabled && op.entityType == "WITHDRAWAL") {
+            AtomicCashControl.applyWithdrawal(firestore, op, payload)
+            return
+        }
+        if (atomicCashEnabled && op.entityType == "EXPENSE") {
+            AtomicCashControl.applyExpense(firestore, op, json, payload)
+            return
+        }
+        if (op.entityType == "EXTERNAL_LOAN") {
+            Stage3AtomicControl.applyExternalLoan(firestore, op, payload, atomicCashEnabled)
+            return
+        }
+        if (op.entityType == "EXTERNAL_LOAN_REPAYMENT") {
+            Stage3AtomicControl.applyExternalLoanRepayment(firestore, op, payload, atomicCashEnabled)
+            return
+        }
+        if (op.entityType == "BORROWING_REQUEST") {
+            Stage3AtomicControl.applyBorrowingRequest(firestore, op, json, payload, atomicCashEnabled)
+            return
+        }
+        if (op.entityType == "SETTLEMENT_REPAYMENT") {
+            Stage3AtomicControl.applySettlementRepayment(firestore, op, json, payload, atomicCashEnabled)
             return
         }
         // Original queued action time determines eligibility; arrival time is separate audit evidence.
@@ -2061,15 +2193,33 @@ class FirestoreRepository(
         }.await()
         }
         archiveRef.update("financialReconciled", true).await()
-        for (chunk in manifest.orEmpty().map { it as String }.chunked(20)) {
+        val fsRef = ws.collection("financialState").document("current")
+        val atomicCashForPurge = ws.get(com.google.firebase.firestore.Source.SERVER).await().data?.let {
+            WorkspaceSyncCapabilities.fromWorkspace(it).atomicCashControlV1
+        } == true || fsRef.get(com.google.firebase.firestore.Source.SERVER).await().exists()
+        for ((chunkIndex, chunk) in manifest.orEmpty().map { it as String }.chunked(20).withIndex()) {
             require(chunk.all { it.startsWith("workspaces/$workspaceId/") }) { "Purge crossed workspace boundary" }
             val customers = chunk.filter { it.startsWith("workspaces/$workspaceId/customers/") }
             val recordRefs = chunk.filterNot { it in customers }.map(firestore::document)
+            val safeTarget = targetUid.replace(Regex("[^A-Za-z0-9:_-]"), "_").take(80)
+            val chunkOpId = "purge_${safeTarget}_chunk_$chunkIndex"
+            val cashOpRef = ws.collection("cashOperations").document(chunkOpId)
             firestore.runTransaction { tx ->
                 // A prior attempt may have committed only this delete chunk. Read every ref
                 // before writing, and delete only documents that still exist.
+                val fsSnap = if (atomicCashForPurge) tx.get(fsRef) else null
+                val cashOpSnap = if (atomicCashForPurge) tx.get(cashOpRef) else null
                 val existing = recordRefs.map(tx::get)
-                existing.filter { it.exists() }.forEach { tx.delete(it.reference) }
+                val toDelete = existing.filter { it.exists() }
+                if (atomicCashForPurge && toDelete.isNotEmpty()) {
+                    AtomicCashControl.applyPurgeChunkCash(
+                        tx, firestore, workspaceId, fsSnap, toDelete, chunkOpId,
+                        targetUid, actorUid, kotlin.math.min(purgeProtocol.actionTime, System.currentTimeMillis()),
+                        cashOpSnap
+                    )
+                }
+                toDelete.forEach { tx.delete(it.reference) }
+                null
             }.await()
             customers.forEach { path ->
                 val id = path.substringAfterLast('/')

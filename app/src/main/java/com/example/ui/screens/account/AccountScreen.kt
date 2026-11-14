@@ -523,7 +523,7 @@ fun AccountMainDashboard(
         }
     }
     val displayRole = if (isCollaborationOwner) {
-        if (isTamil) "வணிக உரிமையாளர்" else "Business Owner"
+        com.example.ui.util.businessRoleDisplayName("Owner", settings.workspaceId, workspaceMembers, isTamil)
     } else {
         when {
             authenticatedUserRole.equals("operator", ignoreCase = true) || currentMember?.role.equals("operator", ignoreCase = true) -> if (isTamil) "இயக்குநர்" else "Operator"
@@ -2913,7 +2913,7 @@ fun ManagePartnersPage(
                 id = parseLongId("owner_$resolvedOwnerUid"),
                 name = resolvedOwnerName,
                 phone = resolvedOwnerPhone,
-                role = if (isTamil) "உரிமையாளர்" else "Owner",
+                role = com.example.data.auth.RoleUtils.ROLE_OWNER,
                 photoUri = "",
                 isConnected = true,
                 originalPartnerEntity = null,

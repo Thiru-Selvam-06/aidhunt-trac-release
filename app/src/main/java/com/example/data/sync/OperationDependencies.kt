@@ -22,11 +22,13 @@ object OperationDependencies {
         fun ref(type: String, field: String) { data.optLong(field).takeIf { it > 0 }?.let { refs.add(type to it) } }
         when (op.entityType) {
             "JOB" -> { ref("CUSTOMER", "customerId"); ref("TRACTOR", "tractorId"); ref("EXTENSION", "extensionId") }
-            "EXPENSE" -> ref("JOB", "relatedJobId")
+            "EXPENSE" -> { ref("JOB", "relatedJobId"); ref("EXTERNAL_LOAN", "externalLoanId") }
             "PAYMENT" -> { ref("JOB", "jobEntryId"); ref("CUSTOMER", "customerId")
                 val allocations = org.json.JSONArray(data.optString("allocationsJson", "[]"))
                 for (i in 0 until allocations.length()) allocations.getJSONObject(i).optLong("jobId").takeIf { it > 0 }?.let { refs.add("JOB" to it) }
             }
+            "EXTERNAL_LOAN_REPAYMENT" -> ref("EXTERNAL_LOAN", "loanId")
+            "SETTLEMENT_REPAYMENT" -> ref("SETTLEMENT_OBLIGATION", "obligationId")
         }
         if (op.entityType == "JOB" && op.mutationType == "DELETE") {
             val dependencies = data.optJSONArray("deleteDependencies")

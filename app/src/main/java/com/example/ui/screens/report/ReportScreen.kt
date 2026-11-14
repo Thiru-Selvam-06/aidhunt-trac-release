@@ -22,6 +22,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.BarChart
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.EventBusy
+import androidx.compose.material.icons.filled.Handshake
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.PendingActions
@@ -131,7 +133,25 @@ fun ReportScreen(
     customExpenseCategories: List<String> = emptyList(),
     onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null,
     onAddExpenseConfirmed: ((ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null,
-    onUpdateExpenseWithBase: ((ExpenseEntity, ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null
+    onUpdateExpenseWithBase: ((ExpenseEntity, ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    currentRole: String = "",
+    externalLoans: List<com.example.data.entity.ExternalLoanEntity> = emptyList(),
+    externalLoanRepayments: List<com.example.data.entity.ExternalLoanRepaymentEntity> = emptyList(),
+    borrowingRequests: List<com.example.data.entity.BorrowingRequestEntity> = emptyList(),
+    settlementObligations: List<com.example.data.entity.SettlementObligationEntity> = emptyList(),
+    settlementRepayments: List<com.example.data.entity.SettlementRepaymentEntity> = emptyList(),
+    borrowingOverview: com.example.ui.util.WorkspaceBorrowingOverview = com.example.ui.util.WorkspaceBorrowingOverview(0.0, 0.0, 0.0, 0.0, 0.0, emptyMap()),
+    canManageExternalLoans: Boolean = false,
+    onRecordExternalLoan: ((String, Double, Double, String, String, Long, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onRecordExternalLoanRepayment: ((Long, Double, Double, String, String, Long, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onRequestBorrowing: ((String, String, Double, String, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onApproveBorrowing: ((Long, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onRejectBorrowing: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onExecuteBorrowing: ((Long, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onCancelBorrowing: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onRecordSettlementRepayment: ((Long, Double, String, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onConfirmSettlementRepayment: ((Long, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onRejectSettlementRepayment: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     Box(
@@ -152,6 +172,10 @@ fun ReportScreen(
                     totalWithdrawn = totalWithdrawn,
                     totalPendingDue = synchronizedCustomers.filter { it.balanceDue > 0 }.sumOf { it.balanceDue },
                     pendingCustomersCount = synchronizedCustomers.count { it.balanceDue > 0 },
+                    activeLoansCount = externalLoans.count { it.status != "SETTLED" },
+                    openSettlementsCount = settlementObligations.count { it.status != "SETTLED" } +
+                        borrowingRequests.count { it.status in setOf("PENDING_APPROVAL", "APPROVED_RESERVED") } +
+                        settlementRepayments.count { it.status == "PENDING_CONFIRMATION" },
                     payments = payments,
                     jobs = jobs,
                     workspaceMembers = workspaceMembers,
@@ -179,7 +203,8 @@ fun ReportScreen(
                     onDeleteExpense = onDeleteExpense,
                     isOwner = isOwner,
                     actorName = actorName,
-                    currentUid = currentUid
+                    currentUid = currentUid,
+                    externalLoans = externalLoans
                 )
             }
             ReportSubPage.BALANCE_SHEET -> {
@@ -242,7 +267,16 @@ fun ReportScreen(
                     onUpdatePartnerPercentages = onUpdatePartnerPercentages,
                     profitShareAllocations = profitShareAllocations,
                     profitShareAllocationDetails = profitShareAllocationDetails,
-                    onUpdateProfitShareAllocations = onUpdateProfitShareAllocations
+                    onUpdateProfitShareAllocations = onUpdateProfitShareAllocations,
+                    borrowingOverview = borrowingOverview,
+                    borrowingRequests = borrowingRequests,
+                    currentRole = currentRole,
+                    onRequestBorrowing = onRequestBorrowing,
+                    onApproveBorrowing = onApproveBorrowing,
+                    onRejectBorrowing = onRejectBorrowing,
+                    onExecuteBorrowing = onExecuteBorrowing,
+                    onCancelBorrowing = onCancelBorrowing,
+                    onOpenSettlements = { onSubPageSelected(ReportSubPage.SETTLEMENTS) }
                 )
             }
             ReportSubPage.CUSTOMER_CREDIT_DUE -> {
@@ -278,6 +312,42 @@ fun ReportScreen(
                     onDeleteCollection = onDeleteCollection
                 )
             }
+            ReportSubPage.EXTERNAL_LOANS -> {
+                ExternalLoansScreen(
+                    settings = settings,
+                    loans = externalLoans,
+                    repayments = externalLoanRepayments,
+                    availableCash = borrowingOverview.unreservedCash,
+                    canManageLoans = canManageExternalLoans,
+                    onRecordLoan = { lender, principal, interest, dest, note, dateMillis, onDone, onErr ->
+                        onRecordExternalLoan?.invoke(lender, principal, interest, dest, note, dateMillis, onDone, onErr)
+                    },
+                    onRecordRepayment = { loanId, pPaid, iPaid, source, note, repaidAt, onDone, onErr ->
+                        onRecordExternalLoanRepayment?.invoke(loanId, pPaid, iPaid, source, note, repaidAt, onDone, onErr)
+                    }
+                )
+            }
+            ReportSubPage.SETTLEMENTS -> {
+                PartnerSettlementsScreen(
+                    settings = settings,
+                    isOwner = isOwner,
+                    currentUid = currentUid,
+                    currentRole = currentRole,
+                    borrowingOverview = borrowingOverview,
+                    borrowingRequests = borrowingRequests,
+                    obligations = settlementObligations,
+                    repayments = settlementRepayments,
+                    onApproveRequest = { id, onDone, onErr -> onApproveBorrowing?.invoke(id, onDone, onErr) },
+                    onRejectRequest = { id, reason, onDone, onErr -> onRejectBorrowing?.invoke(id, reason, onDone, onErr) },
+                    onExecuteRequest = { id, onDone, onErr -> onExecuteBorrowing?.invoke(id, onDone, onErr) },
+                    onCancelRequest = { id, reason, onDone, onErr -> onCancelBorrowing?.invoke(id, reason, onDone, onErr) },
+                    onRecordRepayment = { obId, amt, mode, note, onDone, onErr ->
+                        onRecordSettlementRepayment?.invoke(obId, amt, mode, note, onDone, onErr)
+                    },
+                    onConfirmRepayment = { repId, onDone, onErr -> onConfirmSettlementRepayment?.invoke(repId, onDone, onErr) },
+                    onRejectRepayment = { repId, reason, onDone, onErr -> onRejectSettlementRepayment?.invoke(repId, reason, onDone, onErr) }
+                )
+            }
         }
     }
 }
@@ -291,6 +361,8 @@ fun ReportMenuDashboard(
     totalWithdrawn: Double,
     totalPendingDue: Double,
     pendingCustomersCount: Int,
+    activeLoansCount: Int = 0,
+    openSettlementsCount: Int = 0,
     payments: List<com.example.data.entity.PaymentEntity> = emptyList(),
     jobs: List<com.example.data.entity.JobEntryEntity> = emptyList(),
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
@@ -587,6 +659,44 @@ fun ReportMenuDashboard(
                         } else {
                             Spacer(modifier = Modifier.weight(1f))
                         }
+                    }
+                }
+
+                // Row 4: External Loans & Partner Settlements
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(11.dp)
+                    ) {
+                        ReportTileCard(
+                            title = if (isTamil) "வெளிப்புற கடன்கள்" else "External Loans",
+                            subtitle = if (isTamil) "அசல் & வட்டி கணக்கு" else "Principal & interest tracking",
+                            icon = Icons.Default.AccountBalance,
+                            iconBgColor = Color(0xFFE0E7FF),
+                            iconTint = Color(0xFF4338CA),
+                            badgeText = if (isTamil) "$activeLoansCount நிலுவை" else "$activeLoansCount active",
+                            badgeBgColor = Color(0xFFEEF2FF),
+                            badgeTextColor = Color(0xFF3730A3),
+                            cornerAuraColor = Color(0xFF6366F1).copy(alpha = 0.09f),
+                            testTag = "report_menu_card_external_loans",
+                            modifier = Modifier.weight(1f),
+                            onClick = { onNavigate(ReportSubPage.EXTERNAL_LOANS) }
+                        )
+
+                        ReportTileCard(
+                            title = if (isTamil) "கடன் & தீர்வுகள்" else "Partner Settlements",
+                            subtitle = if (isTamil) "ஒப்புதல் & திருப்பிச் செலுத்தல்" else "Borrowing & repayments",
+                            icon = Icons.Default.Handshake,
+                            iconBgColor = Color(0xFFFEF3C7),
+                            iconTint = Color(0xFFB45309),
+                            badgeText = if (isTamil) "$openSettlementsCount திறந்தவை" else "$openSettlementsCount open",
+                            badgeBgColor = Color(0xFFFFFBEB),
+                            badgeTextColor = Color(0xFF92400E),
+                            cornerAuraColor = Color(0xFFF59E0B).copy(alpha = 0.09f),
+                            testTag = "report_menu_card_settlements",
+                            modifier = Modifier.weight(1f),
+                            onClick = { onNavigate(ReportSubPage.SETTLEMENTS) }
+                        )
                     }
                 }
             }

@@ -1649,8 +1649,9 @@ fun CustomerDetailSheet(
                                 color = TextMutedDark
                              )
                             if (!isPayment) {
-                                val createdByDisplay = com.example.data.auth.RoleUtils.getCreatedByDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil)
-                                val entryForDisplay = com.example.data.auth.RoleUtils.getEntryForDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil)
+                                val hasPartnership = com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
+                                val createdByDisplay = com.example.data.auth.RoleUtils.getCreatedByDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil, hasPartnership)
+                                val entryForDisplay = com.example.data.auth.RoleUtils.getEntryForDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil, hasPartnership)
                                 Spacer(modifier = Modifier.height(3.dp))
                                 Text(createdByDisplay, fontSize = 11.sp, color = Color(0xFF374151), fontWeight = FontWeight.Medium)
                                 if (entryForDisplay != null) {
@@ -2076,7 +2077,7 @@ fun RecordCustomerPaymentDialog(
                                     onClick = { selectedCollectorUid = option.uid },
                                     label = {
                                         Text(
-                                            "${option.name} (${if (option.role.equals("Owner", ignoreCase = true)) (if (isTamil) "உரிமையாளர்" else "Owner") else (if (isTamil) "பங்குதாரர்" else "Partner")})",
+                                            "${option.name} (${com.example.ui.util.businessRoleDisplayName(option.role, customer.workspaceId, workspaceMembers, isTamil)})",
                                             fontSize = 11.sp
                                         )
                                     },
@@ -2105,7 +2106,7 @@ fun RecordCustomerPaymentDialog(
                                     color = ForestGreenHeader
                                 )
                                 Text(
-                                    if (selectedCollector.role.equals("Owner", ignoreCase = true)) (if (isTamil) "உரிமையாளர்" else "Owner") else (if (isTamil) "பங்குதாரர்" else "Partner"),
+                                    com.example.ui.util.businessRoleDisplayName(selectedCollector.role, customer.workspaceId, workspaceMembers, isTamil),
                                     fontSize = 11.sp,
                                     color = DeepSageGreen,
                                     fontWeight = FontWeight.SemiBold

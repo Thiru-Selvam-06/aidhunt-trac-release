@@ -39,7 +39,7 @@ object WorkspaceSyncScheduler {
 
 class WorkspaceSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return Result.success()
+        val uid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull() ?: return Result.success()
         val expectedUid = inputData.getString("actorUid") ?: uid
         if (expectedUid != uid) return Result.success()
         val db = AppDatabase.getInstance(applicationContext)

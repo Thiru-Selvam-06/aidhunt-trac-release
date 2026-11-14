@@ -812,10 +812,12 @@ private fun CollectionHistoryCard(
         if (payment.collectedAt > 0) sdf.format(date) else "Date unavailable"
     }
 
-    val collectorDisplay = remember(payment, workspaceMembers, partners, ownerName, isTamil) {
+    val hasPartnership = com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
+    val collectorDisplay = remember(payment, workspaceMembers, partners, ownerName, isTamil, hasPartnership) {
         val role = RoleUtils.normalizeRole(payment.collectorRole)
+        val displayRole = com.example.ui.util.businessDisplayRole(role, hasPartnership)
         val name = payment.collectorName.ifBlank { "Owner" }
-        RoleUtils.formatRoleAndName(role, name, isTamil)
+        RoleUtils.formatRoleAndName(displayRole, name, isTamil)
     }
 
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {

@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -809,7 +810,10 @@ fun AppTopHeader(
     rightActionIcon: ImageVector? = null,
     onRightActionClick: (() -> Unit)? = null,
     cloudConnectionState: com.example.data.firebase.CloudConnectionState = com.example.data.firebase.CloudConnectionState.IDLE,
-    isDarkGreenStyle: Boolean = true
+    isDarkGreenStyle: Boolean = true,
+    showNotificationBell: Boolean = false,
+    notificationUnreadCount: Int = 0,
+    onNotificationBellClick: (() -> Unit)? = null
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     val responsive = com.example.ui.theme.rememberResponsiveDimensions()
@@ -1007,6 +1011,40 @@ fun AppTopHeader(
                                         )
                                     )
                                 }
+                            }
+                        }
+                    }
+
+                    if (showNotificationBell && onNotificationBellClick != null) {
+                        IconButton(
+                            onClick = onNotificationBellClick,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("notification_bell_button")
+                        ) {
+                            androidx.compose.material3.BadgedBox(
+                                badge = {
+                                    if (notificationUnreadCount > 0) {
+                                        androidx.compose.material3.Badge(
+                                            containerColor = Color(0xFFDC2626),
+                                            contentColor = Color.White,
+                                            modifier = Modifier.testTag("notification_unread_badge")
+                                        ) {
+                                            Text(
+                                                text = if (notificationUnreadCount > 99) "99+" else notificationUnreadCount.toString(),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Notifications,
+                                    contentDescription = if (isTamil) "அறிவிப்புகள்" else "Notifications",
+                                    tint = headerIconColor,
+                                    modifier = Modifier.size(if (responsive.isSmallPhone) 21.dp else 23.dp)
+                                )
                             }
                         }
                     }

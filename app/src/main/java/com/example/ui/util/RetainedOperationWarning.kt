@@ -18,6 +18,8 @@ object RetainedOperationWarning {
             rejected.any { it.entityType == "EXPENSE" && it.mutationType == "DELETE" &&
                 "PERMISSION_DENIED" in it.failureReason.uppercase() } ->
                 "An earlier Expense deletion was denied; that Expense remains in the original data. Review the retained action in Account > Room SQLite & Cloud Push."
+            reasons.any { "INSUFFICIENT" in it || "CONFIRMED SHARED CASH" in it } ->
+                "Shared cash changed before a queued withdrawal completed. Review Needs Review and current available balance before creating a new request."
             reasons.any { "PERMISSION_DENIED" in it || "UNAUTHORIZED" in it || "MEMBERSHIP" in it } ->
                 if (role.equals("OWNER", ignoreCase = true))
                     "A previous action was denied. Review its specific failure in Account > Room SQLite & Cloud Push; your Owner role alone does not explain it."

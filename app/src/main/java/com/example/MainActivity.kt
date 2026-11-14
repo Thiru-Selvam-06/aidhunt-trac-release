@@ -119,8 +119,18 @@ fun MainAppContent(
     val syncCapabilities by viewModel.syncCapabilities.collectAsState()
     val authenticatedUserName by viewModel.authenticatedUserName.collectAsState()
     val authenticatedUserRole by viewModel.authenticatedUserRole.collectAsState()
+    val currentUserRole by viewModel.currentUserRole.collectAsState()
     val profitShareAllocations by viewModel.profitShareAllocations.collectAsState()
     val profitShareAllocationDetails by viewModel.profitShareAllocationDetails.collectAsState()
+    val externalLoans by viewModel.externalLoans.collectAsState()
+    val externalLoanRepayments by viewModel.externalLoanRepayments.collectAsState()
+    val borrowingRequests by viewModel.borrowingRequests.collectAsState()
+    val settlementObligations by viewModel.settlementObligations.collectAsState()
+    val settlementRepayments by viewModel.settlementRepayments.collectAsState()
+    val borrowingOverview by viewModel.borrowingOverview.collectAsState()
+    val notifications by viewModel.notifications.collectAsState()
+    val unreadNotificationCount by viewModel.unreadNotificationCount.collectAsState()
+    var showNotificationsSheet by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     // Handle Hardware Back Button
@@ -203,6 +213,16 @@ fun MainAppContent(
                 }
                 ReportSubPage.COLLECTION_HISTORY -> {
                     topBarTitle = if (isTamil) "கட்டணம் வசூல் வரலாறு" else "Collection History"
+                    showBackButton = true
+                    onBackAction = { viewModel.setReportSubPage(ReportSubPage.MENU) }
+                }
+                ReportSubPage.EXTERNAL_LOANS -> {
+                    topBarTitle = if (isTamil) "வெளிப்புற கடன்கள்" else "External Loans"
+                    showBackButton = true
+                    onBackAction = { viewModel.setReportSubPage(ReportSubPage.MENU) }
+                }
+                ReportSubPage.SETTLEMENTS -> {
+                    topBarTitle = if (isTamil) "கடன் & தீர்வுகள்" else "Partner Settlements"
                     showBackButton = true
                     onBackAction = { viewModel.setReportSubPage(ReportSubPage.MENU) }
                 }
@@ -437,7 +457,6 @@ fun MainAppContent(
     } else {
         val accessControl by viewModel.accessControlState.collectAsState()
         val isCollaborationOwner by viewModel.isCollaborationOwner.collectAsState()
-        val currentUserRole by viewModel.currentUserRole.collectAsState()
         if (viewModel.isAccountBlocked()) {
             com.example.ui.components.AccountSuspendedOrExpiredScreen(
                 accessControl = accessControl,
@@ -516,7 +535,11 @@ fun MainAppContent(
                         },
                         rightActionIcon = rightActionIcon,
                         onRightActionClick = onRightActionClick,
-                        isDarkGreenStyle = true
+                        isDarkGreenStyle = true,
+                        showNotificationBell = currentUserRole == com.example.data.auth.RoleUtils.ROLE_OWNER ||
+                            currentUserRole == com.example.data.auth.RoleUtils.ROLE_PARTNER,
+                        notificationUnreadCount = unreadNotificationCount,
+                        onNotificationBellClick = { showNotificationsSheet = true }
                     )
                 },
                 bottomBar = {
@@ -572,7 +595,7 @@ fun MainAppContent(
                                     retainedActions = retainedHomeActions,
                                     isOwner = isCollaborationOwner,
                                     currentUid = viewModel.currentUid ?: "",
-                                    workspaceMembers = activeWorkspaceMembers,
+                                    workspaceMembers = workspaceMembers,
                                     partners = partners,
                                     authenticatedUserName = authenticatedUserName,
                                     authenticatedUserRole = authenticatedUserRole,
@@ -621,6 +644,8 @@ fun MainAppContent(
                                             ReportSubPage.WITHDRAWAL -> com.example.data.auth.AuthorizationManager.PAGE_WITHDRAWAL
                                             ReportSubPage.CUSTOMER_CREDIT_DUE -> com.example.data.auth.AuthorizationManager.PAGE_CUSTOMER_CREDIT_DUE
                                             ReportSubPage.COLLECTION_HISTORY -> com.example.data.auth.AuthorizationManager.PAGE_COLLECTION_HISTORY
+                                            ReportSubPage.EXTERNAL_LOANS -> com.example.data.auth.AuthorizationManager.PAGE_EXTERNAL_LOANS
+                                            ReportSubPage.SETTLEMENTS -> com.example.data.auth.AuthorizationManager.PAGE_SETTLEMENTS
                                             else -> null
                                         }
                                         if (subPage == ReportSubPage.OLD_ENTRY && !viewModel.canCreateOldEntry()) {
@@ -753,8 +778,8 @@ fun MainAppContent(
                                     isOwner = isCollaborationOwner,
                                     actorName = if (isCollaborationOwner) settings.ownerName.ifBlank { "Owner" } else settings.activePartnerName.ifBlank { "Partner" },
                                     currentUid = viewModel.currentUid ?: "",
-                                    workspaceMembers = activeWorkspaceMembers,
-                                    businessOverviewMembers = activeWorkspaceMembers,
+                                    workspaceMembers = workspaceMembers,
+                                    businessOverviewMembers = workspaceMembers,
                                     payments = payments,
                                     partnerPercentages = viewModel.partnerPercentages.collectAsState().value,
                                     onUpdatePartnerPercentages = { viewModel.updatePartnerPercentages(it) },
@@ -762,6 +787,140 @@ fun MainAppContent(
                                     profitShareAllocationDetails = profitShareAllocationDetails,
                                     onUpdateProfitShareAllocations = { allocations, details ->
                                         viewModel.updateProfitShareAllocations(allocations, details)
+                                    },
+                                    currentRole = currentUserRole,
+                                    externalLoans = externalLoans,
+                                    externalLoanRepayments = externalLoanRepayments,
+                                    borrowingRequests = borrowingRequests,
+                                    settlementObligations = settlementObligations,
+                                    settlementRepayments = settlementRepayments,
+                                    borrowingOverview = borrowingOverview,
+                                    canManageExternalLoans = viewModel.canManageExternalLoans(),
+                                    onRecordExternalLoan = { lender, principal, interest, dest, note, dateMillis, onDone, onErr ->
+                                        viewModel.recordExternalLoan(
+                                            lenderName = lender,
+                                            principalAmount = principal,
+                                            interestAmount = interest,
+                                            destination = dest,
+                                            note = note,
+                                            loanDateMillis = dateMillis,
+                                            onSuccess = {
+                                                onShowToast(if (isTamil) "வெளிப்புற கடன் பதிவு செய்யப்பட்டது" else "External loan recorded")
+                                                onDone()
+                                            },
+                                            onError = onErr
+                                        )
+                                    },
+                                    onRecordExternalLoanRepayment = { loanId, pPaid, iPaid, source, note, repaidAt, onDone, onErr ->
+                                        viewModel.recordExternalLoanRepayment(
+                                            loanId = loanId,
+                                            principalPaid = pPaid,
+                                            interestPaid = iPaid,
+                                            source = source,
+                                            note = note,
+                                            repaidAt = repaidAt,
+                                            onSuccess = {
+                                                onShowToast(if (isTamil) "கடன் திருப்பிச் செலுத்தல் பதிவு செய்யப்பட்டது" else "Loan repayment recorded")
+                                                onDone()
+                                            },
+                                            onError = onErr
+                                        )
+                                    },
+                                    onRequestBorrowing = { sourceType, lenderUid, amount, note, borrowerUid, onDone, onErr ->
+                                        viewModel.requestBorrowing(
+                                            sourceType = sourceType,
+                                            lendingPartnerUid = lenderUid,
+                                            amount = amount,
+                                            note = note,
+                                            targetBorrowerUid = borrowerUid,
+                                            onSuccess = {
+                                                onShowToast(
+                                                    if (sourceType == "BUSINESS_ONLY") {
+                                                        if (isTamil) "வணிக கடன் பதிவு செய்யப்பட்டது" else "Business borrow recorded"
+                                                    } else {
+                                                        if (isTamil) "கடன் கோரிக்கை அனுப்பப்பட்டது" else "Borrowing request sent"
+                                                    }
+                                                )
+                                                onDone()
+                                            },
+                                            onError = onErr
+                                        )
+                                    },
+                                    onApproveBorrowing = { reqId, onDone, onErr ->
+                                        viewModel.approveAndReserveBorrowing(
+                                            requestId = reqId,
+                                            onSuccess = {
+                                                onShowToast(if (isTamil) "ஒப்புதல் & ரொக்கம் முன்பதிவு செய்யப்பட்டது" else "Approved & funds reserved")
+                                                onDone()
+                                            },
+                                            onError = onErr
+                                        )
+                                    },
+                                    onRejectBorrowing = { reqId, reason, onDone, onErr ->
+                                        viewModel.rejectBorrowingRequest(
+                                            requestId = reqId,
+                                            reason = reason,
+                                            onSuccess = {
+                                                onShowToast(if (isTamil) "கோரிக்கை நிராகரிக்கப்பட்டது" else "Request rejected")
+                                                onDone()
+                                            },
+                                            onError = onErr
+                                        )
+                                    },
+                                    onExecuteBorrowing = { reqId, onDone, onErr ->
+                                        viewModel.executeApprovedBorrowing(
+                                            requestId = reqId,
+                                            onSuccess = {
+                                                onShowToast(if (isTamil) "ஒப்புதல் பெற்ற கடன் பெறப்பட்டது" else "Approved borrow received")
+                                                onDone()
+                                            },
+                                            onError = onErr
+                                        )
+                                    },
+                                    onCancelBorrowing = { reqId, reason, onDone, onErr ->
+                                        viewModel.cancelBorrowingRequest(
+                                            requestId = reqId,
+                                            reason = reason,
+                                            onSuccess = {
+                                                onShowToast(if (isTamil) "கடன் கோரிக்கை ரத்து செய்யப்பட்டது" else "Borrowing request cancelled")
+                                                onDone()
+                                            },
+                                            onError = onErr
+                                        )
+                                    },
+                                    onRecordSettlementRepayment = { obId, amt, mode, note, onDone, onErr ->
+                                        viewModel.recordSettlementRepayment(
+                                            obligationId = obId,
+                                            amount = amt,
+                                            mode = mode,
+                                            note = note,
+                                            onSuccess = {
+                                                onShowToast(if (isTamil) "திருப்பிச் செலுத்தல் பதிவு செய்யப்பட்டது" else "Repayment submitted for confirmation")
+                                                onDone()
+                                            },
+                                            onError = onErr
+                                        )
+                                    },
+                                    onConfirmSettlementRepayment = { repId, onDone, onErr ->
+                                        viewModel.confirmSettlementRepayment(
+                                            repaymentId = repId,
+                                            onSuccess = {
+                                                onShowToast(if (isTamil) "திருப்பிச் செலுத்தல் உறுதி செய்யப்பட்டது" else "Repayment confirmed")
+                                                onDone()
+                                            },
+                                            onError = onErr
+                                        )
+                                    },
+                                    onRejectSettlementRepayment = { repId, reason, onDone, onErr ->
+                                        viewModel.rejectSettlementRepayment(
+                                            repaymentId = repId,
+                                            reason = reason,
+                                            onSuccess = {
+                                                onShowToast(if (isTamil) "திருப்பிச் செலுத்தல் நிராகரிக்கப்பட்டது" else "Repayment rejected")
+                                                onDone()
+                                            },
+                                            onError = onErr
+                                        )
                                     },
                                     onStartOldEntry = { dateMillis ->
                                         if (!viewModel.canCreateOldEntry()) {
@@ -874,7 +1033,7 @@ fun MainAppContent(
                                     draft = draft,
                                     isSaving = isSavingJob,
                                     isCollaborationOwner = isCollaborationOwner,
-                                    workspaceMembers = activeWorkspaceMembers,
+                                    workspaceMembers = workspaceMembers,
                                     currentUid = currentActorUid,
                                     workTypeExtensions = workTypeExtensions,
                                     onUpdateDraft = { viewModel.updateNewEntryDraft(it) },
@@ -1079,6 +1238,17 @@ fun MainAppContent(
                         }
                     }
                 }
+            }
+            if (showNotificationsSheet) {
+                com.example.ui.components.NotificationPanelSheet(
+                    notifications = notifications,
+                    isOwner = isCollaborationOwner,
+                    isTamil = isTamil,
+                    currency = settings.currency,
+                    onMarkRead = { notifId -> viewModel.markNotificationRead(notifId) },
+                    onMarkAllRead = { viewModel.markAllNotificationsRead() },
+                    onDismiss = { showNotificationsSheet = false }
+                )
             }
         }
     }

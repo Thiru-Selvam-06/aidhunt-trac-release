@@ -53,6 +53,13 @@ class WorkspaceSyncCapabilitiesTest {
             assertEquals(before, operation)
             WorkspaceSyncCapabilities(true, true).requireSupported(operation)
         }
+        assertEquals(WorkspaceSyncCapabilities(true, false, true), WorkspaceSyncCapabilities.fromWorkspace(
+            mapOf("syncCapabilities" to mapOf("expenseCategoriesV1" to true, "atomicCashControlV1" to true))))
+        assertEquals(WorkspaceSyncCapabilities(), WorkspaceSyncCapabilities.fromWorkspace(
+            mapOf("syncCapabilities" to mapOf("atomicCashControlV1" to "true"))))
+        val atomicCached = VerifiedWorkspaceCapabilityCache(context)
+        atomicCached.record("atomic-user", "ws-atomic", WorkspaceSyncCapabilities(false, false, true))
+        assertTrue(VerifiedWorkspaceCapabilityCache(context).restore("atomic-user", "ws-atomic").atomicCashControlV1)
         WorkspaceSyncCapabilities().requireSupported(basic.copy(payloadJson = "{}"))
         WorkspaceSyncCapabilities().requireSupported(basic.copy(entityType = "JOB"))
     }

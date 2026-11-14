@@ -1,4 +1,4 @@
-﻿package com.example.ui.screens.report
+package com.example.ui.screens.report
 
 import android.widget.Toast
 import androidx.compose.animation.*
@@ -670,7 +670,8 @@ fun BusinessOverviewScreen(
 
                         // Responsive Bar Chart — REAL data
                         DriverEarningsBarChart(
-                            partnerBreakdowns = businessOverviewChartMembers(partnerBreakdowns, workspaceMembers, currentUid, settings.workspaceId),
+                            partnerBreakdowns = businessOverviewChartMembers(partnerBreakdowns, workspaceMembers, currentUid, settings.workspaceId)
+                                .map { it.copy(role = businessDisplayRole(it.role, hasPartnership)) },
                             workspaceMembers = workspaceMembers,
                             scopedJobs = scopedJobs,
                             totalExpenses = summary.totalExpenses,
@@ -885,8 +886,9 @@ fun BusinessOverviewScreen(
         // ─────────────────────────────────────────────────────────────
         if (showPersonSelectorDialog) {
             val allMembersList = remember(partnerBreakdowns, workspaceMembers, settings.workspaceId) {
-                listOf("All" to "All") + (workspaceMembers.filter { it.uid.isNotBlank() && it.workspaceId == settings.workspaceId }
-                    .map { it.uid to it.displayName.orEmpty().ifBlank { "Member" } } +
+                listOf("All" to "All") + (workspaceMembers.filter {
+                    it.uid.isNotBlank() && it.workspaceId == settings.workspaceId && it.status.equals("active", true)
+                }.map { it.uid to it.displayName.orEmpty().ifBlank { "Member" } } +
                     partnerBreakdowns.map { it.partnerUid to it.partnerName }).distinctBy { it.first }
             }
 
@@ -1199,7 +1201,14 @@ private fun DriverEarningsBarChart(
                 )
             }
         } else {
-            workspaceMembers.filter { it.uid.isNotBlank() }.distinctBy { it.uid }.map { m ->
+            val hasPartnership = com.example.ui.util.hasBusinessPartnershipHistory(workspaceId = workspaceMembers.firstOrNull { it.workspaceId.isNotBlank() }?.workspaceId.orEmpty(), members = workspaceMembers)
+            workspaceMembers.filter {
+                it.uid.isNotBlank() && it.status.equals("active", true) &&
+                    com.example.data.auth.RoleUtils.normalizeRole(it.role) in setOf(
+                        com.example.data.auth.RoleUtils.ROLE_OWNER,
+                        com.example.data.auth.RoleUtils.ROLE_PARTNER
+                    )
+            }.distinctBy { it.uid }.map { m ->
                 val pName = m.displayName ?: m.phoneNumber ?: "Member"
                 val pJobs = scopedJobs.filter { it.financialAttributionUid.ifBlank { it.entryForUid } == m.uid }
                 val minutes = pJobs.sumOf { it.durationMinutes }
@@ -1209,7 +1218,7 @@ private fun DriverEarningsBarChart(
                 DriverMetricItem(
                     uid = m.uid,
                     name = pName,
-                    role = m.role,
+                    role = com.example.ui.util.businessDisplayRole(m.role, hasPartnership),
                     amount = totalAmt,
                     hours = minutes / 60.0,
                     durationMinutes = minutes,

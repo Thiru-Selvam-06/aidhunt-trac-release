@@ -14,6 +14,12 @@ import com.example.data.entity.WithdrawalEntity
 import com.example.data.entity.PaymentEntity
 import com.example.data.entity.ChecklistItemEntity
 import com.example.data.entity.WorkTypeExtensionEntity
+import com.example.data.entity.BorrowingRequestEntity
+import com.example.data.entity.ExternalLoanEntity
+import com.example.data.entity.ExternalLoanRepaymentEntity
+import com.example.data.entity.SettlementObligationEntity
+import com.example.data.entity.SettlementRepaymentEntity
+import com.example.data.entity.AppNotificationEntity
 import com.example.data.firebase.FirestoreRepository
 import com.example.data.firebase.UserProfile
 import com.example.data.firebase.AccountLookupResult
@@ -21,6 +27,11 @@ import com.example.data.firebase.Workspace
 import com.example.data.firebase.WorkspaceInvitation
 import com.example.data.firebase.WorkspaceMember
 import com.example.data.firebase.appSettingsFromFirestoreMap
+import com.example.data.firebase.borrowingRequestFromFirestoreMap
+import com.example.data.firebase.externalLoanFromFirestoreMap
+import com.example.data.firebase.externalLoanRepaymentFromFirestoreMap
+import com.example.data.firebase.settlementObligationFromFirestoreMap
+import com.example.data.firebase.settlementRepaymentFromFirestoreMap
 import com.example.data.firebase.toFirestoreMap
 import com.example.data.firebase.toBasicFirestoreMap
 import com.example.data.firebase.asCustomerChoice
@@ -133,7 +144,21 @@ class WorkspaceRepository(
     private val workTypeExtensionDao = database.workTypeExtensionDao()
     private val expenseCategoryDao = database.expenseCategoryDao()
     private val basicCustomerDao = database.basicCustomerDao()
+    private val stage3Dao = database.stage3Dao()
+    private val appNotificationDao = database.appNotificationDao()
     private val basicSnapshotRevision = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+
+    private val _confirmedCash = MutableStateFlow(0.0)
+    val confirmedCash: StateFlow<Double> = _confirmedCash.asStateFlow()
+
+    private val _reservedCash = MutableStateFlow(0.0)
+    val reservedCash: StateFlow<Double> = _reservedCash.asStateFlow()
+
+    private val _confirmedBank = MutableStateFlow(0.0)
+    val confirmedBank: StateFlow<Double> = _confirmedBank.asStateFlow()
+
+    private val _hasConfirmedFinancialState = MutableStateFlow(false)
+    val hasConfirmedFinancialState: StateFlow<Boolean> = _hasConfirmedFinancialState.asStateFlow()
 
     val currentWorkspace: StateFlow<Workspace?> = firestoreRepository.currentWorkspace
 
@@ -761,6 +786,7 @@ class WorkspaceRepository(
             val verifiedMembers = firestoreRepository.getWorkspaceMembers(targetWsId)
             workspaceRequests.check(request)
             _activeWorkspaceMembers.value = verifiedMembers
+            _workspaceMembers.value = verifiedMembers
             cacheVerifiedMembership(uid, targetWsId, verifiedMembers)
             currentUserRole = normalizedFinalRole
             Log.i(
@@ -958,6 +984,11 @@ class WorkspaceRepository(
                                 tractorDao.deleteAllForWorkspace(removedWsId)
                                 partnerDao.deleteAllForWorkspace(removedWsId)
                                 withdrawalDao.deleteAllSyncedForWorkspace(removedWsId)
+                                stage3Dao.deleteAllSyncedExternalLoans(removedWsId)
+                                stage3Dao.deleteAllSyncedExternalLoanRepayments(removedWsId)
+                                stage3Dao.deleteAllSyncedBorrowingRequests(removedWsId)
+                                stage3Dao.deleteAllSyncedSettlementObligations(removedWsId)
+                                stage3Dao.deleteAllSyncedSettlementRepayments(removedWsId)
                             } catch (e: Exception) {
                                 Log.w("TRAC_WORKSPACE", "Error cleaning up removed workspace $removedWsId: ${e.message}")
                             }
@@ -1027,6 +1058,7 @@ class WorkspaceRepository(
         firestoreRepository.startRealtimeListenersForWorkspaces(
             workspaceIds = visibleIds,
             operatorWorkspaceIds = if (currentUserRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) visibleIds else emptySet(),
+            ownerWorkspaceIds = if (currentUserRole == com.example.data.auth.RoleUtils.ROLE_OWNER) visibleIds else emptySet(),
             onMembershipUpdated = { members, wsId ->
                 if (wsId == _activeWorkspaceId.value) {
                     val uid = getEffectiveActorUid().orEmpty()
@@ -1243,6 +1275,49 @@ class WorkspaceRepository(
                     workTypeExtensionDao.insertAll(remoteExtensions.filter { it.id !in pendingIds })
                     Log.d(TAG, "Extensions synced for $listenerWsId: count=${remoteExtensions.size}")
                 }
+            },
+            onExternalLoansUpdated = { remoteLoans, listenerWsId ->
+                replicaUpdates.submit {
+                    syncRemoteExternalLoansToLocal(remoteLoans, listenerWsId)
+                }
+            },
+            onExternalLoanRepaymentsUpdated = { remoteRepayments, listenerWsId ->
+                replicaUpdates.submit {
+                    syncRemoteExternalLoanRepaymentsToLocal(remoteRepayments, listenerWsId)
+                }
+            },
+            onBorrowingRequestsUpdated = { remoteRequests, listenerWsId ->
+                replicaUpdates.submit {
+                    syncRemoteBorrowingRequestsToLocal(remoteRequests, listenerWsId)
+                }
+            },
+            onSettlementObligationsUpdated = { remoteObligations, listenerWsId ->
+                replicaUpdates.submit {
+                    syncRemoteSettlementObligationsToLocal(remoteObligations, listenerWsId)
+                }
+            },
+            onSettlementRepaymentsUpdated = { remoteRepayments, listenerWsId ->
+                replicaUpdates.submit {
+                    syncRemoteSettlementRepaymentsToLocal(remoteRepayments, listenerWsId)
+                }
+            },
+            onFinancialStateUpdated = { cash, reserved, bank, listenerWsId ->
+                if (listenerWsId == _activeWorkspaceId.value) {
+                    _confirmedCash.value = cash
+                    _reservedCash.value = reserved
+                    _confirmedBank.value = bank
+                    _hasConfirmedFinancialState.value = true
+                }
+            },
+            onNotificationsUpdated = { remoteNotifications, listenerWsId ->
+                val snapshotActor = getEffectiveActorUid()
+                scope.launch {
+                    if (snapshotActor.isNullOrBlank() || snapshotActor != activeUid || snapshotActor != getEffectiveActorUid() || listenerWsId != _activeWorkspaceId.value) {
+                        return@launch
+                    }
+                    require(remoteNotifications.all { it.workspaceId == listenerWsId }) { "Notification snapshot workspace mismatch" }
+                    appNotificationDao.upsertPreservingReadState(remoteNotifications)
+                }
             }
         )
         // Immediately load any cached access control for the active workspace
@@ -1325,6 +1400,10 @@ class WorkspaceRepository(
         currentUserRole = null
         _workspaceMembers.value = emptyList()
         _activeWorkspaceMembers.value = emptyList()
+        _confirmedCash.value = 0.0
+        _reservedCash.value = 0.0
+        _confirmedBank.value = 0.0
+        _hasConfirmedFinancialState.value = false
         Log.d(TAG, "Workspace listeners stopped.")
     }
 
@@ -1525,9 +1604,13 @@ class WorkspaceRepository(
             val pendingDeleteIds = pendingDeleteManager.getPendingDeleteIds("WITHDRAWAL", listenerWsId)
             val unsyncedLocalWithdrawals = withdrawalDao.getUnsyncedWithdrawalsForWorkspace(listenerWsId).associateBy { it.id }
             val outstandingIds = operations.outstandingOperations(listenerWsId).filter { it.entityType == "WITHDRAWAL" }.map { it.entityId }.toSet()
+            val borrowWithdrawalIds = operations.outstandingOperations(listenerWsId).filter { it.entityType == "BORROWING_REQUEST" }
+                .mapNotNull { runCatching { org.json.JSONObject(it.payloadJson).optLong("withdrawalId") }.getOrNull()?.takeIf { id -> id > 0 } }.toSet()
+            val protectedIds = outstandingIds + borrowWithdrawalIds
             val validRemoteWithdrawals = remoteWithdrawals.filterNot { pendingDeleteIds.contains(it.id) }
 
             for (withdrawal in validRemoteWithdrawals) {
+                if (withdrawal.id in borrowWithdrawalIds) continue
                 if (unsyncedLocalWithdrawals[withdrawal.id]?.let {
                         com.example.data.sync.ConfirmedReplica.withdrawal(it, withdrawal, withdrawal.id in outstandingIds)
                     } == false) {
@@ -1537,7 +1620,7 @@ class WorkspaceRepository(
                 withdrawalDao.insertWithdrawal(withdrawal.copy(workspaceId = listenerWsId, isSynced = true))
             }
 
-            val validRemoteIds = validRemoteWithdrawals.map { it.id }
+            val validRemoteIds = (validRemoteWithdrawals.map { it.id } + protectedIds).distinct()
             if (validRemoteIds.isNotEmpty()) {
                 withdrawalDao.deleteSyncedNotIn(listenerWsId, validRemoteIds)
             } else {
@@ -1548,6 +1631,115 @@ class WorkspaceRepository(
         } catch (e: Exception) {
             Log.e(TAG, "Error syncing remote withdrawals to local: ${e.message}")
         }
+    }
+
+    private suspend fun syncRemoteExternalLoansToLocal(remoteLoans: List<ExternalLoanEntity>, listenerWsId: String) {
+        val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        if (activeUid != currentUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) return
+        try {
+            database.withTransaction {
+                if (currentUid.isNullOrBlank() || getEffectiveActorUid() != currentUid || activeUid != currentUid ||
+                    !_visibleWorkspaceIds.value.contains(listenerWsId)) return@withTransaction
+                val outstanding = operations.outstandingOperations(listenerWsId)
+                val pendingLoanIds = outstanding.filter { it.entityType == "EXTERNAL_LOAN" }.map { it.entityId }.toMutableSet()
+                outstanding.filter { it.entityType == "EXTERNAL_LOAN_REPAYMENT" }.forEach {
+                    runCatching { org.json.JSONObject(it.payloadJson).optLong("loanId") }.getOrNull()?.takeIf { id -> id > 0 }?.let(pendingLoanIds::add)
+                }
+                outstanding.filter { it.entityType == "EXPENSE" }.forEach {
+                    runCatching { org.json.JSONObject(it.payloadJson).optLong("externalLoanId") }.getOrNull()?.takeIf { id -> id > 0 }?.let(pendingLoanIds::add)
+                }
+                remoteLoans.filter { it.id !in pendingLoanIds }.forEach {
+                    stage3Dao.insertExternalLoan(it.copy(workspaceId = listenerWsId, isSynced = true))
+                }
+                val validIds = (remoteLoans.map { it.id } + pendingLoanIds).distinct()
+                if (validIds.isEmpty()) stage3Dao.deleteAllSyncedExternalLoans(listenerWsId)
+                else stage3Dao.deleteSyncedExternalLoansNotIn(listenerWsId, validIds)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { Log.e(TAG, "Error syncing external loans: ${e.message}") }
+    }
+
+    private suspend fun syncRemoteExternalLoanRepaymentsToLocal(remote: List<ExternalLoanRepaymentEntity>, listenerWsId: String) {
+        val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        if (activeUid != currentUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) return
+        try {
+            database.withTransaction {
+                if (currentUid.isNullOrBlank() || getEffectiveActorUid() != currentUid || activeUid != currentUid ||
+                    !_visibleWorkspaceIds.value.contains(listenerWsId)) return@withTransaction
+                val pendingIds = operations.outstandingOperations(listenerWsId).filter { it.entityType == "EXTERNAL_LOAN_REPAYMENT" }.map { it.entityId }.toSet()
+                remote.filter { it.id !in pendingIds }.forEach {
+                    stage3Dao.insertExternalLoanRepayment(it.copy(workspaceId = listenerWsId, isSynced = true))
+                }
+                val validIds = (remote.map { it.id } + pendingIds).distinct()
+                if (validIds.isEmpty()) stage3Dao.deleteAllSyncedExternalLoanRepayments(listenerWsId)
+                else stage3Dao.deleteSyncedExternalLoanRepaymentsNotIn(listenerWsId, validIds)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { Log.e(TAG, "Error syncing external loan repayments: ${e.message}") }
+    }
+
+    private suspend fun syncRemoteBorrowingRequestsToLocal(remote: List<BorrowingRequestEntity>, listenerWsId: String) {
+        val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        if (activeUid != currentUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) return
+        try {
+            database.withTransaction {
+                if (currentUid.isNullOrBlank() || getEffectiveActorUid() != currentUid || activeUid != currentUid ||
+                    !_visibleWorkspaceIds.value.contains(listenerWsId)) return@withTransaction
+                val pendingIds = operations.outstandingOperations(listenerWsId).filter { it.entityType == "BORROWING_REQUEST" }.map { it.entityId }.toSet()
+                remote.filter { it.id !in pendingIds }.forEach {
+                    stage3Dao.insertBorrowingRequest(it.copy(workspaceId = listenerWsId, isSynced = true))
+                }
+                val validIds = (remote.map { it.id } + pendingIds).distinct()
+                if (validIds.isEmpty()) stage3Dao.deleteAllSyncedBorrowingRequests(listenerWsId)
+                else stage3Dao.deleteSyncedBorrowingRequestsNotIn(listenerWsId, validIds)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { Log.e(TAG, "Error syncing borrowing requests: ${e.message}") }
+    }
+
+    private suspend fun syncRemoteSettlementObligationsToLocal(remote: List<SettlementObligationEntity>, listenerWsId: String) {
+        val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        if (activeUid != currentUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) return
+        try {
+            database.withTransaction {
+                if (currentUid.isNullOrBlank() || getEffectiveActorUid() != currentUid || activeUid != currentUid ||
+                    !_visibleWorkspaceIds.value.contains(listenerWsId)) return@withTransaction
+                val outstanding = operations.outstandingOperations(listenerWsId)
+                val pendingObIds = mutableSetOf<Long>()
+                outstanding.filter { it.entityType == "BORROWING_REQUEST" }.forEach {
+                    runCatching { org.json.JSONObject(it.payloadJson).optLong("obligationId") }.getOrNull()?.takeIf { id -> id > 0 }?.let(pendingObIds::add)
+                }
+                outstanding.filter { it.entityType == "SETTLEMENT_REPAYMENT" }.forEach {
+                    runCatching { org.json.JSONObject(it.payloadJson).optLong("obligationId") }.getOrNull()?.takeIf { id -> id > 0 }?.let(pendingObIds::add)
+                }
+                remote.filter { it.id !in pendingObIds }.forEach {
+                    stage3Dao.insertSettlementObligation(it.copy(workspaceId = listenerWsId, isSynced = true))
+                }
+                val validIds = (remote.map { it.id } + pendingObIds).distinct()
+                if (validIds.isEmpty()) stage3Dao.deleteAllSyncedSettlementObligations(listenerWsId)
+                else stage3Dao.deleteSyncedSettlementObligationsNotIn(listenerWsId, validIds)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { Log.e(TAG, "Error syncing settlement obligations: ${e.message}") }
+    }
+
+    private suspend fun syncRemoteSettlementRepaymentsToLocal(remote: List<SettlementRepaymentEntity>, listenerWsId: String) {
+        val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        if (activeUid != currentUid || !_visibleWorkspaceIds.value.contains(listenerWsId)) return
+        try {
+            database.withTransaction {
+                if (currentUid.isNullOrBlank() || getEffectiveActorUid() != currentUid || activeUid != currentUid ||
+                    !_visibleWorkspaceIds.value.contains(listenerWsId)) return@withTransaction
+                val pendingIds = operations.outstandingOperations(listenerWsId).filter { it.entityType == "SETTLEMENT_REPAYMENT" }.map { it.entityId }.toSet()
+                remote.filter { it.id !in pendingIds }.forEach {
+                    stage3Dao.insertSettlementRepayment(it.copy(workspaceId = listenerWsId, isSynced = true))
+                }
+                val validIds = (remote.map { it.id } + pendingIds).distinct()
+                if (validIds.isEmpty()) stage3Dao.deleteAllSyncedSettlementRepayments(listenerWsId)
+                else stage3Dao.deleteSyncedSettlementRepaymentsNotIn(listenerWsId, validIds)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { Log.e(TAG, "Error syncing settlement repayments: ${e.message}") }
     }
 
     private suspend fun getOrResolveWorkspaceId(): String? {
@@ -1712,6 +1904,40 @@ class WorkspaceRepository(
                     else paymentDao.deletePayment(op.workspaceId, op.entityId)
                     if (source != null) { jobEntryDao.insertJob(source); recalculateCustomerStats(source.customerId, op.workspaceId) }
                 }
+                "EXTERNAL_LOAN" -> {
+                    if (cloud != null) stage3Dao.insertExternalLoan(externalLoanFromFirestoreMap(cloud, op.entityId, op.workspaceId))
+                    else stage3Dao.deleteExternalLoanById(op.workspaceId, op.entityId)
+                }
+                "EXTERNAL_LOAN_REPAYMENT" -> {
+                    if (cloud != null) stage3Dao.insertExternalLoanRepayment(externalLoanRepaymentFromFirestoreMap(cloud, op.entityId, op.workspaceId))
+                    else stage3Dao.deleteExternalLoanRepaymentById(op.workspaceId, op.entityId)
+                    val loanId = org.json.JSONObject(op.payloadJson).optLong("loanId")
+                    if (loanId > 0L) {
+                        val cloudLoan = firestoreRepository.getOperationRecordFromServer(op.copy(entityType = "EXTERNAL_LOAN", entityId = loanId))
+                        if (cloudLoan != null) stage3Dao.insertExternalLoan(externalLoanFromFirestoreMap(cloudLoan, loanId, op.workspaceId))
+                    }
+                }
+                "BORROWING_REQUEST" -> {
+                    val json = org.json.JSONObject(op.payloadJson)
+                    val stage3Action = json.optString("stage3Action")
+                    if (cloud != null) stage3Dao.insertBorrowingRequest(borrowingRequestFromFirestoreMap(cloud, op.entityId, op.workspaceId))
+                    else stage3Dao.deleteBorrowingRequestById(op.workspaceId, op.entityId)
+                    if (stage3Action in setOf("EXECUTE_BUSINESS", "EXECUTE")) {
+                        val wId = json.optLong("withdrawalId")
+                        val obId = json.optLong("obligationId")
+                        if (wId > 0L) withdrawalDao.getWithdrawalById(op.workspaceId, wId)?.let { withdrawalDao.deleteWithdrawal(it) }
+                        if (obId > 0L) stage3Dao.deleteSettlementObligationById(op.workspaceId, obId)
+                    }
+                }
+                "SETTLEMENT_REPAYMENT" -> {
+                    if (cloud != null) stage3Dao.insertSettlementRepayment(settlementRepaymentFromFirestoreMap(cloud, op.entityId, op.workspaceId))
+                    else stage3Dao.deleteSettlementRepaymentById(op.workspaceId, op.entityId)
+                    val obId = org.json.JSONObject(op.payloadJson).optLong("obligationId")
+                    if (obId > 0L) {
+                        val cloudOb = firestoreRepository.getOperationRecordFromServer(op.copy(entityType = "SETTLEMENT_OBLIGATION", entityId = obId))
+                        if (cloudOb != null) stage3Dao.insertSettlementObligation(settlementObligationFromFirestoreMap(cloudOb, obId, op.workspaceId))
+                    }
+                }
             }
             true
         }
@@ -1794,7 +2020,11 @@ class WorkspaceRepository(
                         com.example.data.sync.OperationDependencies.blocksEntryAcknowledgement(it, op.entityId)
                     }) { if (confirmedJob != null) jobEntryDao.insertJob(confirmedJob.copy(isSynced = true))
                         else jobEntryDao.markJobsSynced(op.workspaceId, listOf(op.entityId)) }
-                    "EXPENSE" -> expenseDao.markExpensesSynced(op.workspaceId, listOf(op.entityId))
+                    "EXPENSE" -> {
+                        expenseDao.markExpensesSynced(op.workspaceId, listOf(op.entityId))
+                        val linkedLoanId = org.json.JSONObject(op.payloadJson).optLong("externalLoanId")
+                        if (linkedLoanId > 0L) stage3Dao.markExternalLoansSynced(op.workspaceId, listOf(linkedLoanId))
+                    }
                     "CUSTOMER" -> if (confirmedBasic != null) {
                         basicCustomerDao.put(confirmedBasic)
                     } else if (confirmedProfile != null) {
@@ -1815,11 +2045,57 @@ class WorkspaceRepository(
                         }) { if (confirmedJob != null) jobEntryDao.insertJob(confirmedJob.copy(isSynced = true))
                             else jobEntryDao.markJobsSynced(op.workspaceId, listOf(jobId)) }
                     }
+                    "EXTERNAL_LOAN" -> stage3Dao.markExternalLoansSynced(op.workspaceId, listOf(op.entityId))
+                    "EXTERNAL_LOAN_REPAYMENT" -> {
+                        stage3Dao.markExternalLoanRepaymentsSynced(op.workspaceId, listOf(op.entityId))
+                        val loanId = org.json.JSONObject(op.payloadJson).optLong("loanId")
+                        if (loanId > 0L) stage3Dao.markExternalLoansSynced(op.workspaceId, listOf(loanId))
+                    }
+                    "BORROWING_REQUEST" -> {
+                        stage3Dao.markBorrowingRequestsSynced(op.workspaceId, listOf(op.entityId))
+                        val json = org.json.JSONObject(op.payloadJson)
+                        if (json.optString("stage3Action") in setOf("EXECUTE_BUSINESS", "EXECUTE")) {
+                            val wId = json.optLong("withdrawalId")
+                            val obId = json.optLong("obligationId")
+                            if (wId > 0L) withdrawalDao.markWithdrawalsSynced(op.workspaceId, listOf(wId))
+                            if (obId > 0L) stage3Dao.markSettlementObligationsSynced(op.workspaceId, listOf(obId))
+                        }
+                    }
+                    "SETTLEMENT_REPAYMENT" -> {
+                        stage3Dao.markSettlementRepaymentsSynced(op.workspaceId, listOf(op.entityId))
+                        val obId = org.json.JSONObject(op.payloadJson).optLong("obligationId")
+                        if (obId > 0L) stage3Dao.markSettlementObligationsSynced(op.workspaceId, listOf(obId))
+                    }
                 }
             }
             if (op.entityType in setOf("JOB", "PAYMENT") && op.mutationType != "DELETE") {
                 val customerId = org.json.JSONObject(op.payloadJson).optLong("customerId")
                 if (customerId > 0) recalculateCustomerStats(customerId, op.workspaceId)
+            }
+        }
+        val members = _activeWorkspaceMembers.value
+        val ownerUid = members.firstOrNull {
+            com.example.data.auth.RoleUtils.normalizeRole(it.role) == com.example.data.auth.RoleUtils.ROLE_OWNER &&
+                it.status.equals("active", true)
+        }?.uid ?: firestoreRepository.currentWorkspace.value?.ownerUid.orEmpty()
+        val actorDisplayName = members.firstOrNull { it.uid == op.actorUid }?.displayName.orEmpty()
+        val emittedNotifications = com.example.data.sync.NotificationEmitter.buildForConfirmedOperation(
+            op = op,
+            workspaceMembers = members,
+            ownerUid = ownerUid,
+            fallbackActorName = actorDisplayName
+        )
+        if (emittedNotifications.isNotEmpty()) {
+            database.withTransaction {
+                appNotificationDao.upsertPreservingReadState(emittedNotifications)
+                appNotificationDao.pruneReadBefore(op.workspaceId, System.currentTimeMillis() - 90L * 24L * 60L * 60L * 1000L)
+            }
+            try {
+                firestoreRepository.publishNotificationsIfAbsent(op.workspaceId, emittedNotifications)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Notification publish deferred for ${op.operationId}: ${e.message}")
             }
         }
     }
@@ -2309,16 +2585,36 @@ class WorkspaceRepository(
         // Requirement 2: PARTNER EXPENSE OWNERSHIP
         // When logged in as a Partner, the Partner must not be able to create an Expense on behalf of another Partner.
         // Partner expense creation must be for the current Partner only.
-        val isBusinessPaid = expense.paidBy.equals("Business Paid", ignoreCase = true)
+        val isLoanFunded = expense.paidBy.equals("Loan Funded", ignoreCase = true) || expense.fundingSource == "EXTERNAL_LOAN"
+        val isBusinessPaid = !isLoanFunded && expense.paidBy.equals("Business Paid", ignoreCase = true)
+        val linkedLoan = if (isLoanFunded) {
+            require(expense.externalLoanId > 0L) { "Select a Direct-to-Supplier external loan to fund this expense" }
+            val loan = stage3Dao.getExternalLoanById(wsId, expense.externalLoanId)
+                ?: throw IllegalArgumentException("Selected external loan was not found")
+            require(loan.destination == "DIRECT_TO_SUPPLIER") { "Only Direct-to-Supplier loans can directly fund an expense" }
+            require(loan.status == "ACTIVE") { "Selected external loan is already settled" }
+            require(loan.linkedExpenseId == 0L || loan.linkedExpenseId == safeExpId) { "Selected external loan is already linked to another expense" }
+            require(expense.amount <= loan.principalAmount + 0.000001) { "Loan-funded expense cannot exceed loan principal (₹${loan.principalAmount})" }
+            stage3Dao.insertExternalLoan(loan.copy(linkedExpenseId = safeExpId, updatedAt = operationTime))
+            loan
+        } else null
+        val resolvedPaidBy = when {
+            isLoanFunded -> "Loan Funded"
+            isBusinessPaid -> "Business Paid"
+            else -> "I Paid"
+        }
         val finalExpense = if (!isOwner) {
             expense.copy(
                 id = safeExpId,
                 workspaceId = wsId,
                 operatorName = currentActorName,
                 addedByPartner = currentActorName,
-                paidBy = if (isBusinessPaid) "Business Paid" else "I Paid",
-                paidByPartner = if (!isBusinessPaid) currentActorName else "",
-                paidByUid = if (!isBusinessPaid) actorUid else "",
+                paidBy = resolvedPaidBy,
+                paidByPartner = if (!isBusinessPaid && !isLoanFunded) currentActorName else "",
+                paidByUid = if (!isBusinessPaid && !isLoanFunded) actorUid else "",
+                fundingSource = if (linkedLoan != null) "EXTERNAL_LOAN" else "",
+                externalLoanId = linkedLoan?.id ?: 0L,
+                loanFundingMode = if (linkedLoan != null) "DIRECT_TO_SUPPLIER" else "",
                 createdByUid = actorUid,
                 createdByRole = actorRole,
                 isSynced = false
@@ -2329,9 +2625,12 @@ class WorkspaceRepository(
             expense.copy(
                 id = safeExpId,
                 workspaceId = wsId,
-                paidBy = if (isBusinessPaid) "Business Paid" else "I Paid",
-                paidByPartner = if (!isBusinessPaid) expense.paidByPartner else "",
-                paidByUid = if (!isBusinessPaid) expense.paidByUid else "",
+                paidBy = resolvedPaidBy,
+                paidByPartner = if (!isBusinessPaid && !isLoanFunded) expense.paidByPartner else "",
+                paidByUid = if (!isBusinessPaid && !isLoanFunded) expense.paidByUid else "",
+                fundingSource = if (linkedLoan != null) "EXTERNAL_LOAN" else "",
+                externalLoanId = linkedLoan?.id ?: 0L,
+                loanFundingMode = if (linkedLoan != null) "DIRECT_TO_SUPPLIER" else "",
                 createdByUid = finalCreatedByUid,
                 createdByRole = finalCreatedByRole,
                 isSynced = false
@@ -2387,12 +2686,34 @@ class WorkspaceRepository(
             throw SecurityException("Unauthorized to edit expense ${expense.id}")
         }
 
-        val isUpdateBusinessPaid = expense.paidBy.equals("Business Paid", ignoreCase = true)
+        val isUpdateLoanFunded = expense.paidBy.equals("Loan Funded", ignoreCase = true) || expense.fundingSource == "EXTERNAL_LOAN"
+        val isUpdateBusinessPaid = !isUpdateLoanFunded && expense.paidBy.equals("Business Paid", ignoreCase = true)
+        val updatedLoan = if (isUpdateLoanFunded) {
+            require(expense.externalLoanId > 0L) { "Select a Direct-to-Supplier external loan to fund this expense" }
+            val loan = stage3Dao.getExternalLoanById(wsId, expense.externalLoanId)
+                ?: throw IllegalArgumentException("Selected external loan was not found")
+            require(loan.destination == "DIRECT_TO_SUPPLIER") { "Only Direct-to-Supplier loans can directly fund an expense" }
+            require(loan.status == "ACTIVE") { "Selected external loan is already settled" }
+            require(loan.linkedExpenseId == 0L || loan.linkedExpenseId == expense.id) { "Selected external loan is already linked to another expense" }
+            require(expense.amount <= loan.principalAmount + 0.000001) { "Loan-funded expense cannot exceed loan principal (₹${loan.principalAmount})" }
+            if (loan.linkedExpenseId == 0L) {
+                stage3Dao.insertExternalLoan(loan.copy(linkedExpenseId = expense.id, updatedAt = operationTime))
+            }
+            loan
+        } else null
+        val resolvedUpdatePaidBy = when {
+            isUpdateLoanFunded -> "Loan Funded"
+            isUpdateBusinessPaid -> "Business Paid"
+            else -> "I Paid"
+        }
         val updated = expense.copy(
             workspaceId = wsId,
-            paidBy = if (isUpdateBusinessPaid) "Business Paid" else "I Paid",
-            paidByPartner = if (!isUpdateBusinessPaid) expense.paidByPartner else "",
-            paidByUid = if (!isUpdateBusinessPaid) expense.paidByUid else "",
+            paidBy = resolvedUpdatePaidBy,
+            paidByPartner = if (!isUpdateBusinessPaid && !isUpdateLoanFunded) expense.paidByPartner else "",
+            paidByUid = if (!isUpdateBusinessPaid && !isUpdateLoanFunded) expense.paidByUid else "",
+            fundingSource = if (updatedLoan != null) "EXTERNAL_LOAN" else "",
+            externalLoanId = updatedLoan?.id ?: 0L,
+            loanFundingMode = if (updatedLoan != null) "DIRECT_TO_SUPPLIER" else "",
             expenseForUid = expenseToCheck.expenseForUid,
             financialAttributionUid = expenseToCheck.financialAttributionUid,
             relatedJobId = expenseToCheck.relatedJobId,
@@ -2465,12 +2786,21 @@ class WorkspaceRepository(
      */
     suspend fun getAvailableBalance(): Double {
         val wsId = getOrResolveWorkspaceId() ?: return 0.0
-        return com.example.ui.util.FinancialCalculationEngine.cashAvailable(
-            paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty(),
-            expenseDao.getExpensesForWorkspaceOnce(wsId),
-            withdrawalDao.getWithdrawalsForWorkspaceOnce(wsId),
-            com.example.ui.util.FinancialScope(workspaceId = wsId),
-            jobEntryDao.getJobsForWorkspaceOnce(wsId)
+        val cash = com.example.ui.util.FinancialCalculationEngine.cashAvailableWithStage3(
+            payments = paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty(),
+            expenses = expenseDao.getExpensesForWorkspaceOnce(wsId),
+            withdrawals = withdrawalDao.getWithdrawalsForWorkspaceOnce(wsId),
+            externalLoans = stage3Dao.getExternalLoansOnce(wsId),
+            externalLoanRepayments = stage3Dao.getExternalLoanRepaymentsOnce(wsId),
+            settlementRepayments = stage3Dao.getSettlementRepaymentsOnce(wsId),
+            scope = com.example.ui.util.FinancialScope(workspaceId = wsId),
+            jobs = jobEntryDao.getJobsForWorkspaceOnce(wsId)
+        )
+        val localReserved = stage3Dao.getBorrowingRequestsOnce(wsId)
+            .filter { it.status == "APPROVED_RESERVED" }
+            .sumOf { it.reservedAmount }
+        return com.example.ui.util.FinancialCalculationEngine.roundMoney(
+            cash - maxOf(_reservedCash.value, localReserved)
         )
     }
 
@@ -2912,6 +3242,617 @@ class WorkspaceRepository(
 
     fun getBasicCustomersFlow(workspaceId: String): Flow<List<com.example.data.entity.BasicCustomerEntity>> =
         authorizedRecords(workspaceId, records = basicCustomerDao.observe(workspaceId))
+
+    fun getExternalLoansFlow(workspaceId: String): Flow<List<ExternalLoanEntity>> =
+        authorizedRecords(workspaceId, financial = true, records = stage3Dao.observeExternalLoans(workspaceId))
+
+    fun getExternalLoanRepaymentsFlow(workspaceId: String): Flow<List<ExternalLoanRepaymentEntity>> =
+        authorizedRecords(workspaceId, financial = true, records = stage3Dao.observeExternalLoanRepayments(workspaceId))
+
+    fun getBorrowingRequestsFlow(workspaceId: String): Flow<List<BorrowingRequestEntity>> =
+        authorizedRecords(workspaceId, financial = true, records = stage3Dao.observeBorrowingRequests(workspaceId))
+
+    fun getSettlementObligationsFlow(workspaceId: String): Flow<List<SettlementObligationEntity>> =
+        authorizedRecords(workspaceId, financial = true, records = stage3Dao.observeSettlementObligations(workspaceId))
+
+    fun getSettlementRepaymentsFlow(workspaceId: String): Flow<List<SettlementRepaymentEntity>> =
+        authorizedRecords(workspaceId, financial = true, records = stage3Dao.observeSettlementRepayments(workspaceId))
+
+    fun getVisibleNotificationsFlow(workspaceId: String, actorUid: String, isOwner: Boolean): Flow<List<AppNotificationEntity>> =
+        authorizedRecords(
+            workspaceId,
+            financial = true,
+            records = if (actorUid.isBlank()) kotlinx.coroutines.flow.flowOf(emptyList())
+            else appNotificationDao.observeVisibleNotifications(workspaceId, actorUid, isOwner)
+        )
+
+    suspend fun markNotificationRead(workspaceId: String, notificationId: String) {
+        val uid = getEffectiveActorUid().orEmpty()
+        if (workspaceId.isBlank() || notificationId.isBlank() || uid.isBlank()) return
+        val readAt = System.currentTimeMillis()
+        appNotificationDao.markRead(workspaceId, notificationId, readAt)
+        if (isCloudReady()) {
+            try {
+                firestoreRepository.markNotificationReadInCloud(workspaceId, notificationId, readAt)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Mark notification read cloud sync deferred: ${e.message}")
+            }
+        }
+    }
+
+    suspend fun markAllNotificationsRead(workspaceId: String) {
+        val uid = getEffectiveActorUid().orEmpty()
+        if (workspaceId.isBlank() || uid.isBlank()) return
+        val isOwner = isOwnerOfWorkspace(workspaceId)
+        val readAt = System.currentTimeMillis()
+        val unreadIds = appNotificationDao.getAllOnce(workspaceId)
+            .filter {
+                !it.isRead && it.actorUid != uid && (
+                    if (isOwner) it.targetAudience == AppNotificationEntity.AUDIENCE_OWNER_ONLY || it.recipientUid == uid || it.recipientUid.isBlank()
+                    else it.targetAudience == AppNotificationEntity.AUDIENCE_PARTNER_TARGETED && it.recipientUid == uid
+                )
+            }
+            .map { it.id }
+        appNotificationDao.markAllRead(workspaceId, uid, isOwner, readAt)
+        if (isCloudReady()) {
+            unreadIds.forEach { notifId ->
+                try {
+                    firestoreRepository.markNotificationReadInCloud(workspaceId, notifId, readAt)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Mark all notifications read cloud sync deferred: ${e.message}")
+                }
+            }
+        }
+    }
+
+    suspend fun recordExternalLoan(
+        lenderName: String,
+        principalAmount: Double,
+        interestAmount: Double,
+        destination: String,
+        note: String,
+        loanDateMillis: Long = System.currentTimeMillis()
+    ): Long {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        val cleanLender = lenderName.trim()
+        require(cleanLender.isNotBlank()) { "Lender name is required" }
+        require(principalAmount.isFinite() && principalAmount > 0.0) { "Principal amount must be greater than ₹0" }
+        require(interestAmount.isFinite() && interestAmount >= 0.0) { "Interest amount must be ₹0 or more" }
+        require(destination in setOf("BUSINESS_CASH", "BUSINESS_BANK", "DIRECT_TO_SUPPLIER")) { "Select a valid loan destination" }
+        val result = database.withTransaction {
+            val wsId = getOrResolveWorkspaceId().orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            require(com.example.data.auth.AuthorizationManager.canManageExternalLoans(role)) { "Only Owner or Partner can record external loans" }
+            val loanId = IdGenerator.generateId()
+            val entity = ExternalLoanEntity(
+                id = loanId,
+                workspaceId = wsId,
+                lenderName = cleanLender,
+                principalAmount = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(principalAmount),
+                interestAmount = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(interestAmount),
+                totalRepaidPrincipal = 0.0,
+                totalRepaidInterest = 0.0,
+                destination = destination,
+                linkedExpenseId = 0L,
+                status = "ACTIVE",
+                note = note.trim(),
+                loanDateMillis = loanDateMillis,
+                createdAt = operationTime,
+                updatedAt = operationTime,
+                createdByUid = operationActorUid,
+                createdByRole = role,
+                isSynced = false
+            )
+            stage3Dao.insertExternalLoan(entity)
+            enqueue("EXTERNAL_LOAN", entity.id, entity.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+            loanId
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
+    }
+
+    suspend fun recordExternalLoanRepayment(
+        loanId: Long,
+        principalPaid: Double,
+        interestPaid: Double,
+        source: String,
+        note: String,
+        repaidAt: Long = System.currentTimeMillis()
+    ): Long {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        require(principalPaid.isFinite() && principalPaid >= 0.0 && interestPaid.isFinite() && interestPaid >= 0.0) {
+            "Principal and interest repayments cannot be negative"
+        }
+        val cleanPrincipal = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(principalPaid)
+        val cleanInterest = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(interestPaid)
+        val totalPaid = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(cleanPrincipal + cleanInterest)
+        require(totalPaid > 0.0) { "Enter a principal or interest repayment greater than ₹0" }
+        require(source in setOf("BUSINESS_CASH", "BUSINESS_BANK")) { "Repayment source must be Business Cash or Business Bank" }
+        val result = database.withTransaction {
+            val wsId = getOrResolveWorkspaceId().orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            require(com.example.data.auth.AuthorizationManager.canManageExternalLoans(role)) { "Only Owner or Partner can repay external loans" }
+            val loan = stage3Dao.getExternalLoanById(wsId, loanId) ?: throw IllegalArgumentException("External loan not found")
+            require(loan.remainingPrincipal + 0.000001 >= cleanPrincipal) { "Principal payment exceeds remaining loan principal" }
+            require(loan.remainingInterest + 0.000001 >= cleanInterest) { "Interest payment exceeds remaining loan interest" }
+            if (source == "BUSINESS_CASH") {
+                val availableCash = getAvailableBalance()
+                require(totalPaid <= availableCash + 0.000001) { "Insufficient available cash (₹${availableCash}) for cash loan repayment" }
+            }
+            val repaymentId = IdGenerator.generateId()
+            val repayment = ExternalLoanRepaymentEntity(
+                id = repaymentId,
+                workspaceId = wsId,
+                loanId = loan.id,
+                principalPaid = cleanPrincipal,
+                interestPaid = cleanInterest,
+                source = source,
+                note = note.trim(),
+                repaidAt = repaidAt,
+                createdAt = operationTime,
+                createdByUid = operationActorUid,
+                createdByRole = role,
+                isSynced = false
+            )
+            val nextPrincipal = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(loan.totalRepaidPrincipal + cleanPrincipal)
+            val nextInterest = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(loan.totalRepaidInterest + cleanInterest)
+            val nextStatus = if (nextPrincipal >= loan.principalAmount - 0.000001 && nextInterest >= loan.interestAmount - 0.000001) "SETTLED" else "ACTIVE"
+            stage3Dao.insertExternalLoan(loan.copy(totalRepaidPrincipal = nextPrincipal, totalRepaidInterest = nextInterest, status = nextStatus, updatedAt = operationTime, isSynced = false))
+            stage3Dao.insertExternalLoanRepayment(repayment)
+            enqueue("EXTERNAL_LOAN_REPAYMENT", repayment.id, repayment.toFirestoreMap(), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+            repaymentId
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
+    }
+
+    suspend fun requestBorrowing(
+        sourceType: String,
+        lendingPartnerUid: String,
+        amount: Double,
+        note: String,
+        targetBorrowerUid: String = ""
+    ): Long {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        require(amount.isFinite() && amount > 0.0) { "Borrowing amount must be greater than ₹0" }
+        val cleanAmount = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(amount)
+        require(sourceType in setOf("BUSINESS_ONLY", "NAMED_PARTNER")) { "Select Business or Named Partner borrowing" }
+        val result = database.withTransaction {
+            val wsId = getOrResolveWorkspaceId().orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            val isOwner = isOwnerOfWorkspace(wsId)
+            val members = _activeWorkspaceMembers.value
+            val borrowerUid = if (isOwner && targetBorrowerUid.isNotBlank()) targetBorrowerUid else operationActorUid
+            require(com.example.data.auth.AuthorizationManager.canRequestBorrowing(operationActorUid, role, borrowerUid, wsId, members)) {
+                "Borrowing is unavailable for this account or target member"
+            }
+            val borrowerName = members.firstOrNull { it.uid == borrowerUid }?.displayName?.ifBlank { null } ?: "Partner"
+            val reqId = IdGenerator.generateId()
+
+            if (sourceType == "BUSINESS_ONLY") {
+                val loans = stage3Dao.getExternalLoansOnce(wsId)
+                val loanReps = stage3Dao.getExternalLoanRepaymentsOnce(wsId)
+                val setReps = stage3Dao.getSettlementRepaymentsOnce(wsId)
+                val obs = stage3Dao.getSettlementObligationsOnce(wsId)
+                val reqs = stage3Dao.getBorrowingRequestsOnce(wsId)
+                val jobs = jobEntryDao.getJobsForWorkspaceOnce(wsId)
+                val expenses = expenseDao.getExpensesForWorkspaceOnce(wsId)
+                val withdrawals = withdrawalDao.getWithdrawalsForWorkspaceOnce(wsId)
+                val payments = paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty()
+                val settings = appSettingsDao.getSettingsForWorkspaceOnce(wsId)
+                val statuses = com.example.ui.util.FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+                    jobs = jobs, expenses = expenses, withdrawals = withdrawals,
+                    workspaceMembers = members, profitShareAllocations = _profitShareAllocations.value,
+                    profitShareAllocationDetails = _profitShareAllocationDetails.value,
+                    scope = com.example.ui.util.FinancialScope(workspaceId = wsId),
+                    businessName = settings?.businessName.orEmpty()
+                )
+                val cashAvailable = if (_hasConfirmedFinancialState.value) _confirmedCash.value else {
+                    com.example.ui.util.FinancialCalculationEngine.cashAvailableWithStage3(
+                        payments = payments, expenses = expenses, withdrawals = withdrawals,
+                        externalLoans = loans, externalLoanRepayments = loanReps, settlementRepayments = setReps,
+                        scope = com.example.ui.util.FinancialScope(workspaceId = wsId), jobs = jobs
+                    )
+                }
+                val overview = com.example.ui.util.PartnerBorrowingCalculator.calculate(
+                    confirmedCash = cashAvailable,
+                    reservedCash = _reservedCash.value,
+                    statuses = statuses,
+                    obligations = obs,
+                    borrowingRequests = reqs
+                )
+                require(cleanAmount <= overview.availableForBusinessBorrowing + 0.000001) {
+                    "Exceeds business borrowing limit (₹%.2f available after protecting partner entitlements)".format(java.util.Locale.US, overview.availableForBusinessBorrowing)
+                }
+                val withdrawalId = IdGenerator.generateId()
+                val obligationId = IdGenerator.generateId()
+                val withdrawal = WithdrawalEntity(
+                    id = withdrawalId,
+                    workspaceId = wsId,
+                    partnerName = borrowerName,
+                    amount = cleanAmount,
+                    category = "Borrow from Business",
+                    note = note.trim(),
+                    timestamp = operationTime,
+                    createdAt = operationTime,
+                    createdByUid = operationActorUid,
+                    createdByRole = role,
+                    targetPartnerUid = borrowerUid,
+                    isSynced = false
+                )
+                val obligation = SettlementObligationEntity(
+                    id = obligationId,
+                    workspaceId = wsId,
+                    borrowerUid = borrowerUid,
+                    borrowerName = borrowerName,
+                    creditorType = "BUSINESS",
+                    creditorUid = "",
+                    creditorName = settings?.businessName?.ifBlank { null } ?: "Business",
+                    sourceRequestId = reqId,
+                    principalAmount = cleanAmount,
+                    repaidAmount = 0.0,
+                    directSettledAmount = 0.0,
+                    status = "OPEN",
+                    note = note.trim(),
+                    createdAt = operationTime,
+                    updatedAt = operationTime,
+                    createdByUid = operationActorUid,
+                    isSynced = false
+                )
+                val request = BorrowingRequestEntity(
+                    id = reqId,
+                    workspaceId = wsId,
+                    borrowerUid = borrowerUid,
+                    borrowerName = borrowerName,
+                    lendingPartnerUid = "",
+                    lendingPartnerName = "",
+                    sourceType = "BUSINESS_ONLY",
+                    amount = cleanAmount,
+                    note = note.trim(),
+                    status = "EXECUTED",
+                    reservedAmount = 0.0,
+                    withdrawalId = withdrawalId,
+                    obligationId = obligationId,
+                    requestedByUid = operationActorUid,
+                    requestedByRole = role,
+                    executedAt = operationTime,
+                    createdAt = operationTime,
+                    updatedAt = operationTime,
+                    isSynced = false
+                )
+                withdrawalDao.insertWithdrawal(withdrawal)
+                stage3Dao.insertSettlementObligation(obligation)
+                stage3Dao.insertBorrowingRequest(request)
+                enqueue(
+                    "BORROWING_REQUEST", reqId,
+                    request.toFirestoreMap() + mapOf(
+                        "stage3Action" to "EXECUTE_BUSINESS",
+                        "withdrawalSnapshotMap" to withdrawal.toFirestoreMap(),
+                        "obligationSnapshotMap" to obligation.toFirestoreMap()
+                    ),
+                    "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime
+                )
+            } else {
+                val lender = members.firstOrNull {
+                    it.uid == lendingPartnerUid && it.workspaceId == wsId && it.status.equals("active", true) &&
+                        com.example.data.auth.RoleUtils.normalizeRole(it.role) in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)
+                } ?: throw IllegalArgumentException("Select an active lending partner")
+                require(lender.uid != borrowerUid) { "Borrower and lending partner must be different members" }
+                val request = BorrowingRequestEntity(
+                    id = reqId,
+                    workspaceId = wsId,
+                    borrowerUid = borrowerUid,
+                    borrowerName = borrowerName,
+                    lendingPartnerUid = lender.uid,
+                    lendingPartnerName = lender.displayName.orEmpty().ifBlank { "Partner" },
+                    sourceType = "NAMED_PARTNER",
+                    amount = cleanAmount,
+                    note = note.trim(),
+                    status = "PENDING_APPROVAL",
+                    reservedAmount = 0.0,
+                    requestedByUid = operationActorUid,
+                    requestedByRole = role,
+                    createdAt = operationTime,
+                    updatedAt = operationTime,
+                    isSynced = false
+                )
+                stage3Dao.insertBorrowingRequest(request)
+                enqueue("BORROWING_REQUEST", reqId, request.toFirestoreMap() + mapOf("stage3Action" to "CREATE"), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+            }
+            reqId
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
+    }
+
+    suspend fun approveAndReserveBorrowing(requestId: Long) {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        database.withTransaction {
+            val wsId = getOrResolveWorkspaceId().orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            val req = stage3Dao.getBorrowingRequestById(wsId, requestId) ?: throw IllegalArgumentException("Borrowing request not found")
+            require(req.status == "PENDING_APPROVAL") { "Request is no longer awaiting approval" }
+            require(com.example.data.auth.AuthorizationManager.canApproveOrRejectBorrowing(operationActorUid, role, req.lendingPartnerUid)) {
+                "Only the named lending partner may approve and reserve this request"
+            }
+            val members = _activeWorkspaceMembers.value
+            val loans = stage3Dao.getExternalLoansOnce(wsId)
+            val loanReps = stage3Dao.getExternalLoanRepaymentsOnce(wsId)
+            val setReps = stage3Dao.getSettlementRepaymentsOnce(wsId)
+            val obs = stage3Dao.getSettlementObligationsOnce(wsId)
+            val reqs = stage3Dao.getBorrowingRequestsOnce(wsId)
+            val jobs = jobEntryDao.getJobsForWorkspaceOnce(wsId)
+            val expenses = expenseDao.getExpensesForWorkspaceOnce(wsId)
+            val withdrawals = withdrawalDao.getWithdrawalsForWorkspaceOnce(wsId)
+            val payments = paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty()
+            val settings = appSettingsDao.getSettingsForWorkspaceOnce(wsId)
+            val statuses = com.example.ui.util.FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+                jobs = jobs, expenses = expenses, withdrawals = withdrawals,
+                workspaceMembers = members, profitShareAllocations = _profitShareAllocations.value,
+                profitShareAllocationDetails = _profitShareAllocationDetails.value,
+                scope = com.example.ui.util.FinancialScope(workspaceId = wsId),
+                businessName = settings?.businessName.orEmpty()
+            )
+            val cashAvailable = if (_hasConfirmedFinancialState.value) _confirmedCash.value else {
+                com.example.ui.util.FinancialCalculationEngine.cashAvailableWithStage3(
+                    payments = payments, expenses = expenses, withdrawals = withdrawals,
+                    externalLoans = loans, externalLoanRepayments = loanReps, settlementRepayments = setReps,
+                    scope = com.example.ui.util.FinancialScope(workspaceId = wsId), jobs = jobs
+                )
+            }
+            val overview = com.example.ui.util.PartnerBorrowingCalculator.calculate(
+                confirmedCash = cashAvailable,
+                reservedCash = _reservedCash.value,
+                statuses = statuses,
+                obligations = obs,
+                borrowingRequests = reqs
+            )
+            val lenderWithdrawable = overview.partnerSummaries[operationActorUid]?.withdrawableEntitlement ?: 0.0
+            require(req.amount <= lenderWithdrawable + 0.000001) {
+                "Exceeds your withdrawable entitlement (₹%.2f available)".format(java.util.Locale.US, lenderWithdrawable)
+            }
+            require(req.amount <= overview.unreservedCash + 0.000001) {
+                "Insufficient unreserved business cash (₹%.2f available)".format(java.util.Locale.US, overview.unreservedCash)
+            }
+            val updated = req.copy(
+                status = "APPROVED_RESERVED",
+                reservedAmount = req.amount,
+                approvedByUid = operationActorUid,
+                approvedAt = operationTime,
+                updatedAt = operationTime,
+                isSynced = false
+            )
+            stage3Dao.insertBorrowingRequest(updated)
+            enqueue("BORROWING_REQUEST", req.id, updated.toFirestoreMap() + mapOf("stage3Action" to "APPROVE_RESERVE"), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+    }
+
+    suspend fun executeApprovedBorrowing(requestId: Long) {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        database.withTransaction {
+            val wsId = getOrResolveWorkspaceId().orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            val req = stage3Dao.getBorrowingRequestById(wsId, requestId) ?: throw IllegalArgumentException("Borrowing request not found")
+            require(req.status == "APPROVED_RESERVED") { "Request must be approved and reserved first" }
+            require(com.example.data.auth.AuthorizationManager.canExecuteApprovedBorrowing(operationActorUid, role, req.borrowerUid)) {
+                "Only the borrower or Owner may receive this approved borrow"
+            }
+            val withdrawalId = IdGenerator.generateId()
+            val obligationId = IdGenerator.generateId()
+            val withdrawal = WithdrawalEntity(
+                id = withdrawalId,
+                workspaceId = wsId,
+                partnerName = req.borrowerName,
+                amount = req.amount,
+                category = "Borrow from Partner",
+                note = req.note,
+                timestamp = operationTime,
+                createdAt = operationTime,
+                createdByUid = operationActorUid,
+                createdByRole = role,
+                targetPartnerUid = req.borrowerUid,
+                isSynced = false
+            )
+            val obligation = SettlementObligationEntity(
+                id = obligationId,
+                workspaceId = wsId,
+                borrowerUid = req.borrowerUid,
+                borrowerName = req.borrowerName,
+                creditorType = "PARTNER",
+                creditorUid = req.lendingPartnerUid,
+                creditorName = req.lendingPartnerName,
+                sourceRequestId = req.id,
+                principalAmount = req.amount,
+                repaidAmount = 0.0,
+                directSettledAmount = 0.0,
+                status = "OPEN",
+                note = req.note,
+                createdAt = operationTime,
+                updatedAt = operationTime,
+                createdByUid = operationActorUid,
+                isSynced = false
+            )
+            val updated = req.copy(
+                status = "EXECUTED",
+                reservedAmount = 0.0,
+                withdrawalId = withdrawalId,
+                obligationId = obligationId,
+                executedAt = operationTime,
+                updatedAt = operationTime,
+                isSynced = false
+            )
+            withdrawalDao.insertWithdrawal(withdrawal)
+            stage3Dao.insertSettlementObligation(obligation)
+            stage3Dao.insertBorrowingRequest(updated)
+            enqueue(
+                "BORROWING_REQUEST", req.id,
+                updated.toFirestoreMap() + mapOf(
+                    "stage3Action" to "EXECUTE",
+                    "withdrawalSnapshotMap" to withdrawal.toFirestoreMap(),
+                    "obligationSnapshotMap" to obligation.toFirestoreMap()
+                ),
+                "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime
+            )
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+    }
+
+    suspend fun rejectBorrowingRequest(requestId: Long, reason: String = "") {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        database.withTransaction {
+            val wsId = getOrResolveWorkspaceId().orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            val req = stage3Dao.getBorrowingRequestById(wsId, requestId) ?: throw IllegalArgumentException("Borrowing request not found")
+            require(req.status in setOf("PENDING_APPROVAL", "APPROVED_RESERVED")) { "Borrowing request can no longer be rejected" }
+            require(com.example.data.auth.AuthorizationManager.canApproveOrRejectBorrowing(operationActorUid, role, req.lendingPartnerUid)) {
+                "Only the named lending partner can reject this request"
+            }
+            val updated = req.copy(
+                status = "REJECTED",
+                reservedAmount = 0.0,
+                rejectedByUid = operationActorUid,
+                rejectedAt = operationTime,
+                rejectionReason = reason.trim(),
+                updatedAt = operationTime,
+                isSynced = false
+            )
+            stage3Dao.insertBorrowingRequest(updated)
+            enqueue("BORROWING_REQUEST", req.id, updated.toFirestoreMap() + mapOf("stage3Action" to "REJECT", "rejectionReason" to reason.trim()), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+    }
+
+    suspend fun cancelBorrowingRequest(requestId: Long, reason: String = "") {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        database.withTransaction {
+            val wsId = getOrResolveWorkspaceId().orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            val req = stage3Dao.getBorrowingRequestById(wsId, requestId) ?: throw IllegalArgumentException("Borrowing request not found")
+            require(req.status in setOf("PENDING_APPROVAL", "APPROVED_RESERVED")) { "Borrowing request can no longer be cancelled" }
+            require(com.example.data.auth.AuthorizationManager.canCancelBorrowingRequest(operationActorUid, role, req.borrowerUid, req.requestedByUid)) {
+                "Unauthorized to cancel this borrowing request"
+            }
+            val updated = req.copy(
+                status = "CANCELLED",
+                reservedAmount = 0.0,
+                rejectedByUid = operationActorUid,
+                rejectedAt = operationTime,
+                rejectionReason = reason.trim(),
+                updatedAt = operationTime,
+                isSynced = false
+            )
+            stage3Dao.insertBorrowingRequest(updated)
+            enqueue("BORROWING_REQUEST", req.id, updated.toFirestoreMap() + mapOf("stage3Action" to "CANCEL", "rejectionReason" to reason.trim()), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+    }
+
+    suspend fun recordSettlementRepayment(
+        obligationId: Long,
+        amount: Double,
+        mode: String,
+        note: String,
+        paidAt: Long = System.currentTimeMillis()
+    ): Long {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        require(amount.isFinite() && amount > 0.0) { "Repayment amount must be greater than ₹0" }
+        val cleanAmount = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(amount)
+        val result = database.withTransaction {
+            val wsId = getOrResolveWorkspaceId().orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            require(com.example.data.auth.AuthorizationManager.canRecordSettlementRepayment(role)) { "Only Owner or Partner can record settlement repayments" }
+            val ob = stage3Dao.getSettlementObligationById(wsId, obligationId) ?: throw IllegalArgumentException("Settlement obligation not found")
+            require(ob.status != "SETTLED" && cleanAmount <= ob.remainingAmount + 0.000001) {
+                "Repayment exceeds remaining obligation balance (₹%.2f)".format(java.util.Locale.US, ob.remainingAmount)
+            }
+            if (ob.creditorType == "BUSINESS") {
+                require(mode == "INTO_BUSINESS") { "Business obligations must be repaid into business" }
+            } else {
+                require(mode in setOf("INTO_BUSINESS_FOR_PARTNER", "DIRECT_TO_PARTNER")) { "Select a valid partner settlement mode" }
+            }
+            val repId = IdGenerator.generateId()
+            val payerName = _activeWorkspaceMembers.value.firstOrNull { it.uid == ob.borrowerUid }?.displayName?.ifBlank { null } ?: ob.borrowerName
+            val rep = SettlementRepaymentEntity(
+                id = repId,
+                workspaceId = wsId,
+                obligationId = ob.id,
+                payerUid = ob.borrowerUid,
+                payerName = payerName,
+                creditorType = ob.creditorType,
+                creditorUid = ob.creditorUid,
+                creditorName = ob.creditorName,
+                amount = cleanAmount,
+                mode = mode,
+                status = "PENDING_CONFIRMATION",
+                note = note.trim(),
+                paidAt = paidAt,
+                createdAt = operationTime,
+                createdByUid = operationActorUid,
+                isSynced = false
+            )
+            stage3Dao.insertSettlementRepayment(rep)
+            enqueue("SETTLEMENT_REPAYMENT", repId, rep.toFirestoreMap() + mapOf("stage3Action" to "CREATE"), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+            repId
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+        return result
+    }
+
+    suspend fun confirmSettlementRepayment(repaymentId: Long) {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        database.withTransaction {
+            val wsId = getOrResolveWorkspaceId().orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            val rep = stage3Dao.getSettlementRepaymentById(wsId, repaymentId) ?: throw IllegalArgumentException("Settlement repayment not found")
+            require(rep.status == "PENDING_CONFIRMATION") { "Repayment is already ${rep.status}" }
+            require(com.example.data.auth.AuthorizationManager.canConfirmSettlementRepayment(operationActorUid, role, rep.mode, rep.creditorUid)) {
+                "Only the named lending partner may confirm direct-to-partner repayments"
+            }
+            val ob = stage3Dao.getSettlementObligationById(wsId, rep.obligationId) ?: throw IllegalArgumentException("Settlement obligation not found")
+            val nextRepaid = com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(ob.repaidAmount + rep.amount)
+            require(nextRepaid <= ob.principalAmount + 0.000001) { "Repayment exceeds remaining obligation principal" }
+            val nextDirect = if (rep.mode == "DIRECT_TO_PARTNER") com.example.ui.util.FinancialCalculationEngine.roundNonNegativeMoney(ob.directSettledAmount + rep.amount) else ob.directSettledAmount
+            val nextStatus = if (nextRepaid >= ob.principalAmount - 0.000001) "SETTLED" else "OPEN"
+            val updatedOb = ob.copy(repaidAmount = nextRepaid, directSettledAmount = nextDirect, status = nextStatus, updatedAt = operationTime, isSynced = false)
+            val updatedRep = rep.copy(status = "CONFIRMED", confirmedByUid = operationActorUid, confirmedAt = operationTime, isSynced = false)
+            stage3Dao.insertSettlementObligation(updatedOb)
+            stage3Dao.insertSettlementRepayment(updatedRep)
+            enqueue("SETTLEMENT_REPAYMENT", rep.id, updatedRep.toFirestoreMap() + mapOf("stage3Action" to "CONFIRM"), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+    }
+
+    suspend fun rejectSettlementRepayment(repaymentId: Long, reason: String = "") {
+        val operationActorUid = getEffectiveActorUid().orEmpty()
+        val operationTime = System.currentTimeMillis()
+        database.withTransaction {
+            val wsId = getOrResolveWorkspaceId().orEmpty()
+            val role = requireWorkspaceActor(wsId)
+            val rep = stage3Dao.getSettlementRepaymentById(wsId, repaymentId) ?: throw IllegalArgumentException("Settlement repayment not found")
+            require(rep.status == "PENDING_CONFIRMATION") { "Repayment is already ${rep.status}" }
+            require(com.example.data.auth.AuthorizationManager.canConfirmSettlementRepayment(operationActorUid, role, rep.mode, rep.creditorUid)) {
+                "Only the named lending partner may reject direct-to-partner repayments"
+            }
+            val updatedRep = rep.copy(status = "REJECTED", rejectedByUid = operationActorUid, rejectedAt = operationTime, rejectionReason = reason.trim(), isSynced = false)
+            stage3Dao.insertSettlementRepayment(updatedRep)
+            enqueue("SETTLEMENT_REPAYMENT", rep.id, updatedRep.toFirestoreMap() + mapOf("stage3Action" to "REJECT", "rejectionReason" to reason.trim()), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+        }
+        if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
+    }
 
     suspend fun addExpenseCategory(name: String, expectedWorkspaceId: String = _activeWorkspaceId.value.orEmpty(),
         expectedActorUid: String = getEffectiveActorUid().orEmpty()): String {
@@ -3613,6 +4554,7 @@ class WorkspaceRepository(
             currentUserRole = verifiedRole
             _isCollaborationOwner.value = verifiedRole == com.example.data.auth.RoleUtils.ROLE_OWNER
             _activeWorkspaceMembers.value = members
+            _workspaceMembers.value = members
             cacheVerifiedMembership(uid, wsId, members)
             // Offline cold start restores Room context without attaching cloud listeners.
             // Reconnect only after authoritative membership and the original session are verified.
@@ -3698,7 +4640,7 @@ class WorkspaceRepository(
                         val failure = (e.message ?: "Sync failed") + "; " + com.example.data.sync.SyncAuthorizationDiagnostic.describe(
                             op, getEffectiveActorUid(), syncStage)
                         operations.failed(op.operationId, if (permanent) "REJECTED" else "PENDING", failure)
-                        if (permanent && op.entityType in setOf("JOB", "CUSTOMER", "EXPENSE", "WITHDRAWAL", "PAYMENT") && e !is com.example.data.firebase.WorkspaceUpgradeRequiredException) {
+                        if (permanent && op.entityType in setOf("JOB", "CUSTOMER", "EXPENSE", "WITHDRAWAL", "PAYMENT", "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT", "BORROWING_REQUEST", "SETTLEMENT_REPAYMENT") && e !is com.example.data.firebase.WorkspaceUpgradeRequiredException) {
                             var recovered = false
                             try { recovered = reconcileRejectedOperation(op) }
                             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -3714,11 +4656,28 @@ class WorkspaceRepository(
                 }
                 kotlinx.coroutines.yield()
             }
+            pendingAuditManager.getAllPendingAudits()
+                .filter { it.workspaceId == wsId && it.actorUid == uid }
+                .forEach { event ->
+                    try {
+                        firestoreRepository.recordAuditEvent(wsId, event)
+                        pendingAuditManager.removePendingAudit(event.eventId)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Deferred audit upload ${event.eventId}: ${e.message}")
+                    }
+                }
             val retainedLocalCount = basicCustomerDao.unsyncedCount(wsId) + jobEntryDao.getUnsyncedJobsForWorkspace(wsId).size +
                 expenseDao.getUnsyncedExpensesForWorkspace(wsId).size +
                 withdrawalDao.getUnsyncedWithdrawalsForWorkspace(wsId).size +
                 customerDao.getUnsyncedCustomersForWorkspace(wsId).size +
-                paymentDao.getUnsyncedPaymentsForWorkspace(wsId).size
+                paymentDao.getUnsyncedPaymentsForWorkspace(wsId).size +
+                stage3Dao.getUnsyncedExternalLoans(wsId).size +
+                stage3Dao.getUnsyncedExternalLoanRepayments(wsId).size +
+                stage3Dao.getUnsyncedBorrowingRequests(wsId).size +
+                stage3Dao.getUnsyncedSettlementObligations(wsId).size +
+                stage3Dao.getUnsyncedSettlementRepayments(wsId).size
             val needsReview = operations.outstandingOperations(wsId).any { it.actorUid == uid && it.state == "REJECTED" }
             SyncResult(!failed && retainedLocalCount == 0 && !needsReview, count,
                 if (failed) authenticationMessage ?: backendMessage ?: blockingMessage ?: "An action could not sync; check pending actions"

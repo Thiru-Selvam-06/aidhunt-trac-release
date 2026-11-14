@@ -32,6 +32,254 @@ service cloud.firestore {
         job.data.entryForUid == data.expenseForUid && job.data.isHistorical == false &&
         job.data.get('isDeleted', false) == false;
     }
+    function financialStatePath(ws) { return /databases/$(database)/documents/workspaces/$(ws)/financialState/current; }
+    function cashOpPath(ws, opId) { return /databases/$(database)/documents/workspaces/$(ws)/cashOperations/$(opId); }
+    function cashDeleteProofPath(ws, kind, id) { return /databases/$(database)/documents/workspaces/$(ws)/cashDeleteProofs/$(kind + '_' + id); }
+    function atomicCashEnabled(ws) {
+      return syncCapability(ws, 'atomicCashControlV1') || exists(financialStatePath(ws));
+    }
+    function canonicalPaymentMethod(method) {
+      return method in ['Cash', 'UPI / GPay', 'Bank Transfer', 'UPI', 'Bank', 'Cheque'];
+    }
+    function canonicalExpensePaidBy(paidBy) {
+      return paidBy in ['Business Paid', 'I Paid', 'Loan Funded'];
+    }
+    function expenseCashOutflow(data) {
+      return data.get('paidBy', '') == 'Business Paid' ? data.amount : 0;
+    }
+    function matchesCashOpData(op, ws, opId, entityType, entityId, mutationType, expectedDelta) {
+      return op.workspaceId == ws && op.operationId == opId &&
+        op.entityType == entityType && op.entityId == entityId &&
+        op.mutationType == mutationType && op.actorUid == request.auth.uid &&
+        sameMoney(op.cashDelta, expectedDelta);
+    }
+    function matchesCashOp(ws, opId, entityType, entityId, mutationType, expectedDelta) {
+      let path = cashOpPath(ws, opId);
+      return opId is string && opId.matches('^[A-Za-z0-9:_-]{1,160}$') &&
+        !exists(path) && existsAfter(path) &&
+        matchesCashOpData(getAfter(path).data, ws, opId, entityType, entityId, mutationType, expectedDelta);
+    }
+    function activeCashDeleteProof(ws, kind, id) {
+      let p = cashDeleteProofPath(ws, kind, id);
+      return !exists(p) && existsAfter(p) &&
+        getAfter(p).data.workspaceId == ws &&
+        getAfter(p).data.kind == kind &&
+        getAfter(p).data.recordId == id &&
+        getAfter(p).data.actorUid == request.auth.uid;
+    }
+    function cashDeleteProofActionTime(ws, kind, id) {
+      return getAfter(cashDeleteProofPath(ws, kind, id)).data.actionTime;
+    }
+    function jobVerifiedExpenseSum(ws, jobId, ids, index) {
+      return ids.size() <= index ? 0 : jobSingleVerifiedExpense(ws, jobId, ids[index]);
+    }
+    function jobSingleVerifiedExpenseAmount(e, ws, jobId) {
+      return e.workspaceId == ws && string(e.get('relatedJobId', 0)) == jobId
+        ? (e.get('paidBy', '') == 'Business Paid' ? e.amount : 0)
+        : -1;
+    }
+    function jobSingleVerifiedExpense(ws, jobId, eid) {
+      let ePath = /databases/$(database)/documents/workspaces/$(ws)/expenses/$(eid);
+      return eid is string && eid != '' && exists(ePath) && !existsAfter(ePath)
+        ? jobSingleVerifiedExpenseAmount(get(ePath).data, ws, jobId)
+        : -1;
+    }
+    function validJobCashReceiptWithProof(ws, op, proof) {
+      let ids = op.get('verifiedExpenseIds', []);
+      let e0 = jobVerifiedExpenseSum(ws, op.entityId, ids, 0);
+      let e1 = jobVerifiedExpenseSum(ws, op.entityId, ids, 1);
+      let e2 = jobVerifiedExpenseSum(ws, op.entityId, ids, 2);
+      return proof.operationId == op.operationId && proof.actorUid == request.auth.uid &&
+        op.cashDelta >= -proof.amountReceived - 0.000001 &&
+        (proof.get('deletedExpenseAuditJson', '[]') == '[]'
+          ? op.cashDelta <= 0.000001
+          : (owner(ws) || (ids is list && ids.size() <= 3 && ids.toSet().size() == ids.size() &&
+              e0 >= 0 && e1 >= 0 && e2 >= 0 && op.cashDelta <= e0 + e1 + e2 + 0.000001)));
+    }
+    function validJobCashReceipt(ws, op) {
+      let pPath = entryProofPath(ws, op.entityId);
+      return op.mutationType == 'DELETE' && !exists(pPath) && existsAfter(pPath) &&
+        validJobCashReceiptWithProof(ws, op, getAfter(pPath).data);
+    }
+    function validExpenseUpsertData(ws, op, prevOut, eAfter) {
+      let nextOut = expenseCashOutflow(eAfter);
+      return eAfter.operationId == op.operationId &&
+        eAfter.actorUid == request.auth.uid &&
+        !sameMoney(prevOut, nextOut) &&
+        sameMoney(op.cashDelta, prevOut - nextOut);
+    }
+    function validExpenseUpsertReceipt(ws, op) {
+      let ePath = /databases/$(database)/documents/workspaces/$(ws)/expenses/$(op.entityId);
+      let prevOut = exists(ePath) ? expenseCashOutflow(get(ePath).data) : 0;
+      return op.mutationType == 'UPSERT' && existsAfter(ePath) &&
+        validExpenseUpsertData(ws, op, prevOut, getAfter(ePath).data);
+    }
+    function validExpenseDeleteReceipt(ws, op) {
+      let ePath = /databases/$(database)/documents/workspaces/$(ws)/expenses/$(op.entityId);
+      let dpPath = cashDeleteProofPath(ws, 'EXPENSE', op.entityId);
+      return op.mutationType == 'DELETE' && exists(ePath) && !existsAfter(ePath) &&
+        !exists(dpPath) && existsAfter(dpPath) &&
+        getAfter(dpPath).data.operationId == op.operationId &&
+        get(ePath).data.get('paidBy', '') == 'Business Paid' &&
+        sameMoney(op.cashDelta, get(ePath).data.amount);
+    }
+    function validWithdrawalUpsertData(ws, op, wAfter, fsAfter) {
+      return wAfter.operationId == op.operationId && wAfter.actorUid == request.auth.uid &&
+        sameMoney(op.cashDelta, -wAfter.amount) &&
+        fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) >= -0.000001;
+    }
+    function validWithdrawalReceipt(ws, op, fsAfter) {
+      let wPath = /databases/$(database)/documents/workspaces/$(ws)/withdrawals/$(op.entityId);
+      let dpPath = cashDeleteProofPath(ws, 'WITHDRAWAL', op.entityId);
+      return (op.mutationType == 'UPSERT' && !exists(wPath) && existsAfter(wPath) &&
+          validWithdrawalUpsertData(ws, op, getAfter(wPath).data, fsAfter)) ||
+        (op.mutationType == 'DELETE' && exists(wPath) && !existsAfter(wPath) &&
+          !exists(dpPath) && existsAfter(dpPath) && getAfter(dpPath).data.operationId == op.operationId &&
+          sameMoney(op.cashDelta, get(wPath).data.amount));
+    }
+    function validPaymentUpsertData(op, cAfter) {
+      return cAfter.operationId == op.operationId && cAfter.actorUid == request.auth.uid &&
+        cAfter.status == 'ACTIVE' && cAfter.paymentMethod == 'Cash' &&
+        sameMoney(op.cashDelta, cAfter.amount);
+    }
+    function validPaymentReverseData(op, cBefore, cAfter) {
+      return cBefore.status == 'ACTIVE' && cAfter.status == 'REVERSED' &&
+        cBefore.paymentMethod == 'Cash' && cAfter.paymentMethod == 'Cash' &&
+        cAfter.operationId == op.operationId && cAfter.actorUid == request.auth.uid &&
+        sameMoney(op.cashDelta, -cBefore.amount);
+    }
+    function validPaymentReceipt(ws, op) {
+      let cPath = /databases/$(database)/documents/workspaces/$(ws)/collections/$(op.entityId);
+      return (op.mutationType == 'UPSERT' && !exists(cPath) && existsAfter(cPath) &&
+          validPaymentUpsertData(op, getAfter(cPath).data)) ||
+        (op.mutationType == 'REVERSE' && exists(cPath) && existsAfter(cPath) &&
+          validPaymentReverseData(op, get(cPath).data, getAfter(cPath).data));
+    }
+    function validExternalLoanReceipt(ws, op, fsAfter) {
+      let lPath = /databases/$(database)/documents/workspaces/$(ws)/externalLoans/$(op.entityId);
+      let lAfter = getAfter(lPath).data;
+      return op.mutationType == 'UPSERT' && !exists(lPath) && existsAfter(lPath) &&
+        lAfter.operationId == op.operationId && lAfter.actorUid == request.auth.uid &&
+        ((lAfter.destination == 'BUSINESS_CASH' && sameMoney(op.cashDelta, lAfter.principalAmount) && sameMoney(op.get('bankDelta', 0), 0)) ||
+         (lAfter.destination == 'BUSINESS_BANK' && sameMoney(op.cashDelta, 0) && sameMoney(op.get('bankDelta', 0), lAfter.principalAmount)));
+    }
+    function validExternalLoanRepaymentReceipt(ws, op, fsAfter) {
+      let rPath = /databases/$(database)/documents/workspaces/$(ws)/externalLoanRepayments/$(op.entityId);
+      let rAfter = getAfter(rPath).data;
+      let total = rAfter.principalPaid + rAfter.interestPaid;
+      return op.mutationType == 'UPSERT' && !exists(rPath) && existsAfter(rPath) &&
+        rAfter.operationId == op.operationId && rAfter.actorUid == request.auth.uid &&
+        total > 0 &&
+        ((rAfter.source == 'BUSINESS_CASH' && sameMoney(op.cashDelta, -total) && sameMoney(op.get('bankDelta', 0), 0) &&
+          fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) >= -0.000001) ||
+         (rAfter.source == 'BUSINESS_BANK' && sameMoney(op.cashDelta, 0) && sameMoney(op.get('bankDelta', 0), -total) &&
+          fsAfter.get('confirmedBank', 0) >= -0.000001));
+    }
+    function validBorrowingRequestReceipt(ws, op, fsAfter) {
+      let bPath = /databases/$(database)/documents/workspaces/$(ws)/borrowingRequests/$(op.entityId);
+      let bAfter = getAfter(bPath).data;
+      return existsAfter(bPath) && bAfter.operationId == op.operationId && bAfter.actorUid == request.auth.uid &&
+        sameMoney(op.get('bankDelta', 0), 0) &&
+        ((op.mutationType == 'UPSERT' && !exists(bPath) && bAfter.sourceType == 'BUSINESS_ONLY' &&
+          bAfter.status == 'EXECUTED' && sameMoney(op.cashDelta, -bAfter.amount) && sameMoney(op.reservedDelta, 0) &&
+          fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) >= -0.000001) ||
+         (op.mutationType == 'APPROVE_RESERVE' && exists(bPath) &&
+          bAfter.status == 'APPROVED_RESERVED' && sameMoney(op.cashDelta, 0) && sameMoney(op.reservedDelta, bAfter.amount) &&
+          fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) >= -0.000001) ||
+         (op.mutationType == 'EXECUTE' && exists(bPath) &&
+          bAfter.status == 'EXECUTED' && sameMoney(op.cashDelta, -bAfter.amount) &&
+          sameMoney(op.reservedDelta, -get(bPath).data.reservedAmount) &&
+          fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) >= -0.000001) ||
+         (op.mutationType in ['CANCEL', 'REJECT'] && exists(bPath) &&
+          bAfter.status in ['CANCELLED', 'REJECTED'] && sameMoney(op.cashDelta, 0) &&
+          sameMoney(op.reservedDelta, -get(bPath).data.reservedAmount)));
+    }
+    function validSettlementRepaymentReceipt(ws, op) {
+      let sPath = /databases/$(database)/documents/workspaces/$(ws)/settlementRepayments/$(op.entityId);
+      let sAfter = getAfter(sPath).data;
+      return op.mutationType == 'CONFIRM' && exists(sPath) && existsAfter(sPath) &&
+        sAfter.operationId == op.operationId && sAfter.actorUid == request.auth.uid &&
+        sAfter.status == 'CONFIRMED' && sAfter.mode in ['INTO_BUSINESS', 'INTO_BUSINESS_FOR_PARTNER'] &&
+        sameMoney(op.cashDelta, sAfter.amount) && sameMoney(op.reservedDelta, 0) && sameMoney(op.get('bankDelta', 0), 0);
+    }
+    function validCashReceiptStates(ws, opId, op, fsBefore, fsAfter) {
+      return fsBefore.workspaceId == ws && fsBefore.version == op.expectedVersion &&
+        fsAfter.workspaceId == ws && fsAfter.version == op.newVersion &&
+        fsAfter.lastOperationId == opId &&
+        sameMoney(fsAfter.confirmedCash, fsBefore.confirmedCash + op.cashDelta) &&
+        sameMoney(op.confirmedCashAfter, fsAfter.confirmedCash) &&
+        sameMoney(fsAfter.get('reservedCash', 0), fsBefore.get('reservedCash', 0) + op.reservedDelta) &&
+        sameMoney(fsAfter.get('confirmedBank', 0), fsBefore.get('confirmedBank', 0) + op.get('bankDelta', 0)) &&
+        (!op.keys().hasAny(['reservedCashAfter']) || sameMoney(op.reservedCashAfter, fsAfter.get('reservedCash', 0))) &&
+        (!op.keys().hasAny(['confirmedBankAfter']) || sameMoney(op.confirmedBankAfter, fsAfter.get('confirmedBank', 0))) &&
+        (op.entityType == 'WITHDRAWAL' ? validWithdrawalReceipt(ws, op, fsAfter)
+         : op.entityType == 'PAYMENT' ? validPaymentReceipt(ws, op)
+         : op.entityType == 'EXPENSE' ? (op.mutationType == 'DELETE' ? validExpenseDeleteReceipt(ws, op) : validExpenseUpsertReceipt(ws, op))
+         : op.entityType == 'JOB' ? validJobCashReceipt(ws, op)
+         : op.entityType == 'EXTERNAL_LOAN' ? validExternalLoanReceipt(ws, op, fsAfter)
+         : op.entityType == 'EXTERNAL_LOAN_REPAYMENT' ? validExternalLoanRepaymentReceipt(ws, op, fsAfter)
+         : op.entityType == 'BORROWING_REQUEST' ? validBorrowingRequestReceipt(ws, op, fsAfter)
+         : op.entityType == 'SETTLEMENT_REPAYMENT' ? validSettlementRepaymentReceipt(ws, op)
+         : (op.entityType == 'PURGE' && op.mutationType == 'PURGE' && purge(ws, op.entityId)));
+    }
+    function validFinancialStateCashOp(ws, opId, op) {
+      return op.operationId == opId &&
+        op.expectedVersion == resource.data.version &&
+        op.newVersion == request.resource.data.version &&
+        sameMoney(op.confirmedCashAfter, request.resource.data.confirmedCash) &&
+        sameMoney(request.resource.data.confirmedCash, resource.data.confirmedCash + op.cashDelta) &&
+        sameMoney(request.resource.data.reservedCash, resource.data.get('reservedCash', 0) + op.reservedDelta) &&
+        sameMoney(request.resource.data.get('confirmedBank', 0), resource.data.get('confirmedBank', 0) + op.get('bankDelta', 0)) &&
+        request.resource.data.get('confirmedBank', 0) >= -0.000001 &&
+        op.entityType == request.resource.data.lastEntityType &&
+        op.entityId == request.resource.data.lastEntityId &&
+        op.actorUid == request.auth.uid &&
+        op.actionTime == request.resource.data.actionTime;
+    }
+    function validWithdrawalCashDelete(ws, id, dp) {
+      return activeRecord(ws, 'targetPartnerUid') &&
+        (owner(ws) || (partner(ws) && resource.data.targetPartnerUid == request.auth.uid && reviewedTime() &&
+          resource.data.createdByUid == request.auth.uid &&
+          resource.data.get('createdAt', 0) is int && resource.data.createdAt > 0 &&
+          dp.actionTime >= resource.data.createdAt && dp.actionTime - resource.data.createdAt < 86400000)) &&
+        matchesCashOp(ws, dp.operationId, 'WITHDRAWAL', id, 'DELETE', resource.data.amount);
+    }
+    function validExpenseCashDelete(ws, id, dp) {
+      return unlockedExpenseDelete(ws, resource.data) && activeRecord(ws, 'expenseForUid') &&
+        (owner(ws) || (partner(ws) && reviewedTime() && resource.data.createdByUid == request.auth.uid &&
+          resource.data.get('createdAt', 0) is int && resource.data.createdAt > 0 &&
+          dp.actionTime >= resource.data.createdAt && dp.actionTime - resource.data.createdAt < 86400000)) &&
+        (resource.data.get('paidBy', '') != 'Business Paid' ||
+          matchesCashOp(ws, dp.operationId, 'EXPENSE', id, 'DELETE', resource.data.amount));
+    }
+    function validCashReceipt(ws, opId) {
+      let op = request.resource.data;
+      return !exists(cashOpPath(ws, opId)) &&
+        op.keys().hasOnly([
+          'workspaceId', 'operationId', 'entityType', 'entityId', 'mutationType',
+          'actorUid', 'actionTime', 'cashDelta', 'reservedDelta', 'reservedCashAfter',
+          'bankDelta', 'confirmedBankAfter', 'expectedVersion',
+          'newVersion', 'confirmedCashAfter', 'createdAt', 'verifiedExpenseIds'
+        ]) &&
+        op.workspaceId == ws &&
+        op.operationId == opId && op.operationId is string && op.operationId.matches('^[A-Za-z0-9:_-]{1,160}$') &&
+        op.actorUid == request.auth.uid &&
+        op.actionTime is int && op.actionTime > 0 && op.actionTime <= request.time.toMillis() &&
+        op.createdAt == request.time &&
+        op.entityType in ['WITHDRAWAL', 'PAYMENT', 'EXPENSE', 'JOB', 'PURGE',
+          'EXTERNAL_LOAN', 'EXTERNAL_LOAN_REPAYMENT', 'BORROWING_REQUEST', 'SETTLEMENT_REPAYMENT'] &&
+        op.entityId is string && op.entityId != '' &&
+        op.mutationType in ['UPSERT', 'DELETE', 'REVERSE', 'PURGE', 'APPROVE_RESERVE', 'EXECUTE', 'CANCEL', 'REJECT', 'CONFIRM'] &&
+        (!op.keys().hasAny(['verifiedExpenseIds']) || op.entityType == 'JOB') &&
+        op.cashDelta is number && op.reservedDelta is number &&
+        (op.entityType == 'BORROWING_REQUEST' || sameMoney(op.reservedDelta, 0)) &&
+        (!op.keys().hasAny(['bankDelta']) || (op.entityType in ['EXTERNAL_LOAN', 'EXTERNAL_LOAN_REPAYMENT'] && op.bankDelta is number)) &&
+        op.expectedVersion is int && op.expectedVersion >= 1 &&
+        op.newVersion is int && op.newVersion == op.expectedVersion + 1 &&
+        op.confirmedCashAfter is number &&
+        exists(financialStatePath(ws)) && existsAfter(financialStatePath(ws)) &&
+        validCashReceiptStates(ws, opId, op, get(financialStatePath(ws)).data, getAfter(financialStatePath(ws)).data);
+    }
     function envelope(ws) {
       return request.resource.data.protocolVersion == 2 && request.resource.data.operationType in ['UPSERT', 'DELETE'] && request.resource.data.dependencies is list && request.resource.data.dependencies.size() <= 100 &&
         request.resource.data.workspaceId == ws && request.resource.data.actorUid == request.auth.uid &&
@@ -334,22 +582,40 @@ service cloud.firestore {
         unlockedEntry(ws, source) &&
         !existsAfter(entryProofPath(ws, string(jobId))));
     }
-    function validNewExpenseParties(ws, data) {
+    function validLoanFundedExpense(ws, data, id) {
+      let loanId = data.get('externalLoanId', 0);
+      let loanPath = /databases/$(database)/documents/workspaces/$(ws)/externalLoans/$(string(loanId));
+      return data.get('paidBy', '') == 'Loan Funded' &&
+        data.get('paidByUid', '') == '' &&
+        data.get('fundingSource', '') == 'EXTERNAL_LOAN' &&
+        data.get('loanFundingMode', '') == 'DIRECT_TO_SUPPLIER' &&
+        loanId is int && loanId > 0 && exists(loanPath) &&
+        get(loanPath).data.workspaceId == ws &&
+        get(loanPath).data.destination == 'DIRECT_TO_SUPPLIER' &&
+        get(loanPath).data.status == 'ACTIVE' &&
+        data.amount <= get(loanPath).data.principalAmount + 0.000001 &&
+        get(loanPath).data.get('linkedExpenseId', 0) in [0, int(id)] &&
+        existsAfter(loanPath) &&
+        getAfter(loanPath).data.linkedExpenseId == int(id);
+    }
+    function validNewExpenseParties(ws, data, id) {
       let isOwner = owner(ws);
       let isSelf = data.expenseForUid == request.auth.uid;
       let isLinked = !isOwner && !isSelf && linkedExpenseTarget(ws, data);
       let payer = data.get('paidByUid', '');
       return (isOwner || isSelf || isLinked) &&
         ((data.get('paidBy', '') == 'Business Paid' && payer == '') ||
+         validLoanFundedExpense(ws, data, id) ||
          (data.get('paidBy', '') == 'I Paid' && payer is string && payer != '' &&
           eligibleExpensePayer(ws, payer) &&
           (payer == request.auth.uid || isOwner || (payer == data.expenseForUid && isLinked))));
     }
     // Funding identity is independent of the creator and the expense beneficiary.
     // Old rows may retain their original fields; new or changed funding must be valid.
-    function validExpenseFunding(ws, data) {
+    function validExpenseFunding(ws, data, id) {
       let payer = data.get('paidByUid', '');
       return (data.get('paidBy', '') == 'Business Paid' && payer == '') ||
+        validLoanFundedExpense(ws, data, id) ||
         (data.get('paidBy', '') == 'I Paid' && payer is string && payer != '' &&
           eligibleExpensePayer(ws, payer) &&
           (payer == request.auth.uid || owner(ws) ||
@@ -360,6 +626,24 @@ service cloud.firestore {
       return target is map && target.status in ['ACTIVE', 'active'] &&
         target.get('workspaceId', ws) == ws &&
         target.role in ['OWNER', 'Owner', 'owner', 'PARTNER', 'Partner', 'partner', 'OPERATOR', 'Operator', 'operator'];
+    }
+    function validBorrowingWithdrawalCashOp(ws, wId) {
+      let w = request.resource.data;
+      let reqPath = /databases/$(database)/documents/workspaces/$(ws)/borrowingRequests/$(string(w.get('borrowingRequestId', 0)));
+      let copPath = cashOpPath(ws, w.operationId);
+      return w.get('category', '') in ['Borrow from Business', 'Borrow from Partner'] &&
+        w.get('borrowingRequestId', 0) is int && w.borrowingRequestId > 0 &&
+        existsAfter(reqPath) &&
+        getAfter(reqPath).data.status == 'EXECUTED' &&
+        getAfter(reqPath).data.withdrawalId == int(wId) &&
+        getAfter(reqPath).data.operationId == w.operationId &&
+        !exists(copPath) && existsAfter(copPath) &&
+        getAfter(copPath).data.workspaceId == ws &&
+        getAfter(copPath).data.entityType == 'BORROWING_REQUEST' &&
+        getAfter(copPath).data.entityId == string(w.borrowingRequestId) &&
+        getAfter(copPath).data.mutationType in ['UPSERT', 'EXECUTE'] &&
+        getAfter(copPath).data.actorUid == request.auth.uid &&
+        sameMoney(getAfter(copPath).data.cashDelta, -w.amount);
     }
     function customerDirectoryPath(ws, id) { return /databases/$(database)/documents/workspaces/$(ws)/customerDirectory/$(id); }
     function syncCapability(ws, feature) {
@@ -468,13 +752,22 @@ service cloud.firestore {
         allow create: if retainedExpenseSource(ws, request.resource.data) && envelope(ws) && finance(ws) && request.resource.data.createdByUid == request.auth.uid &&
           timedCreationTime() && request.resource.data.amount is number && request.resource.data.amount > 0 && request.resource.data.isDeleted == false &&
           active(ws, request.resource.data.expenseForUid) && request.resource.data.financialAttributionUid == request.resource.data.expenseForUid &&
-          validNewExpenseParties(ws, request.resource.data);
+          validNewExpenseParties(ws, request.resource.data, id) &&
+          (!atomicCashEnabled(ws) || (canonicalExpensePaidBy(request.resource.data.get('paidBy', '')) &&
+            (request.resource.data.paidBy != 'Business Paid' ||
+              matchesCashOp(ws, request.resource.data.operationId, 'EXPENSE', id, 'UPSERT', -request.resource.data.amount))));
         allow update: if retainedExpenseSource(ws, request.resource.data) && envelope(ws) && original() && notDeleted() && activeRecord(ws, 'expenseForUid') &&
           request.resource.data.amount is number && (request.resource.data.amount > 0 ||
             (resource.data.amount is number && resource.data.amount < 0 && request.resource.data.amount == resource.data.amount)) &&
-          (same(['paidBy', 'paidByUid', 'paidByPartner']) || validExpenseFunding(ws, request.resource.data)) &&
-          same(['expenseForUid', 'financialAttributionUid']) && (owner(ws) || (partner(ws) && ownTimely()));
-        allow delete: if (unlockedExpenseDelete(ws, resource.data) && deleteEnvelope() && activeRecord(ws, 'expenseForUid') && (owner(ws) || (partner(ws) && deleteTimely()))) ||
+          (same(['paidBy', 'paidByUid', 'paidByPartner', 'fundingSource', 'externalLoanId', 'loanFundingMode']) || validExpenseFunding(ws, request.resource.data, id)) &&
+          same(['expenseForUid', 'financialAttributionUid']) && (owner(ws) || (partner(ws) && ownTimely())) &&
+          (!atomicCashEnabled(ws) || (!request.resource.data.isDeleted && canonicalExpensePaidBy(request.resource.data.get('paidBy', '')) &&
+            (sameMoney(expenseCashOutflow(resource.data), expenseCashOutflow(request.resource.data)) ||
+              matchesCashOp(ws, request.resource.data.operationId, 'EXPENSE', id, 'UPSERT',
+                expenseCashOutflow(resource.data) - expenseCashOutflow(request.resource.data)))));
+        allow delete: if (atomicCashEnabled(ws)
+            ? (activeCashDeleteProof(ws, 'EXPENSE', id) && validExpenseCashDelete(ws, id, getAfter(cashDeleteProofPath(ws, 'EXPENSE', id)).data))
+            : (unlockedExpenseDelete(ws, resource.data) && deleteEnvelope() && activeRecord(ws, 'expenseForUid') && (owner(ws) || (partner(ws) && deleteTimely())))) ||
           compoundChildDelete(ws, resource.data.get('relatedJobId', 0), resource.data.get('createdByUid', ''), resource.data.get('createdAt', 0)) ||
           purge(ws, resource.data.createdByUid) || purge(ws, resource.data.expenseForUid) || purge(ws, resource.data.financialAttributionUid);
       }
@@ -484,12 +777,16 @@ service cloud.firestore {
           timedCreationTime() && request.resource.data.amount is number && request.resource.data.amount > 0 && request.resource.data.isDeleted == false &&
           active(ws, request.resource.data.targetPartnerUid) &&
           (request.resource.data.targetPartnerUid == request.auth.uid || (owner(ws) &&
-           get(memberPath(ws, request.resource.data.targetPartnerUid)).data.role in ['PARTNER', 'Partner', 'partner']));
-        allow update: if envelope(ws) && original() && notDeleted() && activeRecord(ws, 'targetPartnerUid') && request.resource.data.isDeleted == true &&
+           get(memberPath(ws, request.resource.data.targetPartnerUid)).data.role in ['PARTNER', 'Partner', 'partner'])) &&
+          (!atomicCashEnabled(ws) ||
+            matchesCashOp(ws, request.resource.data.operationId, 'WITHDRAWAL', id, 'UPSERT', -request.resource.data.amount) ||
+            validBorrowingWithdrawalCashOp(ws, id));
+        allow update: if !atomicCashEnabled(ws) && envelope(ws) && original() && notDeleted() && activeRecord(ws, 'targetPartnerUid') && request.resource.data.isDeleted == true &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['protocolVersion', 'operationType', 'dependencies', 'isDeleted', 'authorizationDeletedAt', 'actorUid', 'operationId', 'actionTime', 'updatedAt']) &&
           (owner(ws) || (partner(ws) && ownTimely() && resource.data.targetPartnerUid == request.auth.uid));
-        allow delete: if (deleteEnvelope() && activeRecord(ws, 'targetPartnerUid') &&
-          (owner(ws) || (partner(ws) && resource.data.targetPartnerUid == request.auth.uid && deleteTimely()))) ||
+        allow delete: if (atomicCashEnabled(ws)
+            ? (activeCashDeleteProof(ws, 'WITHDRAWAL', id) && validWithdrawalCashDelete(ws, id, getAfter(cashDeleteProofPath(ws, 'WITHDRAWAL', id)).data))
+            : (deleteEnvelope() && activeRecord(ws, 'targetPartnerUid') && (owner(ws) || (partner(ws) && resource.data.targetPartnerUid == request.auth.uid && deleteTimely())))) ||
           purge(ws, resource.data.createdByUid) || purge(ws, resource.data.targetPartnerUid);
       }
       match /collections/{id} {
@@ -498,12 +795,18 @@ service cloud.firestore {
           request.resource.data.status == 'ACTIVE' && request.resource.data.isDeleted == false &&
           request.resource.data.amount is number && request.resource.data.amount > 0 &&
           timedCreationTime() && validCollectionCollector(ws, request.resource.data) && validCollectionDate(ws, request.resource.data) &&
-          request.resource.data.collectedAt is int && request.resource.data.createdAt is int && request.resource.data.createdAt > 0 && collectionMatchesEntry(ws, id, false);
+          request.resource.data.collectedAt is int && request.resource.data.createdAt is int && request.resource.data.createdAt > 0 && collectionMatchesEntry(ws, id, false) &&
+          (!atomicCashEnabled(ws) || (canonicalPaymentMethod(request.resource.data.get('paymentMethod', '')) &&
+            (request.resource.data.paymentMethod != 'Cash' ||
+              matchesCashOp(ws, request.resource.data.operationId, 'PAYMENT', id, 'UPSERT', request.resource.data.amount))));
         allow update: if envelope(ws) && finance(ws) && resource.data.status == 'ACTIVE' && request.resource.data.status == 'REVERSED' &&
           request.resource.data.reversedByUid == request.auth.uid && request.resource.data.isDeleted == false &&
-          same(['workspaceId', 'collectorUid', 'collectorName', 'collectorRole', 'collectedByUid', 'collectedByName', 'collectedByRole', 'collectedAt', 'createdAt', 'authorizationCreatedAt', 'serverReceivedAt', 'authorizationTimeStatus', 'amount', 'jobEntryId', 'customerId', 'allocationsJson', 'id']) &&
+          same(['workspaceId', 'collectorUid', 'collectorName', 'collectorRole', 'collectedByUid', 'collectedByName', 'collectedByRole', 'collectedAt', 'createdAt', 'authorizationCreatedAt', 'serverReceivedAt', 'authorizationTimeStatus', 'amount', 'jobEntryId', 'customerId', 'allocationsJson', 'id', 'paymentMethod']) &&
           (owner(ws) || (partner(ws) && resource.data.collectedByUid == request.auth.uid && timely(resource.data.get('createdAt', 0)))) &&
-          collectionMatchesEntry(ws, id, true);
+          collectionMatchesEntry(ws, id, true) &&
+          (!atomicCashEnabled(ws) || (canonicalPaymentMethod(resource.data.get('paymentMethod', '')) &&
+            (resource.data.paymentMethod != 'Cash' ||
+              matchesCashOp(ws, request.resource.data.operationId, 'PAYMENT', id, 'REVERSE', -resource.data.amount))));
         allow delete: if (singleSourceCollection() && compoundChildDelete(ws, resource.data.jobEntryId, resource.data.collectedByUid, resource.data.createdAt)) || purge(ws, resource.data.collectedByUid) ||
           purge(ws, get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(resource.data.jobEntryId))).data.createdByUid) ||
           purge(ws, get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(resource.data.jobEntryId))).data.entryForUid);
@@ -541,9 +844,71 @@ service cloud.firestore {
         // validDeletionProof already requires the same active Owner/Partner authority.
         allow create: if !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)) &&
           validDeletionProof(ws, id, get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(id)).data) &&
+          (!syncCapability(ws, 'atomicCashControlV1') || existsAfter(cashOpPath(ws, request.resource.data.operationId))) &&
           request.resource.data.keys().hasOnly(['workspaceId','recordId','actorUid','operationId','actionTime','protocolVersion',
             'sourceCreatedAt','customerId','sourceCreatorUid','sourceBeneficiaryUid','totalAmount','amountReceived','pendingAmount',
             'deletedCollectionAuditJson','deletedExpenseAuditJson','deletedJobEditHistory','deletedCustomerReassignmentHistory','collectionIds']);
+        allow update, delete: if false;
+      }
+      match /financialState/{docId} {
+        allow read: if finance(ws);
+        // Opening balances cannot be fabricated by clients; only reviewed rollout initializes 'current'.
+        allow create, delete: if false;
+        allow update: if docId == 'current' && finance(ws) && atomicCashEnabled(ws) &&
+          request.resource.data.keys().hasOnly([
+            'workspaceId', 'version', 'confirmedCash', 'reservedCash', 'confirmedBank',
+            'baselineSource', 'lastOperationId', 'lastEntityType', 'lastEntityId',
+            'lastActorUid', 'actionTime', 'updatedAt'
+          ]) &&
+          same(['workspaceId', 'baselineSource']) &&
+          resource.data.workspaceId == ws &&
+          resource.data.version is int && resource.data.version >= 1 &&
+          request.resource.data.version is int &&
+          request.resource.data.version == resource.data.version + 1 &&
+          request.resource.data.confirmedCash is number &&
+          request.resource.data.reservedCash is number &&
+          request.resource.data.reservedCash >= -0.000001 &&
+          request.resource.data.confirmedBank is number &&
+          request.resource.data.lastOperationId is string && request.resource.data.lastOperationId != '' &&
+          request.resource.data.lastActorUid == request.auth.uid &&
+          request.resource.data.actionTime is int && request.resource.data.actionTime > 0 &&
+          request.resource.data.actionTime <= request.time.toMillis() &&
+          request.resource.data.updatedAt == request.time &&
+          !exists(cashOpPath(ws, request.resource.data.lastOperationId)) &&
+          existsAfter(cashOpPath(ws, request.resource.data.lastOperationId)) &&
+          validFinancialStateCashOp(ws, request.resource.data.lastOperationId, getAfter(cashOpPath(ws, request.resource.data.lastOperationId)).data);
+      }
+      match /cashOperations/{opId} {
+        allow read: if finance(ws);
+        allow create: if finance(ws) && atomicCashEnabled(ws) && validCashReceipt(ws, opId);
+        allow update, delete: if false;
+      }
+      match /cashDeleteProofs/{id} {
+        allow read: if finance(ws);
+        allow create: if finance(ws) && atomicCashEnabled(ws) &&
+          request.resource.data.keys().hasOnly([
+            'workspaceId', 'kind', 'recordId', 'actorUid', 'operationId', 'actionTime', 'requiresCashOp', 'createdAt'
+          ]) &&
+          request.resource.data.workspaceId == ws &&
+          request.resource.data.kind in ['WITHDRAWAL', 'EXPENSE'] &&
+          request.resource.data.recordId is string && request.resource.data.recordId != '' &&
+          id == request.resource.data.kind + '_' + request.resource.data.recordId &&
+          request.resource.data.actorUid == request.auth.uid &&
+          request.resource.data.operationId is string && request.resource.data.operationId.matches('^[A-Za-z0-9:_-]{1,160}$') &&
+          request.resource.data.actionTime is int && request.resource.data.actionTime > 0 &&
+          request.resource.data.actionTime <= request.time.toMillis() &&
+          request.resource.data.requiresCashOp is bool &&
+          request.resource.data.createdAt == request.time &&
+          (request.resource.data.kind == 'WITHDRAWAL'
+            ? (exists(/databases/$(database)/documents/workspaces/$(ws)/withdrawals/$(request.resource.data.recordId)) &&
+               !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/withdrawals/$(request.resource.data.recordId)) &&
+               request.resource.data.requiresCashOp == true &&
+               existsAfter(cashOpPath(ws, request.resource.data.operationId)))
+            : (exists(/databases/$(database)/documents/workspaces/$(ws)/expenses/$(request.resource.data.recordId)) &&
+               !existsAfter(/databases/$(database)/documents/workspaces/$(ws)/expenses/$(request.resource.data.recordId)) &&
+               (get(/databases/$(database)/documents/workspaces/$(ws)/expenses/$(request.resource.data.recordId)).data.get('paidBy', '') == 'Business Paid'
+                 ? (request.resource.data.requiresCashOp == true && existsAfter(cashOpPath(ws, request.resource.data.operationId)))
+                 : (request.resource.data.requiresCashOp == false))));
         allow update, delete: if false;
       }
       match /ledgerDeletionLocks/{id} {
@@ -609,6 +974,199 @@ service cloud.firestore {
             request.resource.data.backupSha256 is string && request.resource.data.purgeManifest is list) ||
            (resource.data.purgeState == 'PURGE_PENDING' && request.resource.data.purgeState in ['PURGE_PENDING', 'PURGED']));
         allow delete: if false;
+      }
+      match /externalLoans/{id} {
+        allow read: if finance(ws);
+        allow create: if envelope(ws) && finance(ws) && request.resource.data.createdByUid == request.auth.uid &&
+          request.resource.data.isDeleted == false &&
+          request.resource.data.id is int && request.resource.data.id > 0 && string(request.resource.data.id) == id &&
+          request.resource.data.lenderName is string && request.resource.data.lenderName.size() > 0 &&
+          request.resource.data.principalAmount is number && request.resource.data.principalAmount > 0 &&
+          request.resource.data.interestAmount is number && request.resource.data.interestAmount >= 0 &&
+          sameMoney(request.resource.data.get('totalRepaidPrincipal', 0), 0) &&
+          sameMoney(request.resource.data.get('totalRepaidInterest', 0), 0) &&
+          request.resource.data.status == 'ACTIVE' &&
+          request.resource.data.get('linkedExpenseId', 0) == 0 &&
+          request.resource.data.destination in ['BUSINESS_CASH', 'BUSINESS_BANK', 'DIRECT_TO_SUPPLIER'] &&
+          (!atomicCashEnabled(ws) || request.resource.data.destination == 'DIRECT_TO_SUPPLIER' ||
+            (request.resource.data.destination == 'BUSINESS_CASH' &&
+              matchesCashOp(ws, request.resource.data.operationId, 'EXTERNAL_LOAN', id, 'UPSERT', request.resource.data.principalAmount)) ||
+            (request.resource.data.destination == 'BUSINESS_BANK' &&
+              matchesCashOp(ws, request.resource.data.operationId, 'EXTERNAL_LOAN', id, 'UPSERT', 0)));
+        allow update: if finance(ws) && request.resource.data.workspaceId == ws &&
+          same(['id', 'workspaceId', 'lenderName', 'principalAmount', 'interestAmount', 'destination', 'note', 'loanDateMillis', 'createdAt', 'createdByUid', 'createdByRole']) &&
+          ((same(['totalRepaidPrincipal', 'totalRepaidInterest', 'status']) &&
+            resource.data.destination == 'DIRECT_TO_SUPPLIER' && resource.data.get('linkedExpenseId', 0) == 0 &&
+            request.resource.data.linkedExpenseId is int && request.resource.data.linkedExpenseId > 0 &&
+            existsAfter(/databases/$(database)/documents/workspaces/$(ws)/expenses/$(string(request.resource.data.linkedExpenseId))) &&
+            getAfter(/databases/$(database)/documents/workspaces/$(ws)/expenses/$(string(request.resource.data.linkedExpenseId))).data.externalLoanId == int(id)) ||
+           (same(['linkedExpenseId']) &&
+            request.resource.data.totalRepaidPrincipal is number &&
+            request.resource.data.totalRepaidInterest is number &&
+            request.resource.data.totalRepaidPrincipal >= resource.data.totalRepaidPrincipal &&
+            request.resource.data.totalRepaidInterest >= resource.data.totalRepaidInterest &&
+            request.resource.data.totalRepaidPrincipal <= resource.data.principalAmount + 0.000001 &&
+            request.resource.data.totalRepaidInterest <= resource.data.interestAmount + 0.000001 &&
+            request.resource.data.status in ['ACTIVE', 'SETTLED'] &&
+            request.resource.data.operationId is string && request.resource.data.operationId != '' &&
+            request.resource.data.actorUid == request.auth.uid));
+        allow delete: if false;
+      }
+      match /externalLoanRepayments/{id} {
+        allow read: if finance(ws);
+        allow create: if envelope(ws) && finance(ws) && request.resource.data.createdByUid == request.auth.uid &&
+          request.resource.data.isDeleted == false &&
+          request.resource.data.id is int && request.resource.data.id > 0 && string(request.resource.data.id) == id &&
+          request.resource.data.loanId is int && request.resource.data.loanId > 0 &&
+          request.resource.data.principalPaid is number && request.resource.data.principalPaid >= 0 &&
+          request.resource.data.interestPaid is number && request.resource.data.interestPaid >= 0 &&
+          request.resource.data.principalPaid + request.resource.data.interestPaid > 0 &&
+          request.resource.data.source in ['BUSINESS_CASH', 'BUSINESS_BANK'] &&
+          exists(/databases/$(database)/documents/workspaces/$(ws)/externalLoans/$(string(request.resource.data.loanId))) &&
+          existsAfter(/databases/$(database)/documents/workspaces/$(ws)/externalLoans/$(string(request.resource.data.loanId))) &&
+          getAfter(/databases/$(database)/documents/workspaces/$(ws)/externalLoans/$(string(request.resource.data.loanId))).data.operationId == request.resource.data.operationId &&
+          (!atomicCashEnabled(ws) ||
+            (request.resource.data.source == 'BUSINESS_CASH' &&
+              matchesCashOp(ws, request.resource.data.operationId, 'EXTERNAL_LOAN_REPAYMENT', id, 'UPSERT',
+                -(request.resource.data.principalPaid + request.resource.data.interestPaid))) ||
+            (request.resource.data.source == 'BUSINESS_BANK' &&
+              matchesCashOp(ws, request.resource.data.operationId, 'EXTERNAL_LOAN_REPAYMENT', id, 'UPSERT', 0)));
+        allow update, delete: if false;
+      }
+      match /borrowingRequests/{id} {
+        allow read: if finance(ws);
+        allow create: if envelope(ws) && finance(ws) && request.resource.data.isDeleted == false &&
+          request.resource.data.id is int && request.resource.data.id > 0 && string(request.resource.data.id) == id &&
+          request.resource.data.amount is number && request.resource.data.amount > 0 &&
+          active(ws, request.resource.data.borrowerUid) &&
+          (request.resource.data.borrowerUid == request.auth.uid || owner(ws)) &&
+          ((request.resource.data.sourceType == 'BUSINESS_ONLY' &&
+            request.resource.data.status == 'EXECUTED' &&
+            sameMoney(request.resource.data.get('reservedAmount', 0), 0) &&
+            request.resource.data.withdrawalId is int && request.resource.data.withdrawalId > 0 &&
+            request.resource.data.obligationId is int && request.resource.data.obligationId > 0 &&
+            existsAfter(/databases/$(database)/documents/workspaces/$(ws)/withdrawals/$(string(request.resource.data.withdrawalId))) &&
+            existsAfter(/databases/$(database)/documents/workspaces/$(ws)/settlementObligations/$(string(request.resource.data.obligationId))) &&
+            (!atomicCashEnabled(ws) || matchesCashOp(ws, request.resource.data.operationId, 'BORROWING_REQUEST', id, 'UPSERT', -request.resource.data.amount))) ||
+           (request.resource.data.sourceType == 'NAMED_PARTNER' &&
+            request.resource.data.status == 'PENDING_APPROVAL' &&
+            sameMoney(request.resource.data.get('reservedAmount', 0), 0) &&
+            request.resource.data.lendingPartnerUid is string &&
+            request.resource.data.lendingPartnerUid != request.resource.data.borrowerUid &&
+            active(ws, request.resource.data.lendingPartnerUid)));
+        allow update: if envelope(ws) && finance(ws) && request.resource.data.isDeleted == false &&
+          same(['id', 'workspaceId', 'borrowerUid', 'lendingPartnerUid', 'sourceType', 'amount', 'createdAt', 'requestedByUid', 'requestedByRole']) &&
+          ((resource.data.status == 'PENDING_APPROVAL' && request.resource.data.status == 'APPROVED_RESERVED' &&
+            request.auth.uid == resource.data.lendingPartnerUid &&
+            sameMoney(request.resource.data.reservedAmount, resource.data.amount) &&
+            (!atomicCashEnabled(ws) || matchesCashOp(ws, request.resource.data.operationId, 'BORROWING_REQUEST', id, 'APPROVE_RESERVE', 0))) ||
+           (resource.data.status == 'PENDING_APPROVAL' && request.resource.data.status == 'REJECTED' &&
+            request.auth.uid == resource.data.lendingPartnerUid &&
+            sameMoney(request.resource.data.reservedAmount, 0)) ||
+           (resource.data.status == 'PENDING_APPROVAL' && request.resource.data.status == 'CANCELLED' &&
+            (request.auth.uid == resource.data.borrowerUid || request.auth.uid == resource.data.requestedByUid || owner(ws)) &&
+            sameMoney(request.resource.data.reservedAmount, 0)) ||
+           (resource.data.status == 'APPROVED_RESERVED' && request.resource.data.status in ['CANCELLED', 'REJECTED'] &&
+            sameMoney(request.resource.data.reservedAmount, 0) &&
+            ((request.resource.data.status == 'REJECTED' && request.auth.uid == resource.data.lendingPartnerUid) ||
+             (request.resource.data.status == 'CANCELLED' && (request.auth.uid == resource.data.borrowerUid || request.auth.uid == resource.data.requestedByUid || owner(ws)))) &&
+            (!atomicCashEnabled(ws) || resource.data.reservedAmount <= 0 ||
+              matchesCashOp(ws, request.resource.data.operationId, 'BORROWING_REQUEST', id,
+                request.resource.data.status == 'CANCELLED' ? 'CANCEL' : 'REJECT', 0))) ||
+           (resource.data.status == 'APPROVED_RESERVED' && request.resource.data.status == 'EXECUTED' &&
+            (request.auth.uid == resource.data.borrowerUid || owner(ws)) &&
+            sameMoney(request.resource.data.reservedAmount, 0) &&
+            request.resource.data.withdrawalId is int && request.resource.data.withdrawalId > 0 &&
+            request.resource.data.obligationId is int && request.resource.data.obligationId > 0 &&
+            existsAfter(/databases/$(database)/documents/workspaces/$(ws)/withdrawals/$(string(request.resource.data.withdrawalId))) &&
+            existsAfter(/databases/$(database)/documents/workspaces/$(ws)/settlementObligations/$(string(request.resource.data.obligationId))) &&
+            (!atomicCashEnabled(ws) || matchesCashOp(ws, request.resource.data.operationId, 'BORROWING_REQUEST', id, 'EXECUTE', -resource.data.amount))));
+        allow delete: if false;
+      }
+      match /settlementObligations/{id} {
+        allow read: if finance(ws);
+        allow create: if envelope(ws) && finance(ws) && request.resource.data.isDeleted == false &&
+          request.resource.data.id is int && request.resource.data.id > 0 && string(request.resource.data.id) == id &&
+          request.resource.data.principalAmount is number && request.resource.data.principalAmount > 0 &&
+          sameMoney(request.resource.data.get('repaidAmount', 0), 0) &&
+          sameMoney(request.resource.data.get('directSettledAmount', 0), 0) &&
+          request.resource.data.status == 'OPEN' &&
+          request.resource.data.creditorType in ['BUSINESS', 'PARTNER'] &&
+          request.resource.data.sourceRequestId is int && request.resource.data.sourceRequestId > 0 &&
+          existsAfter(/databases/$(database)/documents/workspaces/$(ws)/borrowingRequests/$(string(request.resource.data.sourceRequestId))) &&
+          getAfter(/databases/$(database)/documents/workspaces/$(ws)/borrowingRequests/$(string(request.resource.data.sourceRequestId))).data.obligationId == int(id) &&
+          getAfter(/databases/$(database)/documents/workspaces/$(ws)/borrowingRequests/$(string(request.resource.data.sourceRequestId))).data.operationId == request.resource.data.operationId;
+        allow update: if envelope(ws) && finance(ws) && request.resource.data.isDeleted == false &&
+          same(['id', 'workspaceId', 'borrowerUid', 'creditorType', 'creditorUid', 'sourceRequestId', 'principalAmount', 'createdAt', 'createdByUid']) &&
+          request.resource.data.repaidAmount is number &&
+          request.resource.data.repaidAmount > resource.data.repaidAmount &&
+          request.resource.data.repaidAmount <= resource.data.principalAmount + 0.000001 &&
+          request.resource.data.directSettledAmount >= resource.data.get('directSettledAmount', 0) &&
+          request.resource.data.status in ['OPEN', 'SETTLED'];
+        allow delete: if false;
+      }
+      match /settlementRepayments/{id} {
+        allow read: if finance(ws);
+        allow create: if envelope(ws) && finance(ws) && request.resource.data.createdByUid == request.auth.uid &&
+          request.resource.data.isDeleted == false &&
+          request.resource.data.id is int && request.resource.data.id > 0 && string(request.resource.data.id) == id &&
+          request.resource.data.obligationId is int && request.resource.data.obligationId > 0 &&
+          request.resource.data.amount is number && request.resource.data.amount > 0 &&
+          request.resource.data.status == 'PENDING_CONFIRMATION' &&
+          request.resource.data.mode in ['INTO_BUSINESS', 'INTO_BUSINESS_FOR_PARTNER', 'DIRECT_TO_PARTNER'] &&
+          exists(/databases/$(database)/documents/workspaces/$(ws)/settlementObligations/$(string(request.resource.data.obligationId)));
+        allow update: if envelope(ws) && finance(ws) && request.resource.data.isDeleted == false &&
+          resource.data.status == 'PENDING_CONFIRMATION' &&
+          same(['id', 'workspaceId', 'obligationId', 'payerUid', 'creditorType', 'creditorUid', 'amount', 'mode', 'paidAt', 'createdAt', 'createdByUid']) &&
+          ((request.resource.data.status == 'REJECTED' &&
+            (resource.data.mode != 'DIRECT_TO_PARTNER' || request.auth.uid == resource.data.creditorUid)) ||
+           (request.resource.data.status == 'CONFIRMED' &&
+            request.resource.data.confirmedByUid == request.auth.uid &&
+            (resource.data.mode != 'DIRECT_TO_PARTNER' || request.auth.uid == resource.data.creditorUid) &&
+            existsAfter(/databases/$(database)/documents/workspaces/$(ws)/settlementObligations/$(string(resource.data.obligationId))) &&
+            getAfter(/databases/$(database)/documents/workspaces/$(ws)/settlementObligations/$(string(resource.data.obligationId))).data.operationId == request.resource.data.operationId &&
+            (resource.data.mode == 'DIRECT_TO_PARTNER' || !atomicCashEnabled(ws) ||
+              matchesCashOp(ws, request.resource.data.operationId, 'SETTLEMENT_REPAYMENT', id, 'CONFIRM', resource.data.amount))));
+        allow delete: if false;
+      }
+      match /notifications/{notifId} {
+        allow read: if owner(ws) || (partner(ws) && resource.data.recipientUid == request.auth.uid);
+        allow create: if finance(ws) &&
+          request.resource.data.keys().hasOnly([
+            'id', 'workspaceId', 'operationId', 'recipientUid', 'targetAudience',
+            'actorUid', 'actorName', 'eventType', 'entityType', 'entityId',
+            'amount', 'counterpartyName', 'metadataJson', 'createdAt', 'isRead', 'readAt'
+          ]) &&
+          request.resource.data.workspaceId == ws &&
+          request.resource.data.id == notifId &&
+          request.resource.data.actorUid == request.auth.uid &&
+          request.resource.data.recipientUid is string &&
+          request.resource.data.recipientUid != '' &&
+          request.resource.data.recipientUid != request.auth.uid &&
+          request.resource.data.operationId is string && request.resource.data.operationId != '' &&
+          request.resource.data.targetAudience in ['OWNER_ONLY', 'PARTNER_TARGETED'] &&
+          request.resource.data.eventType is string && request.resource.data.eventType != '' &&
+          request.resource.data.entityType is string &&
+          request.resource.data.entityId is int &&
+          request.resource.data.amount is number &&
+          request.resource.data.createdAt is int && request.resource.data.createdAt > 0 &&
+          request.resource.data.createdAt <= request.time.toMillis() &&
+          request.resource.data.isRead == false &&
+          request.resource.data.readAt == 0;
+        allow update: if (owner(ws) || (partner(ws) && resource.data.recipientUid == request.auth.uid)) &&
+          resource.data.actorUid != request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'readAt']) &&
+          request.resource.data.isRead == true &&
+          request.resource.data.readAt is int && request.resource.data.readAt > 0;
+        allow delete: if false;
+      }
+      match /auditEvents/{eventId} {
+        allow read: if owner(ws);
+        allow create: if member(ws) &&
+          request.resource.data.workspaceId == ws &&
+          request.resource.data.actorUid == request.auth.uid &&
+          request.resource.data.eventId == eventId;
+        allow update, delete: if false;
       }
       match /settings/{id} { allow read: if member(ws); allow create, update: if owner(ws); allow delete: if false; }
       match /profitShareAllocations/{id} { allow read: if finance(ws); allow write: if owner(ws); }

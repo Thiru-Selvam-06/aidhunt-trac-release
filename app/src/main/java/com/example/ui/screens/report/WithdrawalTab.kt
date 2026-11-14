@@ -68,14 +68,15 @@ fun getEligibleProfitShareParticipants(
     workspaceMembers: List<WorkspaceMember>,
     partners: List<PartnerEntity>,
     settings: AppSettingsEntity,
-    isTamil: Boolean
+    isTamil: Boolean,
+    hasBusinessPartnership: Boolean = com.example.ui.util.hasBusinessPartnershipHistory(settings.workspaceId, workspaceMembers)
 ): List<ProfitShareParticipant> {
     return workspaceMembers.filter { it.workspaceId == settings.workspaceId && it.uid.isNotBlank() && it.status.equals("active", true) &&
         com.example.data.auth.RoleUtils.normalizeRole(it.role) in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)
     }.distinctBy { it.uid }.map { member ->
         val owner = com.example.data.auth.RoleUtils.isOwner(member.role)
         ProfitShareParticipant(member.uid, member.displayName.orEmpty().ifBlank { "Member" },
-            com.example.data.auth.RoleUtils.getRoleDisplayName(member.role, isTamil), owner)
+            com.example.data.auth.RoleUtils.getRoleDisplayName(com.example.ui.util.businessDisplayRole(member.role, hasBusinessPartnership), isTamil), owner)
     }.sortedByDescending { it.isOwner }
 }
 
@@ -131,12 +132,23 @@ fun WithdrawalTab(
     onUpdatePartnerPercentages: (Map<String, Int>) -> Unit = {},
     profitShareAllocations: Map<String, Int> = emptyMap(),
     profitShareAllocationDetails: Map<String, com.example.data.firebase.ProfitShareAllocation> = emptyMap(),
-    onUpdateProfitShareAllocations: (Map<String, Int>, Map<String, com.example.data.firebase.ProfitShareAllocation>) -> Unit = { _, _ -> }
+    onUpdateProfitShareAllocations: (Map<String, Int>, Map<String, com.example.data.firebase.ProfitShareAllocation>) -> Unit = { _, _ -> },
+    borrowingOverview: com.example.ui.util.WorkspaceBorrowingOverview = com.example.ui.util.WorkspaceBorrowingOverview(0.0, 0.0, 0.0, 0.0, 0.0, emptyMap()),
+    borrowingRequests: List<com.example.data.entity.BorrowingRequestEntity> = emptyList(),
+    currentRole: String = "",
+    onRequestBorrowing: ((String, String, Double, String, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onApproveBorrowing: ((Long, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onRejectBorrowing: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onExecuteBorrowing: ((Long, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onCancelBorrowing: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    onOpenSettlements: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     var takeAmountTargetStatus by remember { mutableStateOf<PartnerShareInvestmentStatus?>(null) }
     var showTakeAmountDialog by remember { mutableStateOf(false) }
+    var showBorrowDialog by remember { mutableStateOf(false) }
+    var borrowActionError by remember { mutableStateOf("") }
     var showPdfOptionsDialog by remember { mutableStateOf(false) }
     var selectedPartnerFilter by remember(settings.workspaceId, currentUid) { mutableStateOf("All") }
     var draftPartnerFilter by remember(settings.workspaceId, currentUid) { mutableStateOf("All") }
@@ -149,7 +161,10 @@ fun WithdrawalTab(
     val effectiveUid = if (currentUid.isNotBlank()) currentUid else (try { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid } catch (_: Exception) { null } ?: "")
 
     var showWithdrawalHistory by remember(settings.workspaceId, currentUid) { mutableStateOf(false) }
-    val distributionMembers = workspaceMembers.filter { it.uid.isNotBlank() && it.status.equals("active", true) }.distinctBy { it.uid }
+    val distributionMembers = workspaceMembers.filter {
+        it.uid.isNotBlank() && it.workspaceId == settings.workspaceId && it.status.equals("active", true) &&
+            com.example.data.auth.RoleUtils.normalizeRole(it.role) in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)
+    }.distinctBy { it.uid }
     val filteredWithdrawals = withdrawals.filter { w ->
         if (settings.workspaceId.isBlank() || w.workspaceId != settings.workspaceId) return@filter false
         val matchesPartner = selectedPartnerFilter == "All" || w.targetPartnerUid == selectedPartnerFilter
@@ -170,22 +185,28 @@ fun WithdrawalTab(
     }
     val currentFilteredTotal = filteredWithdrawals.sumOf { it.amount }
 
+    val hasPartnership = com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
     // Canonical participant list for withdrawals (strictly exclude business name)
-    val allWorkspacePersons = remember(workspaceMembers, partners, settings.activePartnerName, settings.ownerName, settings.businessName) {
+    val allWorkspacePersons = remember(workspaceMembers, partners, settings.workspaceId, settings.activePartnerName, settings.ownerName, settings.businessName, isTamil, hasPartnership) {
         val personMap = linkedMapOf<String, String>()
         val bizName = settings.businessName.trim()
         workspaceMembers
-            .filter { it.uid.isNotBlank() && it.status.equals("active", ignoreCase = true) }
+            .filter {
+                it.uid.isNotBlank() && it.workspaceId == settings.workspaceId && it.status.equals("active", ignoreCase = true) &&
+                    com.example.data.auth.RoleUtils.normalizeRole(it.role) in setOf(
+                        com.example.data.auth.RoleUtils.ROLE_OWNER,
+                        com.example.data.auth.RoleUtils.ROLE_PARTNER
+                    )
+            }
             .forEach { member ->
                 val memberName = member.displayName?.trim().orEmpty()
                 if (memberName.isNotBlank() && !memberName.equals(bizName, ignoreCase = true)) {
                     personMap.putIfAbsent(
                         memberName,
-                        if (member.role.equals("owner", ignoreCase = true)) {
-                            if (isTamil) "உரிமையாளர்" else "Business Owner"
-                        } else {
-                            member.role.ifBlank { if (isTamil) "பங்குதாரர்" else "Partner" }
-                        }
+                        com.example.data.auth.RoleUtils.getRoleDisplayName(
+                            com.example.ui.util.businessDisplayRole(member.role, hasPartnership),
+                            isTamil
+                        )
                     )
                 }
             }
@@ -197,7 +218,7 @@ fun WithdrawalTab(
             }
             val owner = settings.ownerName.trim()
             if (owner.isNotBlank() && !owner.equals(bizName, ignoreCase = true)) {
-                personMap.putIfAbsent(owner, if (isTamil) "உரிமையாளர்" else "Business Owner")
+                personMap.putIfAbsent(owner, com.example.data.auth.RoleUtils.getRoleDisplayName(com.example.ui.util.businessDisplayRole("Owner", hasPartnership), isTamil))
             }
             partners.forEach { p ->
                 val pName = p.name.trim()
@@ -211,8 +232,8 @@ fun WithdrawalTab(
 
     // Authoritative eligible participants for Profit Share Allocation
     // Derived strictly from actual eligible workspace members (OWNER and PARTNER, never OPERATOR or Business Name)
-    val eligibleProfitShareParticipants = remember(workspaceMembers, partners, settings, isTamil) {
-        getEligibleProfitShareParticipants(workspaceMembers, partners, settings, isTamil)
+    val eligibleProfitShareParticipants = remember(workspaceMembers, partners, settings, isTamil, hasPartnership) {
+        getEligibleProfitShareParticipants(workspaceMembers, partners, settings, isTamil, hasPartnership)
     }
 
     // Calculate Partner Share & Investment Statuses
@@ -254,7 +275,7 @@ fun WithdrawalTab(
         items
     }
 
-    val distribution = com.example.ui.util.withdrawalDistribution(settings.workspaceId, filteredWithdrawals, distributionMembers)
+    val distribution = com.example.ui.util.withdrawalDistribution(settings.workspaceId, filteredWithdrawals, workspaceMembers)
     val pieSlices = distribution.participants.filter { it.amount > 0 }.mapIndexed { index, participant ->
         PieChartSlice(
             name = participant.displayName,
@@ -325,6 +346,68 @@ fun WithdrawalTab(
                     )
                 }
             }
+            if (onRequestBorrowing != null || onOpenSettlements != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (onRequestBorrowing != null) {
+                        OutlinedButton(
+                            onClick = { showBorrowDialog = true },
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFF0B532E)),
+                            colors = ButtonDefaults.outlinedButtonColors(containerColor = Color(0xFFF0FDF4)),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("btn_borrow_amount")
+                        ) {
+                            Icon(
+                                Icons.Default.Handshake,
+                                contentDescription = null,
+                                tint = Color(0xFF0B532E),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (isTamil) "கடன் பெறுக" else "Borrow",
+                                color = Color(0xFF0B532E),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.5.sp
+                            )
+                        }
+                    }
+                    if (onOpenSettlements != null) {
+                        OutlinedButton(
+                            onClick = onOpenSettlements,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                            colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("btn_open_settlements")
+                        ) {
+                            Icon(
+                                Icons.Default.AccountBalance,
+                                contentDescription = null,
+                                tint = Color(0xFF475569),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (isTamil) "தீர்வுகள்" else "Settlements",
+                                color = Color(0xFF0F172A),
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         LazyColumn(
@@ -382,6 +465,14 @@ fun WithdrawalTab(
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF0B532E)
                                 )
+                                if (borrowingOverview.reservedCash > 0.0) {
+                                    Text(
+                                        text = if (isTamil) "முன்பதிவு: ${formatInr(borrowingOverview.reservedCash)}" else "Reserved: ${formatInr(borrowingOverview.reservedCash)}",
+                                        fontSize = 10.5.sp,
+                                        color = Color(0xFFB45309),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
                     }
@@ -429,6 +520,61 @@ fun WithdrawalTab(
                             }
                         }
                     }
+                }
+            }
+
+            val activeBorrowingRequests = borrowingRequests.filter { it.status in setOf("PENDING_APPROVAL", "APPROVED_RESERVED") }
+            if (borrowActionError.isNotBlank()) {
+                item(key = "borrow_action_error") {
+                    Surface(
+                        color = Color(0xFFFEF2F2),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = borrowActionError,
+                            color = Color(0xFFDC2626),
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+            }
+            if (activeBorrowingRequests.isNotEmpty()) {
+                item(key = "active_borrowing_header") {
+                    Text(
+                        text = if (isTamil) "நிலுவையில் உள்ள கடன் கோரிக்கைகள் (${activeBorrowingRequests.size})"
+                        else "Active Borrowing Requests (${activeBorrowingRequests.size})",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
+                }
+                items(activeBorrowingRequests, key = { "withdraw_borrow_${it.id}" }) { req ->
+                    BorrowingRequestCard(
+                        req = req,
+                        currency = settings.currency,
+                        isTamil = isTamil,
+                        isOwner = isOwner,
+                        currentUid = effectiveUid,
+                        currentRole = currentRole,
+                        onApprove = {
+                            borrowActionError = ""
+                            onApproveBorrowing?.invoke(req.id, {}, { borrowActionError = it })
+                        },
+                        onReject = {
+                            borrowActionError = ""
+                            onRejectBorrowing?.invoke(req.id, "", {}, { borrowActionError = it })
+                        },
+                        onExecute = {
+                            borrowActionError = ""
+                            onExecuteBorrowing?.invoke(req.id, {}, { borrowActionError = it })
+                        },
+                        onCancel = {
+                            borrowActionError = ""
+                            onCancelBorrowing?.invoke(req.id, "", {}, { borrowActionError = it })
+                        }
+                    )
                 }
             }
 
@@ -715,11 +861,13 @@ fun WithdrawalTab(
                 val isOwnCard = isOwner ||
                     (currentUid.isNotBlank() && status.partnerUid == currentUid) ||
                     (currentUid.isBlank() && status.partnerName.trim().equals(currentUserName.trim(), ignoreCase = true))
+                val openDebt = borrowingOverview.partnerSummaries[status.partnerUid]?.openBorrowingDebt ?: 0.0
                 PartnerShareInvestmentCard(
                     status = status,
                     isTamil = isTamil,
                     isOwner = isOwner,
                     isOwnCard = isOwnCard,
+                    openBorrowingDebt = openDebt,
                     onTakeAmount = { targetStatus ->
                         takeAmountTargetStatus = targetStatus
                         showTakeAmountDialog = true
@@ -731,12 +879,13 @@ fun WithdrawalTab(
 
     // Screen 2: Take Amount Modal / Bottom Sheet
     if (showTakeAmountDialog) {
+        val unreservedCashForWithdrawal = maxOf(0.0, availableAmount - borrowingOverview.reservedCash)
         TakeAmountDialog(
             partners = partners,
             allPersons = allWorkspacePersons,
             partnerStatuses = partnerShareInvestmentStatuses,
             initialTargetStatus = takeAmountTargetStatus,
-            availableAmount = availableAmount,
+            availableAmount = unreservedCashForWithdrawal,
             currency = settings.currency,
             isTamil = isTamil,
             isOwner = isOwner,
@@ -752,6 +901,24 @@ fun WithdrawalTab(
                 withdrawalsToSave.forEach { onAddWithdrawal(it) }
                 showTakeAmountDialog = false
                 takeAmountTargetStatus = null
+            }
+        )
+    }
+
+    if (showBorrowDialog && onRequestBorrowing != null) {
+        BorrowDialog(
+            workspaceId = settings.workspaceId,
+            workspaceMembers = workspaceMembers,
+            borrowingOverview = borrowingOverview,
+            currency = settings.currency,
+            isTamil = isTamil,
+            isOwner = isOwner,
+            currentUid = effectiveUid,
+            onDismiss = { showBorrowDialog = false },
+            onSubmit = { sourceType, lenderUid, amt, borrowNote, borrowerUid, onErr ->
+                onRequestBorrowing(sourceType, lenderUid, amt, borrowNote, borrowerUid, {
+                    showBorrowDialog = false
+                }, onErr)
             }
         )
     }
@@ -907,6 +1074,7 @@ private fun PartnerShareInvestmentCard(
     isTamil: Boolean,
     isOwner: Boolean = false,
     isOwnCard: Boolean = true,
+    openBorrowingDebt: Double = 0.0,
     onTakeAmount: (PartnerShareInvestmentStatus) -> Unit
 ) {
     Card(
@@ -916,31 +1084,55 @@ private fun PartnerShareInvestmentCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            // Partner Top Row: Avatar Initial + Partner Name
+            // Partner Top Row: Avatar Initial + Partner Name + Open Borrowing Debt Badge
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color(0xFFDCFCE7),
-                    modifier = Modifier.size(28.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f, fill = false)
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFDCFCE7),
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = status.partnerName.take(1).uppercase(Locale.getDefault()),
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF15803D),
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                    Text(
+                        text = status.partnerName,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
+                }
+                if (openBorrowingDebt > 0.0) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFFFEF2F2),
+                        border = BorderStroke(1.dp, Color(0xFFFECACA)),
+                        modifier = Modifier.testTag("partner_debt_badge_${status.partnerUid}")
+                    ) {
                         Text(
-                            text = status.partnerName.take(1).uppercase(Locale.getDefault()),
+                            text = if (isTamil) "தீர்க்க வேண்டியது: -${formatInr(openBorrowingDebt)}"
+                            else "-${formatInr(openBorrowingDebt)} Amount to Repay",
+                            fontSize = 10.5.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF15803D),
-                            fontSize = 13.sp
+                            color = Color(0xFFDC2626),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                         )
                     }
                 }
-                Text(
-                    text = status.partnerName,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0F172A)
-                )
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -1145,7 +1337,7 @@ fun TakeAmountDialog(
 ) {
     val context = LocalContext.current
     // Owners see all partners; Partners see only themselves
-    val eligibleMemberOptions = workspaceMembers.filter { it.uid.isNotBlank() && it.status.equals("active", true) &&
+    val eligibleMemberOptions = workspaceMembers.filter { it.uid.isNotBlank() && (workspaceId.isBlank() || it.workspaceId == workspaceId) && it.status.equals("active", true) &&
         com.example.data.auth.RoleUtils.normalizeRole(it.role) in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER) && (isOwner || it.uid == currentUid) }
     val personOptions = eligibleMemberOptions.map { it.displayName.orEmpty().ifBlank { "Member" } to it.role }
 

@@ -38,7 +38,7 @@ class BasicCustomerRoomTest {
                 } finally {endTransaction()}
             }
             db.close()
-            db=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(AppDatabase.MIGRATION_21_22).build()
+            db=Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(AppDatabase.MIGRATION_21_22, AppDatabase.MIGRATION_22_23, AppDatabase.MIGRATION_23_24).build()
             assertTrue(db.basicCustomerDao().observe("w").first().isEmpty())
             assertEquals(job,db.jobEntryDao().getJobById("w",9))
             assertEquals(rejected,db.pendingOperationDao().getOperation(rejected.operationId))

@@ -45,9 +45,15 @@ import kotlinx.coroutines.launch
         com.example.data.entity.PendingOperationEntity::class,
         com.example.data.entity.DeletedMemberEntity::class,
         com.example.data.entity.ExpenseCategoryEntity::class,
-        com.example.data.entity.BasicCustomerEntity::class
+        com.example.data.entity.BasicCustomerEntity::class,
+        com.example.data.entity.ExternalLoanEntity::class,
+        com.example.data.entity.ExternalLoanRepaymentEntity::class,
+        com.example.data.entity.BorrowingRequestEntity::class,
+        com.example.data.entity.SettlementObligationEntity::class,
+        com.example.data.entity.SettlementRepaymentEntity::class,
+        com.example.data.entity.AppNotificationEntity::class
     ],
-    version = 22,
+    version = 24,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -68,6 +74,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun pendingOperationDao(): com.example.data.dao.PendingOperationDao
 
     abstract fun deletedMemberDao(): com.example.data.dao.DeletedMemberDao
+
+    abstract fun stage3Dao(): com.example.data.dao.Stage3Dao
+
+    abstract fun appNotificationDao(): com.example.data.dao.AppNotificationDao
 
     companion object {
         @Volatile
@@ -331,6 +341,84 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfMissing(db, "expenses", "fundingSource", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "expenses", "externalLoanId", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfMissing(db, "expenses", "loanFundingMode", "TEXT NOT NULL DEFAULT ''")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS external_loans (
+                    id INTEGER NOT NULL, workspaceId TEXT NOT NULL, lenderName TEXT NOT NULL,
+                    principalAmount REAL NOT NULL, interestAmount REAL NOT NULL,
+                    totalRepaidPrincipal REAL NOT NULL, totalRepaidInterest REAL NOT NULL,
+                    destination TEXT NOT NULL, linkedExpenseId INTEGER NOT NULL,
+                    status TEXT NOT NULL, note TEXT NOT NULL, loanDateMillis INTEGER NOT NULL,
+                    createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL,
+                    createdByUid TEXT NOT NULL, createdByRole TEXT NOT NULL,
+                    isSynced INTEGER NOT NULL,
+                    PRIMARY KEY(workspaceId, id))""")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS external_loan_repayments (
+                    id INTEGER NOT NULL, workspaceId TEXT NOT NULL, loanId INTEGER NOT NULL,
+                    principalPaid REAL NOT NULL, interestPaid REAL NOT NULL,
+                    source TEXT NOT NULL, note TEXT NOT NULL, repaidAt INTEGER NOT NULL,
+                    createdAt INTEGER NOT NULL, createdByUid TEXT NOT NULL,
+                    createdByRole TEXT NOT NULL, isSynced INTEGER NOT NULL,
+                    PRIMARY KEY(workspaceId, id))""")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS borrowing_requests (
+                    id INTEGER NOT NULL, workspaceId TEXT NOT NULL, borrowerUid TEXT NOT NULL,
+                    borrowerName TEXT NOT NULL, lendingPartnerUid TEXT NOT NULL,
+                    lendingPartnerName TEXT NOT NULL, sourceType TEXT NOT NULL,
+                    amount REAL NOT NULL, note TEXT NOT NULL, status TEXT NOT NULL,
+                    reservedAmount REAL NOT NULL, withdrawalId INTEGER NOT NULL,
+                    obligationId INTEGER NOT NULL, requestedByUid TEXT NOT NULL,
+                    requestedByRole TEXT NOT NULL, approvedByUid TEXT NOT NULL,
+                    approvedAt INTEGER NOT NULL, rejectedByUid TEXT NOT NULL,
+                    rejectedAt INTEGER NOT NULL, rejectionReason TEXT NOT NULL,
+                    executedAt INTEGER NOT NULL, createdAt INTEGER NOT NULL,
+                    updatedAt INTEGER NOT NULL, isSynced INTEGER NOT NULL,
+                    PRIMARY KEY(workspaceId, id))""")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS settlement_obligations (
+                    id INTEGER NOT NULL, workspaceId TEXT NOT NULL, borrowerUid TEXT NOT NULL,
+                    borrowerName TEXT NOT NULL, creditorType TEXT NOT NULL,
+                    creditorUid TEXT NOT NULL, creditorName TEXT NOT NULL,
+                    sourceRequestId INTEGER NOT NULL, principalAmount REAL NOT NULL,
+                    repaidAmount REAL NOT NULL, directSettledAmount REAL NOT NULL,
+                    status TEXT NOT NULL, note TEXT NOT NULL, createdAt INTEGER NOT NULL,
+                    updatedAt INTEGER NOT NULL, createdByUid TEXT NOT NULL,
+                    isSynced INTEGER NOT NULL,
+                    PRIMARY KEY(workspaceId, id))""")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS settlement_repayments (
+                    id INTEGER NOT NULL, workspaceId TEXT NOT NULL, obligationId INTEGER NOT NULL,
+                    payerUid TEXT NOT NULL, payerName TEXT NOT NULL, creditorType TEXT NOT NULL,
+                    creditorUid TEXT NOT NULL, creditorName TEXT NOT NULL,
+                    amount REAL NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL,
+                    note TEXT NOT NULL, paidAt INTEGER NOT NULL, createdAt INTEGER NOT NULL,
+                    createdByUid TEXT NOT NULL, confirmedByUid TEXT NOT NULL,
+                    confirmedAt INTEGER NOT NULL, rejectedByUid TEXT NOT NULL,
+                    rejectedAt INTEGER NOT NULL, rejectionReason TEXT NOT NULL,
+                    isSynced INTEGER NOT NULL,
+                    PRIMARY KEY(workspaceId, id))""")
+            }
+        }
+
+        val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS app_notifications (
+                    id TEXT NOT NULL, workspaceId TEXT NOT NULL, operationId TEXT NOT NULL,
+                    recipientUid TEXT NOT NULL, targetAudience TEXT NOT NULL,
+                    actorUid TEXT NOT NULL, actorName TEXT NOT NULL,
+                    eventType TEXT NOT NULL, entityType TEXT NOT NULL, entityId INTEGER NOT NULL,
+                    amount REAL NOT NULL, counterpartyName TEXT NOT NULL,
+                    metadataJson TEXT NOT NULL, createdAt INTEGER NOT NULL,
+                    isRead INTEGER NOT NULL, readAt INTEGER NOT NULL,
+                    PRIMARY KEY(workspaceId, id))""")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -342,7 +430,7 @@ abstract class AppDatabase : RoomDatabase() {
                         com.example.BuildConfig.PHYSICAL_TEST -> "aidhunt_physical_test_v18.db"
                         else -> "aidhunt_trac_v4.db"
                     }
-                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24)
                 .build()
                 INSTANCE = instance
                 instance

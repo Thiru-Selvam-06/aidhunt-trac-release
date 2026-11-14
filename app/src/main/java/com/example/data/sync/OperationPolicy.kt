@@ -22,7 +22,11 @@ object OperationPolicy {
         val owner = normalized == RoleUtils.ROLE_OWNER
         val partner = normalized == RoleUtils.ROLE_PARTNER
         val operator = normalized == RoleUtils.ROLE_OPERATOR
-        val creator = data.optString("createdByUid")
+        val creator = if (op.entityType == "BORROWING_REQUEST") {
+            data.optString("requestedByUid").ifBlank { data.optString("createdByUid") }
+        } else {
+            data.optString("createdByUid")
+        }
         val target = when (op.entityType) {
             "JOB" -> data.optString("entryForUid")
             "EXPENSE" -> data.optString("expenseForUid")
@@ -33,7 +37,10 @@ object OperationPolicy {
             throw SecurityException("Target membership removed")
         }
         val timely = AuthorizationManager.within24Hours(data.optLong("createdAt"), op.actionTime)
-        if (op.entityType in setOf("JOB", "EXPENSE", "WITHDRAWAL", "TRACTOR", "EXTENSION") &&
+        val stage3Action = data.optString("stage3Action")
+        val requiresCreatorMembership = op.entityType in setOf("JOB", "EXPENSE", "WITHDRAWAL", "TRACTOR", "EXTENSION", "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT") ||
+            (op.entityType in setOf("BORROWING_REQUEST", "SETTLEMENT_REPAYMENT") && stage3Action in setOf("", "CREATE", "EXECUTE_BUSINESS"))
+        if (requiresCreatorMembership &&
             members.none { it.uid == creator && it.workspaceId == op.workspaceId && it.status.equals("active", true) })
             throw SecurityException("Record creator membership removed")
         val matchingOwnJob = op.entityType == "EXPENSE" && linkedJob != null &&
@@ -56,6 +63,27 @@ object OperationPolicy {
                  })
             "PAYMENT" -> owner || (partner && data.optString("collectedByUid") == op.actorUid &&
                 (data.optString("status") == "ACTIVE" || AuthorizationManager.within24Hours(data.optLong("createdAt"), op.actionTime)))
+            "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT" -> (owner || partner) && creator == op.actorUid && op.mutationType == "UPSERT"
+            "BORROWING_REQUEST" -> (owner || partner) && op.mutationType == "UPSERT" && when (stage3Action) {
+                "EXECUTE_BUSINESS", "CREATE" -> {
+                    val borrowerUid = data.optString("borrowerUid")
+                    val lendingUid = data.optString("lendingPartnerUid")
+                    (borrowerUid == op.actorUid || owner) &&
+                        members.any { it.uid == borrowerUid && it.workspaceId == op.workspaceId && it.status.equals("active", true) && RoleUtils.normalizeRole(it.role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER) } &&
+                        (data.optString("sourceType") != "NAMED_PARTNER" ||
+                            (lendingUid.isNotBlank() && lendingUid != borrowerUid &&
+                                members.any { it.uid == lendingUid && it.workspaceId == op.workspaceId && it.status.equals("active", true) && RoleUtils.normalizeRole(it.role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER) }))
+                }
+                "APPROVE_RESERVE", "REJECT" -> data.optString("lendingPartnerUid") == op.actorUid
+                "EXECUTE" -> data.optString("borrowerUid") == op.actorUid || owner
+                "CANCEL" -> data.optString("borrowerUid") == op.actorUid || data.optString("requestedByUid") == op.actorUid || owner
+                else -> false
+            }
+            "SETTLEMENT_REPAYMENT" -> (owner || partner) && op.mutationType == "UPSERT" && when (stage3Action) {
+                "CREATE", "" -> creator == op.actorUid
+                "CONFIRM", "REJECT" -> data.optString("mode") != "DIRECT_TO_PARTNER" || data.optString("creditorUid") == op.actorUid
+                else -> false
+            }
             else -> false
         }
         if (!permitted) {

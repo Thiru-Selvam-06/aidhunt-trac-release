@@ -9,7 +9,8 @@ import org.json.JSONObject
 /** Additive protocols are enabled only after Rules and every workspace client are ready. */
 data class WorkspaceSyncCapabilities(
     val expenseCategoriesV1: Boolean = false,
-    val basicCustomerProfilesV1: Boolean = false
+    val basicCustomerProfilesV1: Boolean = false,
+    val atomicCashControlV1: Boolean = false
 ) {
     fun requireSupported(operation: PendingOperationEntity) {
         if ((operation.entityType == "EXPENSE_CATEGORY" && !expenseCategoriesV1) ||
@@ -21,8 +22,11 @@ data class WorkspaceSyncCapabilities(
     companion object {
         fun fromWorkspace(data: Map<String, Any?>): WorkspaceSyncCapabilities {
             val flags = data["syncCapabilities"] as? Map<*, *> ?: emptyMap<Any, Any>()
-            return WorkspaceSyncCapabilities(flags["expenseCategoriesV1"] == true,
-                flags["basicCustomerProfilesV1"] == true)
+            return WorkspaceSyncCapabilities(
+                expenseCategoriesV1 = flags["expenseCategoriesV1"] == true,
+                basicCustomerProfilesV1 = flags["basicCustomerProfilesV1"] == true,
+                atomicCashControlV1 = flags["atomicCashControlV1"] == true
+            )
         }
     }
 }
@@ -44,7 +48,11 @@ class VerifiedWorkspaceCapabilityCache(context: Context) {
         if (uid.isBlank() || workspace.isBlank()) return WorkspaceSyncCapabilities()
         val data = runCatching { JSONObject(prefs.getString(key(uid, workspace), "{}").orEmpty()) }.getOrNull()
         val value = if (data?.optString("uid") == uid && data.optString("workspace") == workspace)
-            WorkspaceSyncCapabilities(data.opt("expenseCategoriesV1") == true, data.opt("basicCustomerProfilesV1") == true)
+            WorkspaceSyncCapabilities(
+                expenseCategoriesV1 = data.opt("expenseCategoriesV1") == true,
+                basicCustomerProfilesV1 = data.opt("basicCustomerProfilesV1") == true,
+                atomicCashControlV1 = data.opt("atomicCashControlV1") == true
+            )
         else WorkspaceSyncCapabilities()
         mutable.value = mutable.value + ((uid to workspace) to value)
         return value
@@ -56,6 +64,7 @@ class VerifiedWorkspaceCapabilityCache(context: Context) {
         val data = JSONObject().put("uid", uid).put("workspace", workspace)
             .put("expenseCategoriesV1", value.expenseCategoriesV1)
             .put("basicCustomerProfilesV1", value.basicCustomerProfilesV1)
+            .put("atomicCashControlV1", value.atomicCashControlV1)
         check(prefs.edit().putString(key(uid, workspace), data.toString()).commit()) { "Cannot persist workspace compatibility state" }
         mutable.value = mutable.value + ((uid to workspace) to value)
     }

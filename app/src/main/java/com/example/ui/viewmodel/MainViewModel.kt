@@ -21,6 +21,12 @@ import com.example.data.entity.WithdrawalEntity
 import com.example.data.entity.PaymentEntity
 import com.example.data.entity.ChecklistItemEntity
 import com.example.data.entity.WorkTypeExtensionEntity
+import com.example.data.entity.ExternalLoanEntity
+import com.example.data.entity.ExternalLoanRepaymentEntity
+import com.example.data.entity.BorrowingRequestEntity
+import com.example.data.entity.SettlementObligationEntity
+import com.example.data.entity.SettlementRepaymentEntity
+import com.example.data.entity.AppNotificationEntity
 import com.example.data.firebase.AuthState
 import com.example.data.firebase.UserProfile
 import com.example.data.firebase.AccountLookupResult
@@ -67,7 +73,9 @@ enum class ReportSubPage {
     WITHDRAWAL,
     CUSTOMER_CREDIT_DUE,
     COLLECTION_HISTORY,
-    OLD_ENTRY
+    OLD_ENTRY,
+    EXTERNAL_LOANS,
+    SETTLEMENTS
 }
 
 enum class AccountSubPage {
@@ -605,14 +613,122 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else workspaceRepository.getPaymentsFlow(target)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val externalLoans: StateFlow<List<ExternalLoanEntity>> = combine(activeWorkspaceId, currentUserRole) { wsId, role -> wsId to role }.flatMapLatest { (target, role) ->
+        if (target.isNullOrBlank() || role !in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) flowOf(emptyList())
+        else workspaceRepository.getExternalLoansFlow(target)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val externalLoanRepayments: StateFlow<List<ExternalLoanRepaymentEntity>> = combine(activeWorkspaceId, currentUserRole) { wsId, role -> wsId to role }.flatMapLatest { (target, role) ->
+        if (target.isNullOrBlank() || role !in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) flowOf(emptyList())
+        else workspaceRepository.getExternalLoanRepaymentsFlow(target)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val borrowingRequests: StateFlow<List<BorrowingRequestEntity>> = combine(activeWorkspaceId, currentUserRole) { wsId, role -> wsId to role }.flatMapLatest { (target, role) ->
+        if (target.isNullOrBlank() || role !in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) flowOf(emptyList())
+        else workspaceRepository.getBorrowingRequestsFlow(target)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val settlementObligations: StateFlow<List<SettlementObligationEntity>> = combine(activeWorkspaceId, currentUserRole) { wsId, role -> wsId to role }.flatMapLatest { (target, role) ->
+        if (target.isNullOrBlank() || role !in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) flowOf(emptyList())
+        else workspaceRepository.getSettlementObligationsFlow(target)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val settlementRepayments: StateFlow<List<SettlementRepaymentEntity>> = combine(activeWorkspaceId, currentUserRole) { wsId, role -> wsId to role }.flatMapLatest { (target, role) ->
+        if (target.isNullOrBlank() || role !in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) flowOf(emptyList())
+        else workspaceRepository.getSettlementRepaymentsFlow(target)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val notifications: StateFlow<List<AppNotificationEntity>> = combine(activeWorkspaceId, currentUserRole, authState) { wsId, role, auth ->
+        Triple(wsId, role, auth)
+    }.flatMapLatest { (target, role, auth) ->
+        val uid = (auth as? AuthState.Authenticated)?.profile?.uid.orEmpty()
+        if (target.isNullOrBlank() || uid.isBlank() || role !in setOf(com.example.data.auth.RoleUtils.ROLE_OWNER, com.example.data.auth.RoleUtils.ROLE_PARTNER)) {
+            flowOf(emptyList())
+        } else {
+            workspaceRepository.getVisibleNotificationsFlow(target, uid, role == com.example.data.auth.RoleUtils.ROLE_OWNER)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val unreadNotificationCount: StateFlow<Int> = notifications
+        .map { list -> list.count { !it.isRead } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val confirmedCash: StateFlow<Double> = workspaceRepository.confirmedCash
+    val reservedCash: StateFlow<Double> = workspaceRepository.reservedCash
+    val confirmedBank: StateFlow<Double> = workspaceRepository.confirmedBank
+
+    private val stage3CashInputs = combine(externalLoans, externalLoanRepayments, settlementRepayments) { loans, loanReps, setReps ->
+        Triple(loans, loanReps, setReps)
+    }
+
     // Cash Collections are the receipt source. Entry amountReceived includes non-cash methods.
     val availableAmount: StateFlow<Double> = combine(
-        cashPayments, expenses, withdrawals, activeWorkspaceId, jobs
-    ) { payments, expenseRows, withdrawalRows, wsId, jobRows ->
-        if (wsId.isNullOrBlank()) 0.0 else com.example.ui.util.FinancialCalculationEngine.cashAvailable(
-            payments, expenseRows, withdrawalRows,
-            com.example.ui.util.FinancialScope(mode = com.example.ui.util.FinancialScopeMode.OVERALL, workspaceId = wsId), jobRows)
+        combine(cashPayments, expenses, withdrawals, activeWorkspaceId, jobs) { payments, expenseRows, withdrawalRows, wsId, jobRows ->
+            arrayOf<Any?>(payments, expenseRows, withdrawalRows, wsId, jobRows)
+        },
+        stage3CashInputs
+    ) { base, (loans, loanReps, setReps) ->
+        @Suppress("UNCHECKED_CAST")
+        val payments = base[0] as List<PaymentEntity>
+        @Suppress("UNCHECKED_CAST")
+        val expenseRows = base[1] as List<ExpenseEntity>
+        @Suppress("UNCHECKED_CAST")
+        val withdrawalRows = base[2] as List<WithdrawalEntity>
+        val wsId = base[3] as String?
+        @Suppress("UNCHECKED_CAST")
+        val jobRows = base[4] as List<JobEntryEntity>
+        if (wsId.isNullOrBlank()) 0.0 else com.example.ui.util.FinancialCalculationEngine.cashAvailableWithStage3(
+            payments = payments,
+            expenses = expenseRows,
+            withdrawals = withdrawalRows,
+            scope = com.example.ui.util.FinancialScope(mode = com.example.ui.util.FinancialScopeMode.OVERALL, workspaceId = wsId),
+            jobs = jobRows,
+            externalLoans = loans,
+            externalLoanRepayments = loanReps,
+            settlementRepayments = setReps
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val borrowingOverview: StateFlow<com.example.ui.util.WorkspaceBorrowingOverview> = combine(
+        combine(availableAmount, reservedCash, activeWorkspaceId) { cash, reserved, wsId -> Triple(cash, reserved, wsId) },
+        combine(jobs, expenses, withdrawals, workspaceMembers) { j, e, w, m -> arrayOf<Any>(j, e, w, m) },
+        combine(profitShareAllocations, profitShareAllocationDetails, settings) { alloc, details, st -> Triple(alloc, details, st) },
+        combine(settlementObligations, borrowingRequests) { obs, reqs -> obs to reqs }
+    ) { (cash, reserved, wsId), ledger, config, (obs, reqs) ->
+        @Suppress("UNCHECKED_CAST")
+        val j = ledger[0] as List<JobEntryEntity>
+        @Suppress("UNCHECKED_CAST")
+        val e = ledger[1] as List<ExpenseEntity>
+        @Suppress("UNCHECKED_CAST")
+        val w = ledger[2] as List<WithdrawalEntity>
+        @Suppress("UNCHECKED_CAST")
+        val m = ledger[3] as List<WorkspaceMember>
+        val (alloc, details, st) = config
+        val statuses = if (wsId.isNullOrBlank()) emptyList() else com.example.ui.util.FinancialCalculationEngine.calculatePartnerShareAndInvestment(
+            jobs = j,
+            expenses = e,
+            withdrawals = w,
+            workspaceMembers = m,
+            profitShareAllocations = alloc,
+            profitShareAllocationDetails = details,
+            scope = com.example.ui.util.FinancialScope(workspaceId = wsId),
+            businessName = st.businessName
+        )
+        val localReserved = reqs.filter { it.status == "APPROVED_RESERVED" }.sumOf { it.reservedAmount }
+        com.example.ui.util.PartnerBorrowingCalculator.calculate(
+            confirmedCash = cash,
+            reservedCash = maxOf(reserved, localReserved),
+            statuses = statuses,
+            obligations = obs,
+            borrowingRequests = reqs
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.ui.util.WorkspaceBorrowingOverview(0.0, 0.0, 0.0, 0.0, 0.0, emptyMap()))
 
     // Today-specific operational metrics for Home Dashboard
     val todayTotalRecorded: StateFlow<Double> = jobs.map { rows ->
@@ -1129,6 +1245,213 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 android.util.Log.w("TRAC_FIRESTORE", "Cloud delete withdrawal failed: ${e.message}")
             }
+        }
+    }
+
+    fun canManageExternalLoans(): Boolean =
+        com.example.data.auth.AuthorizationManager.canManageExternalLoans(isCollaborationOwner.value, currentUserRole.value)
+
+    fun recordExternalLoan(
+        lenderName: String,
+        principalAmount: Double,
+        interestAmount: Double,
+        destination: String,
+        note: String,
+        loanDateMillis: Long = System.currentTimeMillis(),
+        onSuccess: (Long) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (!canManageExternalLoans()) {
+            onError("External loans are restricted to Owner and Partner")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val id = workspaceRepository.recordExternalLoan(lenderName, principalAmount, interestAmount, destination, note, loanDateMillis)
+                _syncMessage.value = "External loan saved on this device; cloud sync pending"
+                onSuccess(id)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to record external loan")
+            }
+        }
+    }
+
+    fun recordExternalLoanRepayment(
+        loanId: Long,
+        principalPaid: Double,
+        interestPaid: Double,
+        source: String,
+        note: String,
+        repaidAt: Long = System.currentTimeMillis(),
+        onSuccess: (Long) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (!canManageExternalLoans()) {
+            onError("External loan repayments are restricted to Owner and Partner")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val id = workspaceRepository.recordExternalLoanRepayment(loanId, principalPaid, interestPaid, source, note, repaidAt)
+                _syncMessage.value = "Loan repayment saved on this device; cloud sync pending"
+                onSuccess(id)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to record loan repayment")
+            }
+        }
+    }
+
+    fun requestBorrowing(
+        sourceType: String,
+        lendingPartnerUid: String,
+        amount: Double,
+        note: String,
+        targetBorrowerUid: String = "",
+        onSuccess: (Long) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (!com.example.data.auth.AuthorizationManager.canViewWithdrawals(isCollaborationOwner.value, role = currentUserRole.value)) {
+            onError("Borrowing is restricted for this role")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val id = workspaceRepository.requestBorrowing(sourceType, lendingPartnerUid, amount, note, targetBorrowerUid)
+                _syncMessage.value = if (sourceType == "BUSINESS_ONLY") {
+                    "Business borrow saved on this device; cloud sync pending"
+                } else {
+                    "Borrowing request sent for lending partner approval"
+                }
+                onSuccess(id)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                onError(e.message ?: "Borrowing request failed")
+            }
+        }
+    }
+
+    fun approveAndReserveBorrowing(requestId: Long, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                workspaceRepository.approveAndReserveBorrowing(requestId)
+                _syncMessage.value = "Borrowing request approved & funds reserved"
+                onSuccess()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to approve borrowing request")
+            }
+        }
+    }
+
+    fun executeApprovedBorrowing(requestId: Long, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                workspaceRepository.executeApprovedBorrowing(requestId)
+                _syncMessage.value = "Approved borrow executed; cloud sync pending"
+                onSuccess()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to execute approved borrow")
+            }
+        }
+    }
+
+    fun rejectBorrowingRequest(requestId: Long, reason: String = "", onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                workspaceRepository.rejectBorrowingRequest(requestId, reason)
+                _syncMessage.value = "Borrowing request rejected"
+                onSuccess()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to reject borrowing request")
+            }
+        }
+    }
+
+    fun cancelBorrowingRequest(requestId: Long, reason: String = "", onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                workspaceRepository.cancelBorrowingRequest(requestId, reason)
+                _syncMessage.value = "Borrowing request cancelled"
+                onSuccess()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to cancel borrowing request")
+            }
+        }
+    }
+
+    fun recordSettlementRepayment(
+        obligationId: Long,
+        amount: Double,
+        mode: String,
+        note: String,
+        paidAt: Long = System.currentTimeMillis(),
+        onSuccess: (Long) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val id = workspaceRepository.recordSettlementRepayment(obligationId, amount, mode, note, paidAt)
+                _syncMessage.value = "Settlement repayment recorded; awaiting confirmation"
+                onSuccess(id)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to record settlement repayment")
+            }
+        }
+    }
+
+    fun confirmSettlementRepayment(repaymentId: Long, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                workspaceRepository.confirmSettlementRepayment(repaymentId)
+                _syncMessage.value = "Settlement repayment confirmed"
+                onSuccess()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to confirm repayment")
+            }
+        }
+    }
+
+    fun rejectSettlementRepayment(repaymentId: Long, reason: String = "", onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                workspaceRepository.rejectSettlementRepayment(repaymentId, reason)
+                _syncMessage.value = "Settlement repayment rejected"
+                onSuccess()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to reject repayment")
+            }
+        }
+    }
+
+    fun markNotificationRead(notificationId: String) {
+        val wsId = activeWorkspaceId.value ?: return
+        viewModelScope.launch {
+            workspaceRepository.markNotificationRead(wsId, notificationId)
+        }
+    }
+
+    fun markAllNotificationsRead() {
+        val wsId = activeWorkspaceId.value ?: return
+        viewModelScope.launch {
+            workspaceRepository.markAllNotificationsRead(wsId)
         }
     }
 

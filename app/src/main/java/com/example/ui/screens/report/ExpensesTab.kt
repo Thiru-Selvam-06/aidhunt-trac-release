@@ -223,7 +223,8 @@ fun ExpensesTab(
     customExpenseCategories: List<String> = emptyList(),
     onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null,
     onAddExpenseConfirmed: ((ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null,
-    onUpdateExpenseWithBase: ((ExpenseEntity, ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null
+    onUpdateExpenseWithBase: ((ExpenseEntity, ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    externalLoans: List<com.example.data.entity.ExternalLoanEntity> = emptyList()
 ) {
     var currentView by remember { mutableStateOf(ExpenseScreenView.REPORT_LIST) }
     var activeExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
@@ -289,6 +290,7 @@ fun ExpensesTab(
                     saveFailed = expenseSaveFailed,
                     customExpenseCategories = customExpenseCategories,
                     onAddExpenseCategory = onAddExpenseCategory,
+                    externalLoans = externalLoans,
                     initialExpense = null,
                     tractors = tractors,
                     partners = partners,
@@ -324,6 +326,7 @@ fun ExpensesTab(
                     saveFailed = expenseSaveFailed,
                     customExpenseCategories = customExpenseCategories,
                     onAddExpenseCategory = onAddExpenseCategory,
+                    externalLoans = externalLoans,
                     initialExpense = activeExpense,
                     tractors = tractors,
                     partners = partners,
@@ -1210,9 +1213,13 @@ fun ExpenseListItemRow(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                val opName = if (expense.paidBy.trim().equals("Business Paid", true)) {
-                    if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid · Shared expense"
-                } else expense.paidByPartner.ifBlank { if (isTamil) "செலுத்தியவர் விவரம் இல்லை" else "Payer unavailable" }
+                val opName = when {
+                    expense.fundingSource.equals("EXTERNAL_LOAN", true) || expense.paidBy.trim().equals("Loan Funded", true) ->
+                        if (isTamil) "கடன் நிதி · நேரடி விநியோகஸ்தர்" else "Loan Funded · Direct to Supplier"
+                    expense.paidBy.trim().equals("Business Paid", true) ->
+                        if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid · Shared expense"
+                    else -> expense.paidByPartner.ifBlank { if (isTamil) "செலுத்தியவர் விவரம் இல்லை" else "Payer unavailable" }
+                }
                 if (opName.isNotBlank()) {
                     Text(
                         text = opName,
@@ -1330,7 +1337,8 @@ fun AddOrEditExpenseScreen(
     customExpenseCategories: List<String> = emptyList(),
     onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null,
     isSaving: Boolean = false,
-    saveFailed: Boolean = false
+    saveFailed: Boolean = false,
+    externalLoans: List<com.example.data.entity.ExternalLoanEntity> = emptyList()
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -1365,8 +1373,24 @@ fun AddOrEditExpenseScreen(
     var amountText by remember { mutableStateOf(initialExpense?.amount?.let(com.example.data.expense.ExpenseAmountInput::format) ?: "") }
     var descriptionText by remember { mutableStateOf(initialExpense?.description ?: "") }
     var selectedWhoPaid by remember(initialExpense) {
-        mutableStateOf(initialExpense?.paidBy?.ifBlank { "I Paid" } ?: "I Paid")
+        mutableStateOf(
+            when {
+                initialExpense?.fundingSource.equals("EXTERNAL_LOAN", true) ||
+                    initialExpense?.paidBy.equals("Loan Funded", true) -> "Loan Funded"
+                else -> initialExpense?.paidBy?.ifBlank { "I Paid" } ?: "I Paid"
+            }
+        )
     }
+    val availableDirectLoans = remember(externalLoans, initialExpense) {
+        externalLoans.filter {
+            it.destination == "DIRECT_TO_SUPPLIER" &&
+                (it.linkedExpenseId == 0L || (initialExpense != null && it.linkedExpenseId == initialExpense.id))
+        }
+    }
+    var selectedExternalLoanId by remember(initialExpense, availableDirectLoans) {
+        mutableLongStateOf(initialExpense?.externalLoanId?.takeIf { it > 0L } ?: availableDirectLoans.firstOrNull()?.id ?: 0L)
+    }
+    var isLoanDropdownOpen by remember { mutableStateOf(false) }
     var paymentMode by remember { mutableStateOf("Cash") }
     var isTypeDropdownOpen by remember { mutableStateOf(false) }
     var showAddCategory by remember { mutableStateOf(false) }
@@ -1377,13 +1401,17 @@ fun AddOrEditExpenseScreen(
     var hasValidated by remember { mutableStateOf(false) }
     val originalAmount = initialExpense?.amount?.takeIf { isEditMode }
     val allowRefund = originalAmount != null && originalAmount < 0.0
-    val isAmountValid = com.example.data.expense.ExpenseAmountInput.parseForRecord(amountText, originalAmount) != null
+    val selectedLoan = availableDirectLoans.firstOrNull { it.id == selectedExternalLoanId }
+    val parsedAmt = com.example.data.expense.ExpenseAmountInput.parseForRecord(amountText, originalAmount)
+    val isLoanFundingMode = selectedWhoPaid == "Loan Funded"
+    val isLoanSelectionValid = !isLoanFundingMode || (selectedLoan != null && parsedAmt != null && parsedAmt > 0.0 && parsedAmt <= selectedLoan.principalAmount + 0.001)
+    val isAmountValid = parsedAmt != null && (!isLoanFundingMode || selectedLoan == null || parsedAmt <= selectedLoan.principalAmount + 0.001)
     val formDateFormat = remember(isTamil) { SimpleDateFormat("dd/MM/yyyy  hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH) }
     fun doSave() {
         if (isSaving) return
         hasValidated = true
         val amt = com.example.data.expense.ExpenseAmountInput.parseForRecord(amountText, originalAmount)
-        if (amt != null) {
+        if (amt != null && isLoanSelectionValid) {
             val matchedTractor = tractors.find { it.label == selectedTractor }
             val currentActor = if (isOwner) {
                 settings.ownerName.ifBlank { actorName.ifBlank { settings.activePartnerName.ifBlank { "Owner" } } }
@@ -1395,12 +1423,13 @@ fun AddOrEditExpenseScreen(
                     ?.displayName.orEmpty().ifBlank { currentActor }
             val finalAddedByPartner = if (!isOwner) currentActor else (initialExpense?.addedByPartner?.ifBlank { null } ?: currentActor)
             val isBusinessPaid = selectedWhoPaid.equals("Business Paid", ignoreCase = true)
-            val finalPaidByPartner = if (!isBusinessPaid) {
+            val isLoanFunded = selectedWhoPaid.equals("Loan Funded", ignoreCase = true)
+            val finalPaidByPartner = if (!isBusinessPaid && !isLoanFunded) {
                 initialExpense?.paidByPartner?.takeIf { it.isNotBlank() }
                     ?: workspaceMembers.firstOrNull { it.uid == (initialExpense?.expenseForUid ?: selectedTargetUid) }
                         ?.displayName.orEmpty().ifBlank { cleanOperator.ifBlank { currentActor } }
             } else ""
-            val finalPaidByUid = if (!isBusinessPaid) {
+            val finalPaidByUid = if (!isBusinessPaid && !isLoanFunded) {
                 initialExpense?.paidByUid?.takeIf { it.isNotBlank() }
                     ?: initialExpense?.expenseForUid?.takeIf { it.isNotBlank() }
                     ?: if (!isOwner) currentUid else selectedTargetUid
@@ -1420,13 +1449,20 @@ fun AddOrEditExpenseScreen(
                 addedByPartner = finalAddedByPartner,
                 dateTimestamp = selectedTimestamp,
                 createdAt = initialExpense?.createdAt ?: System.currentTimeMillis(),
-                paidBy = if (isBusinessPaid) "Business Paid" else "I Paid",
+                paidBy = when {
+                    isLoanFunded -> "Loan Funded"
+                    isBusinessPaid -> "Business Paid"
+                    else -> "I Paid"
+                },
                 paidByPartner = finalPaidByPartner,
                 paidByUid = finalPaidByUid,
                 expenseForUid = initialExpense?.expenseForUid?.takeIf { it.isNotBlank() } ?: targetMemberUid,
                 financialAttributionUid = initialExpense?.financialAttributionUid?.takeIf { it.isNotBlank() } ?: targetMemberUid,
                 createdByUid = initialExpense?.createdByUid ?: currentUid,
-                createdByRole = initialExpense?.createdByRole ?: (if (isOwner) "owner" else "partner")
+                createdByRole = initialExpense?.createdByRole ?: (if (isOwner) "owner" else "partner"),
+                fundingSource = if (isLoanFunded) "EXTERNAL_LOAN" else "",
+                externalLoanId = if (isLoanFunded) (selectedLoan?.id ?: 0L) else 0L,
+                loanFundingMode = if (isLoanFunded) "DIRECT_TO_SUPPLIER" else ""
             )
             onSaveExpense(expense)
         }
@@ -1641,7 +1677,7 @@ fun AddOrEditExpenseScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         val isIPaid = selectedWhoPaid == "I Paid"
                         Surface(
@@ -1655,9 +1691,10 @@ fun AddOrEditExpenseScreen(
                                 .weight(1f)
                                 .height(52.dp)
                                 .clickable { selectedWhoPaid = "I Paid" }
+                                .testTag("who_paid_i_paid")
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.Center
                             ) {
@@ -1665,13 +1702,14 @@ fun AddOrEditExpenseScreen(
                                     imageVector = Icons.Default.Person,
                                     contentDescription = null,
                                     tint = if (isIPaid) Color(0xFF0F9D58) else Color(0xFF64748B),
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = if (isTamil) "நான் செலுத்தினேன்" else "I Paid",
+                                    text = if (isTamil) "நான்" else "I Paid",
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 13.sp,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
                                     color = if (isIPaid) Color(0xFF0F9D58) else Color(0xFF334155)
                                 )
                             }
@@ -1689,9 +1727,10 @@ fun AddOrEditExpenseScreen(
                                 .weight(1f)
                                 .height(52.dp)
                                 .clickable { selectedWhoPaid = "Business Paid" }
+                                .testTag("who_paid_business")
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.Center
                             ) {
@@ -1699,14 +1738,96 @@ fun AddOrEditExpenseScreen(
                                     imageVector = Icons.Default.Storefront,
                                     contentDescription = null,
                                     tint = if (isBusinessPaid) Color(0xFF0F9D58) else Color(0xFF64748B),
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid",
+                                    text = if (isTamil) "வணிகம்" else "Business",
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 13.sp,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
                                     color = if (isBusinessPaid) Color(0xFF0F9D58) else Color(0xFF334155)
+                                )
+                            }
+                        }
+
+                        val isLoanOption = selectedWhoPaid == "Loan Funded"
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                width = if (isLoanOption) 1.5.dp else 1.dp,
+                                color = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFFCBD5E1)
+                            ),
+                            color = if (isLoanOption) Color(0xFFF0FDF4) else Color.White,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(52.dp)
+                                .clickable { selectedWhoPaid = "Loan Funded" }
+                                .testTag("who_paid_loan_funded")
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Payments,
+                                    contentDescription = null,
+                                    tint = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFF64748B),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isTamil) "கடன் நிதி" else "Loan Funded",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    color = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFF334155)
+                                )
+                            }
+                        }
+                    }
+
+                    if (isLoanFundingMode) {
+                        if (availableDirectLoans.isEmpty()) {
+                            Text(
+                                text = if (isTamil) "விற்பனையாளருக்கு நேரடி கடன் எதுவும் இல்லை. முதலில் வெளிப்புற கடன்கள் பக்கத்தில் 'விற்பனையாளருக்கு நேரடி' கடனைச் சேர்க்கவும்."
+                                else "No unlinked Direct-to-Supplier external loans available. Record one under External Loans first.",
+                                fontSize = 11.5.sp,
+                                color = Color(0xFFDC2626)
+                            )
+                        } else {
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                FormFieldCard(
+                                    modifier = Modifier.fillMaxWidth().testTag("select_external_loan_card"),
+                                    icon = Icons.Default.Payments,
+                                    label = if (isTamil) "இணைக்கப்பட்ட கடன்*" else "Linked External Loan*",
+                                    value = selectedLoan?.let { "${it.lenderName} (${formatInr(it.principalAmount, settings.currency)})" }
+                                        ?: (if (isTamil) "கடனைத் தேர்ந்தெடுக்கவும்" else "Select Direct Loan"),
+                                    isDropdown = true,
+                                    onClick = { isLoanDropdownOpen = true }
+                                )
+                                DropdownMenu(
+                                    expanded = isLoanDropdownOpen,
+                                    onDismissRequest = { isLoanDropdownOpen = false }
+                                ) {
+                                    availableDirectLoans.forEach { loan ->
+                                        DropdownMenuItem(
+                                            text = { Text("${loan.lenderName} · ${formatInr(loan.principalAmount, settings.currency)}") },
+                                            onClick = {
+                                                selectedExternalLoanId = loan.id
+                                                isLoanDropdownOpen = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                            if (hasValidated && selectedLoan != null && parsedAmt != null && parsedAmt > selectedLoan.principalAmount + 0.001) {
+                                Text(
+                                    text = if (isTamil) "செலவுத் தொகை கடன் அசலை விட (${formatInr(selectedLoan.principalAmount, settings.currency)}) அதிகமாக இருக்கக்கூடாது"
+                                    else "Amount cannot exceed loan principal (${formatInr(selectedLoan.principalAmount, settings.currency)})",
+                                    fontSize = 11.5.sp,
+                                    color = Color(0xFFDC2626)
                                 )
                             }
                         }
@@ -2036,9 +2157,13 @@ fun ExpenseDetailsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         icon = Icons.Default.Person,
                         label = if (isTamil) "செலுத்தியவர்" else "Paid By",
-                        value = if (expense.paidBy.trim().equals("Business Paid", true)) {
-                            if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid · Shared expense"
-                        } else expense.paidByPartner.ifBlank { "I Paid" }
+                        value = when {
+                            expense.fundingSource.equals("EXTERNAL_LOAN", true) || expense.paidBy.trim().equals("Loan Funded", true) ->
+                                if (isTamil) "கடன் நிதி · நேரடி விநியோகஸ்தர் (#${expense.externalLoanId})" else "Loan Funded · Direct to Supplier (#${expense.externalLoanId})"
+                            expense.paidBy.trim().equals("Business Paid", true) ->
+                                if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid · Shared expense"
+                            else -> expense.paidByPartner.ifBlank { "I Paid" }
+                        }
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),

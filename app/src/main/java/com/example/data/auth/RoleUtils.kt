@@ -87,10 +87,12 @@ object RoleUtils {
         ownerName: String = "",
         workspaceMembers: List<WorkspaceMember> = emptyList(),
         partners: List<PartnerEntity> = emptyList(),
-        isTamil: Boolean = false
+        isTamil: Boolean = false,
+        hasBusinessPartnership: Boolean = false
     ): String {
         val (role, name) = resolveCreatorRoleAndName(job, ownerName, workspaceMembers, partners)
-        val roleAndName = formatRoleAndName(role, name, isTamil)
+        val displayRole = if (hasBusinessPartnership && role == ROLE_OWNER) ROLE_PARTNER else role
+        val roleAndName = formatRoleAndName(displayRole, name, isTamil)
         val prefix = if (isTamil) "உருவாக்கியவர்" else "Entry by"
         return "$prefix: $roleAndName"
     }
@@ -125,13 +127,15 @@ object RoleUtils {
      */
     fun getEditedByDisplay(
         job: JobEntryEntity,
-        isTamil: Boolean = false
+        isTamil: Boolean = false,
+        hasBusinessPartnership: Boolean = false
     ): String? {
         val editedName = job.editedByName.trim()
         if (editedName.isBlank()) return null
 
         val role = normalizeRole(job.editedByRole)
-        val roleAndName = formatRoleAndName(role, editedName, isTamil)
+        val displayRole = if (hasBusinessPartnership && role == ROLE_OWNER) ROLE_PARTNER else role
+        val roleAndName = formatRoleAndName(displayRole, editedName, isTamil)
         val prefix = if (isTamil) "திருத்தியவர்" else "Edited by"
         return "$prefix: $roleAndName"
     }
