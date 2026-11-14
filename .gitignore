@@ -19,6 +19,7 @@ debug.keystore
 keystore.properties
 trac-release-key.jks
 /ci-reports/
+/.build-outputs/
 
 
 /.codex/
@@ -43,6 +44,7 @@ trac-release-key.jks
 /google-services.json
 /app/google-services.json
 /app/src/physicalTest/google-services.json
+!/app/src/deviceTest/google-services.json
 /docs/test-artifacts/
 /scripts/__pycache__/
 /qodex/
@@ -59,6 +61,8 @@ docs/stabilization-access-evidence-*.json
 docs/entry-attribution-proposal-*.md
 docs/pms-*.md
 docs/regression/*.json
+!docs/regression/asset-inventory.json
+!docs/regression/interaction-inventory.json
 docs/regression/*.log
 docs/regression/*.txt
 docs/stabilization-*.log

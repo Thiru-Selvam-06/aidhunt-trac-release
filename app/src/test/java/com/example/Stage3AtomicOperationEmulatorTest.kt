@@ -370,4 +370,174 @@ class Stage3AtomicOperationEmulatorTest {
         assertNotEquals(200, commitStale.first)
         assertFalse(request("v1/${docName("withdrawals", 1202L)}", "GET", token = jwt("owner")).first == 200)
     }
+
+    @Test
+    fun businessBorrowingProtectsPartnerEntitlementsAndApprovedCommitmentsAtServerBoundary() {
+        seedWorkspace(cash = 1000.0, bank = 0.0)
+        val t = now
+        // Seed financialState with confirmedCash=1000, reservedCash=200 (approved commitment), protectedEntitlements=500 (partner withdrawable entitlements)
+        // Available for business borrowing = 1000 - 200 - 500 = 300.
+        val seedProtected = request(
+            "v1/$root:commit",
+            body = JSONObject().put(
+                "writes",
+                JSONArray().put(
+                    updateWrite(
+                        docName("financialState", "current"),
+                        mapOf(
+                            "workspaceId" to ws, "version" to 1L, "confirmedCash" to 1000.0, "reservedCash" to 200.0,
+                            "confirmedBank" to 0.0, "protectedEntitlements" to 500.0, "baselineSource" to "SERVER_COMPUTED",
+                            "lastOperationId" to "seed", "lastEntityType" to "BASELINE", "lastEntityId" to "current",
+                            "lastActorUid" to "owner", "actionTime" to t - 1000L
+                        )
+                    )
+                )
+            ),
+            token = "owner"
+        )
+        assertEquals(seedProtected.second, 200, seedProtected.first)
+
+        val fs1 = getDoc("financialState", "current")!!
+
+        // Attempt 1: Partner A tries to borrow 400 from BUSINESS_ONLY (leaving 1000 - 400 - 200 = 400 unreserved, which encroaches on 500 protectedEntitlements) -> MUST FAIL at server boundary!
+        val wBad = WithdrawalEntity(
+            id = 1301L, workspaceId = ws, partnerName = "Partner A", amount = 400.0, category = "Borrow from Business",
+            timestamp = t, createdAt = t, targetPartnerUid = "partnerA", createdByUid = "partnerA", createdByRole = "PARTNER"
+        )
+        val wBadWrite = updateWrite(
+            docName("withdrawals", 1301L),
+            wBad.toFirestoreMap() + mapOf(
+                "protocolVersion" to 2, "operationType" to "UPSERT", "dependencies" to emptyList<String>(),
+                "operationId" to "op-bb-over", "actorUid" to "partnerA", "actionTime" to t, "isDeleted" to false,
+                "borrowingRequestId" to 1401L, "authorizationTimeStatus" to "CLIENT_ORIGINAL_V2"
+            ),
+            JSONObject().put("exists", false), listOf("serverReceivedAt")
+        )
+        wBadWrite.getJSONObject("update").getJSONObject("fields")
+            .put("authorizationCreatedAt", JSONObject().put("timestampValue", Instant.ofEpochMilli(t).toString()))
+
+        val commitOverEntitlements = commitWrites(
+            "partnerA",
+            updateWrite(
+                docName("borrowingRequests", 1401L),
+                mapOf(
+                    "id" to 1401L, "workspaceId" to ws, "borrowerUid" to "partnerA", "borrowerName" to "Partner A",
+                    "lendingPartnerUid" to "", "lendingPartnerName" to "", "sourceType" to "BUSINESS_ONLY",
+                    "amount" to 400.0, "note" to "", "status" to "EXECUTED", "reservedAmount" to 0.0,
+                    "protectedEntitlementsSnapshot" to 500.0,
+                    "withdrawalId" to 1301L, "obligationId" to 1501L, "requestedByUid" to "partnerA", "requestedByRole" to "PARTNER",
+                    "executedAt" to t, "createdAt" to t, "updatedAt" to t,
+                    "protocolVersion" to 2, "operationType" to "UPSERT", "dependencies" to emptyList<String>(),
+                    "operationId" to "op-bb-over", "actorUid" to "partnerA", "actionTime" to t, "isDeleted" to false
+                ),
+                JSONObject().put("exists", false), listOf("serverReceivedAt")
+            ),
+            wBadWrite,
+            updateWrite(
+                docName("settlementObligations", 1501L),
+                mapOf(
+                    "id" to 1501L, "workspaceId" to ws, "borrowerUid" to "partnerA", "borrowerName" to "Partner A",
+                    "creditorType" to "BUSINESS", "creditorUid" to "", "creditorName" to "Business",
+                    "sourceRequestId" to 1401L, "principalAmount" to 400.0, "repaidAmount" to 0.0, "directSettledAmount" to 0.0,
+                    "status" to "OPEN", "note" to "", "createdAt" to t, "updatedAt" to t, "createdByUid" to "partnerA",
+                    "protocolVersion" to 2, "operationType" to "UPSERT", "dependencies" to emptyList<String>(),
+                    "operationId" to "op-bb-over", "actorUid" to "partnerA", "actionTime" to t, "isDeleted" to false
+                ),
+                JSONObject().put("exists", false)
+            ),
+            updateWrite(
+                docName("cashOperations", "op-bb-over"),
+                mapOf(
+                    "workspaceId" to ws, "operationId" to "op-bb-over", "entityType" to "BORROWING_REQUEST", "entityId" to "1401",
+                    "mutationType" to "UPSERT", "actorUid" to "partnerA", "actionTime" to t,
+                    "cashDelta" to -400.0, "reservedDelta" to 0.0, "reservedCashAfter" to 200.0,
+                    "protectedEntitlementsAfter" to 500.0,
+                    "expectedVersion" to 1L, "newVersion" to 2L, "confirmedCashAfter" to 600.0
+                ),
+                JSONObject().put("exists", false), listOf("createdAt")
+            ),
+            updateWrite(
+                docName("financialState", "current"),
+                mapOf(
+                    "workspaceId" to ws, "version" to 2L, "confirmedCash" to 600.0, "reservedCash" to 200.0,
+                    "confirmedBank" to 0.0, "protectedEntitlements" to 500.0, "baselineSource" to "SERVER_COMPUTED",
+                    "lastOperationId" to "op-bb-over", "lastEntityType" to "BORROWING_REQUEST", "lastEntityId" to "1401",
+                    "lastActorUid" to "partnerA", "actionTime" to t
+                ),
+                JSONObject().put("updateTime", fs1.getString("updateTime")), listOf("updatedAt")
+            )
+        )
+        assertNotEquals(200, commitOverEntitlements.first)
+
+        // Attempt 2: Partner A borrows 250 from BUSINESS_ONLY (leaving 1000 - 250 - 200 = 550 unreserved >= 500 protectedEntitlements) -> SUCCEEDS!
+        val wOk = wBad.copy(id = 1302L, amount = 250.0)
+        val wOkWrite = updateWrite(
+            docName("withdrawals", 1302L),
+            wOk.toFirestoreMap() + mapOf(
+                "protocolVersion" to 2, "operationType" to "UPSERT", "dependencies" to emptyList<String>(),
+                "operationId" to "op-bb-ok", "actorUid" to "partnerA", "actionTime" to t, "isDeleted" to false,
+                "borrowingRequestId" to 1402L, "authorizationTimeStatus" to "CLIENT_ORIGINAL_V2"
+            ),
+            JSONObject().put("exists", false), listOf("serverReceivedAt")
+        )
+        wOkWrite.getJSONObject("update").getJSONObject("fields")
+            .put("authorizationCreatedAt", JSONObject().put("timestampValue", Instant.ofEpochMilli(t).toString()))
+
+        val commitOk = commitWrites(
+            "partnerA",
+            updateWrite(
+                docName("borrowingRequests", 1402L),
+                mapOf(
+                    "id" to 1402L, "workspaceId" to ws, "borrowerUid" to "partnerA", "borrowerName" to "Partner A",
+                    "lendingPartnerUid" to "", "lendingPartnerName" to "", "sourceType" to "BUSINESS_ONLY",
+                    "amount" to 250.0, "note" to "", "status" to "EXECUTED", "reservedAmount" to 0.0,
+                    "protectedEntitlementsSnapshot" to 500.0,
+                    "withdrawalId" to 1302L, "obligationId" to 1502L, "requestedByUid" to "partnerA", "requestedByRole" to "PARTNER",
+                    "executedAt" to t, "createdAt" to t, "updatedAt" to t,
+                    "protocolVersion" to 2, "operationType" to "UPSERT", "dependencies" to emptyList<String>(),
+                    "operationId" to "op-bb-ok", "actorUid" to "partnerA", "actionTime" to t, "isDeleted" to false
+                ),
+                JSONObject().put("exists", false), listOf("serverReceivedAt")
+            ),
+            wOkWrite,
+            updateWrite(
+                docName("settlementObligations", 1502L),
+                mapOf(
+                    "id" to 1502L, "workspaceId" to ws, "borrowerUid" to "partnerA", "borrowerName" to "Partner A",
+                    "creditorType" to "BUSINESS", "creditorUid" to "", "creditorName" to "Business",
+                    "sourceRequestId" to 1402L, "principalAmount" to 250.0, "repaidAmount" to 0.0, "directSettledAmount" to 0.0,
+                    "status" to "OPEN", "note" to "", "createdAt" to t, "updatedAt" to t, "createdByUid" to "partnerA",
+                    "protocolVersion" to 2, "operationType" to "UPSERT", "dependencies" to emptyList<String>(),
+                    "operationId" to "op-bb-ok", "actorUid" to "partnerA", "actionTime" to t, "isDeleted" to false
+                ),
+                JSONObject().put("exists", false)
+            ),
+            updateWrite(
+                docName("cashOperations", "op-bb-ok"),
+                mapOf(
+                    "workspaceId" to ws, "operationId" to "op-bb-ok", "entityType" to "BORROWING_REQUEST", "entityId" to "1402",
+                    "mutationType" to "UPSERT", "actorUid" to "partnerA", "actionTime" to t,
+                    "cashDelta" to -250.0, "reservedDelta" to 0.0, "reservedCashAfter" to 200.0,
+                    "protectedEntitlementsAfter" to 500.0,
+                    "expectedVersion" to 1L, "newVersion" to 2L, "confirmedCashAfter" to 750.0
+                ),
+                JSONObject().put("exists", false), listOf("createdAt")
+            ),
+            updateWrite(
+                docName("financialState", "current"),
+                mapOf(
+                    "workspaceId" to ws, "version" to 2L, "confirmedCash" to 750.0, "reservedCash" to 200.0,
+                    "confirmedBank" to 0.0, "protectedEntitlements" to 500.0, "baselineSource" to "SERVER_COMPUTED",
+                    "lastOperationId" to "op-bb-ok", "lastEntityType" to "BORROWING_REQUEST", "lastEntityId" to "1402",
+                    "lastActorUid" to "partnerA", "actionTime" to t
+                ),
+                JSONObject().put("updateTime", fs1.getString("updateTime")), listOf("updatedAt")
+            )
+        )
+        assertEquals(commitOk.second, 200, commitOk.first)
+        val fsAfter = getDoc("financialState", "current")!!
+        assertEquals(750.0, num(fsAfter, "confirmedCash"), 0.001)
+        assertEquals(200.0, num(fsAfter, "reservedCash"), 0.001)
+        assertEquals(500.0, num(fsAfter, "protectedEntitlements"), 0.001)
+    }
 }

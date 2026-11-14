@@ -3534,6 +3534,7 @@ class WorkspaceRepository(
                     "BORROWING_REQUEST", reqId,
                     request.toFirestoreMap() + mapOf(
                         "stage3Action" to "EXECUTE_BUSINESS",
+                        "protectedEntitlementsSnapshot" to overview.protectedEntitlementsTotal,
                         "withdrawalSnapshotMap" to withdrawal.toFirestoreMap(),
                         "obligationSnapshotMap" to obligation.toFirestoreMap()
                     ),
@@ -3631,7 +3632,7 @@ class WorkspaceRepository(
                 isSynced = false
             )
             stage3Dao.insertBorrowingRequest(updated)
-            enqueue("BORROWING_REQUEST", req.id, updated.toFirestoreMap() + mapOf("stage3Action" to "APPROVE_RESERVE"), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
+            enqueue("BORROWING_REQUEST", req.id, updated.toFirestoreMap() + mapOf("stage3Action" to "APPROVE_RESERVE", "lenderWithdrawableSnapshot" to lenderWithdrawable), "UPSERT", expectedActorUid = operationActorUid, actionTime = operationTime)
         }
         if (isCloudReady()) scope.launch { pushUnsyncedToCloud() }
     }

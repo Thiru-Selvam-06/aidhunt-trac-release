@@ -64,26 +64,8 @@ object OperationPolicy {
             "PAYMENT" -> owner || (partner && data.optString("collectedByUid") == op.actorUid &&
                 (data.optString("status") == "ACTIVE" || AuthorizationManager.within24Hours(data.optLong("createdAt"), op.actionTime)))
             "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT" -> (owner || partner) && creator == op.actorUid && op.mutationType == "UPSERT"
-            "BORROWING_REQUEST" -> (owner || partner) && op.mutationType == "UPSERT" && when (stage3Action) {
-                "EXECUTE_BUSINESS", "CREATE" -> {
-                    val borrowerUid = data.optString("borrowerUid")
-                    val lendingUid = data.optString("lendingPartnerUid")
-                    (borrowerUid == op.actorUid || owner) &&
-                        members.any { it.uid == borrowerUid && it.workspaceId == op.workspaceId && it.status.equals("active", true) && RoleUtils.normalizeRole(it.role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER) } &&
-                        (data.optString("sourceType") != "NAMED_PARTNER" ||
-                            (lendingUid.isNotBlank() && lendingUid != borrowerUid &&
-                                members.any { it.uid == lendingUid && it.workspaceId == op.workspaceId && it.status.equals("active", true) && RoleUtils.normalizeRole(it.role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER) }))
-                }
-                "APPROVE_RESERVE", "REJECT" -> data.optString("lendingPartnerUid") == op.actorUid
-                "EXECUTE" -> data.optString("borrowerUid") == op.actorUid || owner
-                "CANCEL" -> data.optString("borrowerUid") == op.actorUid || data.optString("requestedByUid") == op.actorUid || owner
-                else -> false
-            }
-            "SETTLEMENT_REPAYMENT" -> (owner || partner) && op.mutationType == "UPSERT" && when (stage3Action) {
-                "CREATE", "" -> creator == op.actorUid
-                "CONFIRM", "REJECT" -> data.optString("mode") != "DIRECT_TO_PARTNER" || data.optString("creditorUid") == op.actorUid
-                else -> false
-            }
+            "BORROWING_REQUEST" -> (owner || partner) && op.mutationType == "UPSERT" && isBorrowingActionPermitted(stage3Action, data, op, owner, members)
+            "SETTLEMENT_REPAYMENT" -> (owner || partner) && op.mutationType == "UPSERT" && isSettlementActionPermitted(stage3Action, data, op, creator)
             else -> false
         }
         if (!permitted) {
@@ -91,6 +73,47 @@ object OperationPolicy {
                 (op.entityType == "PAYMENT" && partner && data.optString("collectedByUid") == op.actorUid && data.optString("status") == "REVERSED"))
             if (ownTimed && !timely) throw ExpiredOperationException("${op.entityType} #${op.entityId}, operation ${op.operationId}: action outside original 24-hour window; rejected change retained for review")
             throw SecurityException("Action is no longer authorized")
+        }
+    }
+
+    private fun isBorrowingActionPermitted(
+        stage3Action: String,
+        data: JSONObject,
+        op: PendingOperationEntity,
+        owner: Boolean,
+        members: List<WorkspaceMember>
+    ): Boolean {
+        return if (stage3Action == "EXECUTE_BUSINESS" || stage3Action == "CREATE" || stage3Action.isEmpty()) {
+            val borrowerUid = data.optString("borrowerUid")
+            val lendingUid = data.optString("lendingPartnerUid")
+            (borrowerUid == op.actorUid || owner) &&
+                members.any { it.uid == borrowerUid && it.workspaceId == op.workspaceId && it.status.equals("active", true) && RoleUtils.normalizeRole(it.role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER) } &&
+                (data.optString("sourceType") != "NAMED_PARTNER" ||
+                    (lendingUid.isNotBlank() && lendingUid != borrowerUid &&
+                        members.any { it.uid == lendingUid && it.workspaceId == op.workspaceId && it.status.equals("active", true) && RoleUtils.normalizeRole(it.role) in setOf(RoleUtils.ROLE_OWNER, RoleUtils.ROLE_PARTNER) }))
+        } else if (stage3Action == "APPROVE_RESERVE" || stage3Action == "REJECT") {
+            data.optString("lendingPartnerUid") == op.actorUid
+        } else if (stage3Action == "EXECUTE") {
+            data.optString("borrowerUid") == op.actorUid || owner
+        } else if (stage3Action == "CANCEL") {
+            data.optString("borrowerUid") == op.actorUid || data.optString("requestedByUid") == op.actorUid || owner
+        } else {
+            false
+        }
+    }
+
+    private fun isSettlementActionPermitted(
+        stage3Action: String,
+        data: JSONObject,
+        op: PendingOperationEntity,
+        creator: String
+    ): Boolean {
+        return if (stage3Action == "CREATE" || stage3Action.isEmpty()) {
+            creator == op.actorUid
+        } else if (stage3Action == "CONFIRM" || stage3Action == "REJECT") {
+            data.optString("mode") != "DIRECT_TO_PARTNER" || data.optString("creditorUid") == op.actorUid
+        } else {
+            false
         }
     }
 }

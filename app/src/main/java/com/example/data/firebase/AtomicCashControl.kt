@@ -92,6 +92,8 @@ internal object AtomicCashControl {
         bankDelta: Double = 0.0,
         enforceNonNegativeAvailable: Boolean = false,
         enforceNonNegativeBank: Boolean = false,
+        minProtectedCash: Double = 0.0,
+        nextProtectedEntitlements: Double? = null,
         extraReceiptFields: Map<String, Any?> = emptyMap()
     ) {
         if (!fsDoc.exists()) throw FinancialBaselinePendingException()
@@ -104,13 +106,14 @@ internal object AtomicCashControl {
             ?: throw FinancialBaselinePendingException()
         val prevReserved = (data["reservedCash"] as? Number)?.toDouble() ?: 0.0
         val prevBank = (data["confirmedBank"] as? Number)?.toDouble() ?: 0.0
+        val prevProtected = (data["protectedEntitlements"] as? Number)?.toDouble() ?: 0.0
         val nextCash = addMoney(prevCash, cashDelta)
         val nextReserved = addMoney(prevReserved, reservedDelta)
         val nextBank = addMoney(prevBank, bankDelta)
         require(nextReserved >= -0.000001) { "Invalid negative reserved cash" }
         val availableAfter = addMoney(nextCash, -nextReserved)
-        if (enforceNonNegativeAvailable && availableAfter < -0.000001) {
-            val availableNow = addMoney(prevCash, -prevReserved)
+        if (enforceNonNegativeAvailable && availableAfter - minProtectedCash < -0.000001) {
+            val availableNow = maxOf(0.0, addMoney(addMoney(prevCash, -prevReserved), -minProtectedCash))
             throw InsufficientSharedFundsException(
                 "Insufficient confirmed shared cash (available ₹%.2f, requested ₹%.2f)".format(
                     java.util.Locale.US, availableNow, -cashDelta + maxOf(0.0, reservedDelta)
@@ -125,21 +128,24 @@ internal object AtomicCashControl {
             )
         }
         val newVersion = expectedVersion + 1L
-        transaction.update(
-            fsDocRef,
-            mapOf(
-                "version" to newVersion,
-                "confirmedCash" to nextCash,
-                "reservedCash" to nextReserved,
-                "confirmedBank" to nextBank,
-                "lastOperationId" to operationId,
-                "lastEntityType" to entityType,
-                "lastEntityId" to entityId,
-                "lastActorUid" to actorUid,
-                "actionTime" to actionTime,
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
+        val updateMap = mutableMapOf<String, Any>(
+            "version" to newVersion,
+            "confirmedCash" to nextCash,
+            "reservedCash" to nextReserved,
+            "confirmedBank" to nextBank,
+            "lastOperationId" to operationId,
+            "lastEntityType" to entityType,
+            "lastEntityId" to entityId,
+            "lastActorUid" to actorUid,
+            "actionTime" to actionTime,
+            "updatedAt" to FieldValue.serverTimestamp()
         )
+        if (nextProtectedEntitlements != null) {
+            updateMap["protectedEntitlements"] = nextProtectedEntitlements
+        } else if (data.containsKey("protectedEntitlements")) {
+            updateMap["protectedEntitlements"] = prevProtected
+        }
+        transaction.update(fsDocRef, updateMap)
         val receipt = linkedMapOf<String, Any?>(
             "workspaceId" to workspaceId,
             "operationId" to operationId,
@@ -161,6 +167,9 @@ internal object AtomicCashControl {
         if (!sameMoney(bankDelta, 0.0)) {
             receipt["bankDelta"] = bankDelta
             receipt["confirmedBankAfter"] = nextBank
+        }
+        if (nextProtectedEntitlements != null) {
+            receipt["protectedEntitlementsAfter"] = nextProtectedEntitlements
         }
         receipt.putAll(extraReceiptFields)
         transaction.set(cashReceiptRef, receipt)

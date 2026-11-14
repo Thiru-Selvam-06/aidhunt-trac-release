@@ -1075,6 +1075,7 @@ class FirestoreRepository(
             else -> throw SecurityException("Unsupported queued operation")
         }
         val json = org.json.JSONObject(op.payloadJson)
+        if (json.optInt("operationProtocolVersion") != 2 || op.actionTime <= 0) throw WorkspaceUpgradeRequiredException()
         val capabilities = if (op.entityType in setOf("CUSTOMER", "EXPENSE_CATEGORY", "PAYMENT", "EXPENSE", "WITHDRAWAL", "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT", "BORROWING_REQUEST", "SETTLEMENT_REPAYMENT")) {
             val workspace = firestore.collection("workspaces").document(op.workspaceId)
                 .get(com.google.firebase.firestore.Source.SERVER).await()
@@ -1085,7 +1086,6 @@ class FirestoreRepository(
                 .collection("financialState").document("current")
                 .get(com.google.firebase.firestore.Source.SERVER).await().exists()
         } else false
-        if (json.optInt("operationProtocolVersion") != 2 || op.actionTime <= 0) throw WorkspaceUpgradeRequiredException()
         // Server Rules reject even milliseconds of future skew. Confirm eligibility
         // before the first mutation, retaining original IDs/times and rejected states.
         actionTimeBarriers.getOrPut(op.workspaceId to op.actorUid) {

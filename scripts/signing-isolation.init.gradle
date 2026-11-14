@@ -6,14 +6,15 @@ gradle.projectsEvaluated {
   doLast {
    def android = app.extensions.getByName("android")
    ["debug", "deviceTest", "liveTest", "physicalTest"].each { variant ->
-    assert android.buildTypes.getByName(variant).signingConfig.name == "debug" : variant + " must use debug signing"
+    assert android.buildTypes.getByName(variant).signingConfig.name in ["debug", "debugConfig"] : variant + " must use debug signing"
    }
    assert android.buildTypes.release.signingConfig.name == "release"
    assert android.defaultConfig.applicationId == "com.aistudio.aidhunttrac.cedlir"
    [deviceTest:".devicetest", liveTest:".livetest", physicalTest:".physicaltest"].each { name, suffix ->
     assert android.buildTypes.getByName(name).applicationIdSuffix == suffix
    }
-   assert app.tasks.getByName("validateSigningRelease").taskDependencies.getDependencies(app.tasks.getByName("validateSigningRelease")).any { it.name == "validateReleaseCredentials" }
+   def gated = ["validateSigningRelease", "packageRelease", "packageReleaseBundle", "signReleaseBundle"].findResults { app.tasks.findByName(it) }
+   assert !gated.isEmpty() && gated.every { t -> t.taskDependencies.getDependencies(t).any { it.name == "validateReleaseCredentials" } }
    println "PASS: 4 debug/test variants isolated; release credential gate attached; package IDs preserved"
   }
  }

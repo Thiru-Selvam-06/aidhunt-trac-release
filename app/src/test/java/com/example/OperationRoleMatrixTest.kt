@@ -19,13 +19,21 @@ class OperationRoleMatrixTest(private val role: String, private val entity: Stri
             "EXPENSE" to setOf("OWNER","PARTNER"), "WITHDRAWAL" to setOf("OWNER","PARTNER"),
             "TRACTOR" to setOf("OWNER","PARTNER"), "EXTENSION" to setOf("OWNER","PARTNER"),
             "EXPENSE_CATEGORY" to setOf("OWNER","PARTNER"),
-            "CUSTOMER" to setOf("OWNER","PARTNER"), "PAYMENT" to setOf("OWNER","PARTNER"))
+            "CUSTOMER" to setOf("OWNER","PARTNER"), "PAYMENT" to setOf("OWNER","PARTNER"),
+            "EXTERNAL_LOAN" to setOf("OWNER","PARTNER"),
+            "EXTERNAL_LOAN_REPAYMENT" to setOf("OWNER","PARTNER"),
+            "BORROWING_REQUEST" to setOf("OWNER","PARTNER"),
+            "SETTLEMENT_REPAYMENT" to setOf("OWNER","PARTNER"))
+        private val upsertOnlyEntities = setOf(
+            "EXPENSE_CATEGORY", "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT",
+            "BORROWING_REQUEST", "SETTLEMENT_REPAYMENT"
+        )
         @JvmStatic @ParameterizedRobolectricTestRunner.Parameters(name="{0}/{1}/{2}")
         fun cases(): List<Array<Any>> = listOf("OWNER","PARTNER","OPERATOR").flatMap { role ->
             expectations.flatMap { (entity, permitted) -> listOf("UPSERT","DELETE").map { mutation ->
                 arrayOf<Any>(role,entity,mutation, role in permitted &&
                     !(entity=="CUSTOMER" && mutation=="DELETE" && role!="OWNER") &&
-                    !(entity=="EXPENSE_CATEGORY" && mutation=="DELETE"))
+                    !(entity in upsertOnlyEntities && mutation=="DELETE"))
             } }
         }
     }
@@ -36,7 +44,9 @@ class OperationRoleMatrixTest(private val role: String, private val entity: Stri
         val payload=JSONObject().put("operationProtocolVersion",2).put("workspaceId","a")
             .put("createdAt",created).put("createdByUid",creator).put("entryForUid",creator)
             .put("expenseForUid",creator).put("targetPartnerUid",creator)
-            .put("collectedByUid",creator).put("status","ACTIVE").put("isHistorical",historical)
+            .put("collectedByUid",creator).put("requestedByUid",creator).put("borrowerUid",creator)
+            .put("stage3Action","CREATE").put("sourceType","BUSINESS_ONLY")
+            .put("status","ACTIVE").put("isHistorical",historical)
         return PendingOperationEntity("operation-a","a","actor",entity,9007199254740995L,mutation,1,time,payload.toString())
     }
     private fun denied(op: PendingOperationEntity=operation(), members: List<WorkspaceMember> = listOf(member())) {
@@ -68,7 +78,7 @@ class OperationRoleMatrixTest(private val role: String, private val entity: Stri
         }
     }
     private fun nonOwnerCannotMutateOtherCreatorsOrHistoricalJobs() {
-        if(role!="OWNER" && entity in setOf("JOB","EXPENSE","WITHDRAWAL","TRACTOR","EXTENSION","PAYMENT")) {
+        if(role!="OWNER" && entity in setOf("JOB","EXPENSE","WITHDRAWAL","TRACTOR","EXTENSION","PAYMENT","EXTERNAL_LOAN","EXTERNAL_LOAN_REPAYMENT","BORROWING_REQUEST","SETTLEMENT_REPAYMENT")) {
             denied(operation(creator="other"),listOf(member(),WorkspaceMember(uid="other",workspaceId="a",role="PARTNER",status="ACTIVE")))
         }
         if(role!="OWNER" && entity=="JOB") denied(operation(historical=true))

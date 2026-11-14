@@ -175,16 +175,25 @@ service cloud.firestore {
          (rAfter.source == 'BUSINESS_BANK' && sameMoney(op.cashDelta, 0) && sameMoney(op.get('bankDelta', 0), -total) &&
           fsAfter.get('confirmedBank', 0) >= -0.000001));
     }
-    function validBorrowingRequestReceipt(ws, op, fsAfter) {
+    function validBorrowingRequestReceipt(ws, op, fsBefore, fsAfter) {
       let bPath = /databases/$(database)/documents/workspaces/$(ws)/borrowingRequests/$(op.entityId);
       let bAfter = getAfter(bPath).data;
+      let protectedBefore = fsBefore.get('protectedEntitlements', 0);
+      let protectedAfter = fsAfter.get('protectedEntitlements', protectedBefore);
+      let snapshotProtected = bAfter.get('protectedEntitlementsSnapshot', 0);
       return existsAfter(bPath) && bAfter.operationId == op.operationId && bAfter.actorUid == request.auth.uid &&
         sameMoney(op.get('bankDelta', 0), 0) &&
         ((op.mutationType == 'UPSERT' && !exists(bPath) && bAfter.sourceType == 'BUSINESS_ONLY' &&
           bAfter.status == 'EXECUTED' && sameMoney(op.cashDelta, -bAfter.amount) && sameMoney(op.reservedDelta, 0) &&
-          fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) >= -0.000001) ||
+          snapshotProtected is number && snapshotProtected >= -0.000001 &&
+          protectedAfter >= protectedBefore - 0.000001 &&
+          fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) - protectedBefore >= -0.000001 &&
+          fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) - protectedAfter >= -0.000001 &&
+          fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) - snapshotProtected >= -0.000001) ||
          (op.mutationType == 'APPROVE_RESERVE' && exists(bPath) &&
           bAfter.status == 'APPROVED_RESERVED' && sameMoney(op.cashDelta, 0) && sameMoney(op.reservedDelta, bAfter.amount) &&
+          bAfter.get('lenderWithdrawableSnapshot', bAfter.amount) is number &&
+          bAfter.get('lenderWithdrawableSnapshot', bAfter.amount) >= bAfter.amount - 0.000001 &&
           fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) >= -0.000001) ||
          (op.mutationType == 'EXECUTE' && exists(bPath) &&
           bAfter.status == 'EXECUTED' && sameMoney(op.cashDelta, -bAfter.amount) &&
@@ -212,13 +221,14 @@ service cloud.firestore {
         sameMoney(fsAfter.get('confirmedBank', 0), fsBefore.get('confirmedBank', 0) + op.get('bankDelta', 0)) &&
         (!op.keys().hasAny(['reservedCashAfter']) || sameMoney(op.reservedCashAfter, fsAfter.get('reservedCash', 0))) &&
         (!op.keys().hasAny(['confirmedBankAfter']) || sameMoney(op.confirmedBankAfter, fsAfter.get('confirmedBank', 0))) &&
+        (!op.keys().hasAny(['protectedEntitlementsAfter']) || sameMoney(op.protectedEntitlementsAfter, fsAfter.get('protectedEntitlements', 0))) &&
         (op.entityType == 'WITHDRAWAL' ? validWithdrawalReceipt(ws, op, fsAfter)
          : op.entityType == 'PAYMENT' ? validPaymentReceipt(ws, op)
          : op.entityType == 'EXPENSE' ? (op.mutationType == 'DELETE' ? validExpenseDeleteReceipt(ws, op) : validExpenseUpsertReceipt(ws, op))
          : op.entityType == 'JOB' ? validJobCashReceipt(ws, op)
          : op.entityType == 'EXTERNAL_LOAN' ? validExternalLoanReceipt(ws, op, fsAfter)
          : op.entityType == 'EXTERNAL_LOAN_REPAYMENT' ? validExternalLoanRepaymentReceipt(ws, op, fsAfter)
-         : op.entityType == 'BORROWING_REQUEST' ? validBorrowingRequestReceipt(ws, op, fsAfter)
+         : op.entityType == 'BORROWING_REQUEST' ? validBorrowingRequestReceipt(ws, op, fsBefore, fsAfter)
          : op.entityType == 'SETTLEMENT_REPAYMENT' ? validSettlementRepaymentReceipt(ws, op)
          : (op.entityType == 'PURGE' && op.mutationType == 'PURGE' && purge(ws, op.entityId)));
     }
@@ -231,6 +241,8 @@ service cloud.firestore {
         sameMoney(request.resource.data.reservedCash, resource.data.get('reservedCash', 0) + op.reservedDelta) &&
         sameMoney(request.resource.data.get('confirmedBank', 0), resource.data.get('confirmedBank', 0) + op.get('bankDelta', 0)) &&
         request.resource.data.get('confirmedBank', 0) >= -0.000001 &&
+        request.resource.data.get('protectedEntitlements', 0) is number &&
+        request.resource.data.get('protectedEntitlements', 0) >= -0.000001 &&
         op.entityType == request.resource.data.lastEntityType &&
         op.entityId == request.resource.data.lastEntityId &&
         op.actorUid == request.auth.uid &&
@@ -258,7 +270,7 @@ service cloud.firestore {
         op.keys().hasOnly([
           'workspaceId', 'operationId', 'entityType', 'entityId', 'mutationType',
           'actorUid', 'actionTime', 'cashDelta', 'reservedDelta', 'reservedCashAfter',
-          'bankDelta', 'confirmedBankAfter', 'expectedVersion',
+          'bankDelta', 'confirmedBankAfter', 'protectedEntitlementsAfter', 'expectedVersion',
           'newVersion', 'confirmedCashAfter', 'createdAt', 'verifiedExpenseIds'
         ]) &&
         op.workspaceId == ws &&
@@ -857,7 +869,7 @@ service cloud.firestore {
         allow update: if docId == 'current' && finance(ws) && atomicCashEnabled(ws) &&
           request.resource.data.keys().hasOnly([
             'workspaceId', 'version', 'confirmedCash', 'reservedCash', 'confirmedBank',
-            'baselineSource', 'lastOperationId', 'lastEntityType', 'lastEntityId',
+            'protectedEntitlements', 'baselineSource', 'lastOperationId', 'lastEntityType', 'lastEntityId',
             'lastActorUid', 'actionTime', 'updatedAt'
           ]) &&
           same(['workspaceId', 'baselineSource']) &&
@@ -869,6 +881,8 @@ service cloud.firestore {
           request.resource.data.reservedCash is number &&
           request.resource.data.reservedCash >= -0.000001 &&
           request.resource.data.confirmedBank is number &&
+          request.resource.data.get('protectedEntitlements', 0) is number &&
+          request.resource.data.get('protectedEntitlements', 0) >= -0.000001 &&
           request.resource.data.lastOperationId is string && request.resource.data.lastOperationId != '' &&
           request.resource.data.lastActorUid == request.auth.uid &&
           request.resource.data.actionTime is int && request.resource.data.actionTime > 0 &&
@@ -1043,10 +1057,16 @@ service cloud.firestore {
           ((request.resource.data.sourceType == 'BUSINESS_ONLY' &&
             request.resource.data.status == 'EXECUTED' &&
             sameMoney(request.resource.data.get('reservedAmount', 0), 0) &&
+            request.resource.data.get('protectedEntitlementsSnapshot', 0) is number &&
+            request.resource.data.get('protectedEntitlementsSnapshot', 0) >= 0 &&
             request.resource.data.withdrawalId is int && request.resource.data.withdrawalId > 0 &&
             request.resource.data.obligationId is int && request.resource.data.obligationId > 0 &&
             existsAfter(/databases/$(database)/documents/workspaces/$(ws)/withdrawals/$(string(request.resource.data.withdrawalId))) &&
             existsAfter(/databases/$(database)/documents/workspaces/$(ws)/settlementObligations/$(string(request.resource.data.obligationId))) &&
+            getAfter(/databases/$(database)/documents/workspaces/$(ws)/withdrawals/$(string(request.resource.data.withdrawalId))).data.operationId == request.resource.data.operationId &&
+            sameMoney(getAfter(/databases/$(database)/documents/workspaces/$(ws)/withdrawals/$(string(request.resource.data.withdrawalId))).data.amount, request.resource.data.amount) &&
+            getAfter(/databases/$(database)/documents/workspaces/$(ws)/settlementObligations/$(string(request.resource.data.obligationId))).data.creditorType == 'BUSINESS' &&
+            sameMoney(getAfter(/databases/$(database)/documents/workspaces/$(ws)/settlementObligations/$(string(request.resource.data.obligationId))).data.principalAmount, request.resource.data.amount) &&
             (!atomicCashEnabled(ws) || matchesCashOp(ws, request.resource.data.operationId, 'BORROWING_REQUEST', id, 'UPSERT', -request.resource.data.amount))) ||
            (request.resource.data.sourceType == 'NAMED_PARTNER' &&
             request.resource.data.status == 'PENDING_APPROVAL' &&
@@ -1059,6 +1079,8 @@ service cloud.firestore {
           ((resource.data.status == 'PENDING_APPROVAL' && request.resource.data.status == 'APPROVED_RESERVED' &&
             request.auth.uid == resource.data.lendingPartnerUid &&
             sameMoney(request.resource.data.reservedAmount, resource.data.amount) &&
+            request.resource.data.get('lenderWithdrawableSnapshot', resource.data.amount) is number &&
+            request.resource.data.get('lenderWithdrawableSnapshot', resource.data.amount) >= resource.data.amount - 0.000001 &&
             (!atomicCashEnabled(ws) || matchesCashOp(ws, request.resource.data.operationId, 'BORROWING_REQUEST', id, 'APPROVE_RESERVE', 0))) ||
            (resource.data.status == 'PENDING_APPROVAL' && request.resource.data.status == 'REJECTED' &&
             request.auth.uid == resource.data.lendingPartnerUid &&

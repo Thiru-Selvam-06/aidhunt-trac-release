@@ -177,3 +177,62 @@
 - **Android Lint (`gradle :app:lintDebug`):** **PASSED** (`BUILD SUCCESSFUL`).
 - **Installable Debug APK Checkpoint (`gradle :app:assembleDebug`):** **PASSED** (`app/build/outputs/apk/debug/app-debug.apk`).
 - **Physical Device & Instrumented `androidTest` Suites:** **NOT TESTED** (no Android emulator/device/ADB available in container).
+
+---
+
+## Release Gates 1–5 & Production Deployment Readiness Verification
+
+### Gate 1 — GitHub Actions CI & Demo Test Configuration Fixes (`PASSED`)
+- **`OperationPolicy.kt` & `OperationRoleMatrixTest.kt`:** Extracted inner `when (stage3Action)` blocks into helper functions so `OperationPolicy.kt` top-level entity switch keys strictly match `OperationRoleMatrixTest.kt` (`EXTERNAL_LOAN`, `EXTERNAL_LOAN_REPAYMENT`, `BORROWING_REQUEST`, `SETTLEMENT_REPAYMENT` added to `OperationRoleMatrixTest`).
+- **`.gitignore` Restoration:** Added `!docs/regression/asset-inventory.json`, `!docs/regression/interaction-inventory.json`, and `!/app/src/deviceTest/google-services.json` so tracked regression inventories and the synthetic demo test configuration (`demo-aidhunt-v16`, `com.aistudio.aidhunttrac.cedlir.devicetest`) are never excluded when exporting or committing to GitHub, while keeping `/app/google-services.json` (`trac-aidhunt`, `com.aistudio.aidhunttrac.cedlir`) ignored from public git history per `publication_guard.py`.
+- **`scripts/signing-isolation.init.gradle`:** Updated `verifySigningIsolation` to accept `debug` or `debugConfig` and inspect configured release signing gates (`PASS: 4 debug/test variants isolated; release credential gate attached; package IDs preserved`).
+- **CI Script Unit Suite (`python3 -m unittest discover -s scripts -p "test_*.py" -v`):** **PASSED** (`110` tests, `0` failures).
+
+### Gate 2 — Server-Boundary Protection of Partner Withdrawable Entitlements & Approved Commitments (`PASSED`)
+- **`firestore.rules` (`validBorrowingRequestReceipt`, `validCashReceiptStates`, `financialState/current`, `borrowingRequests/{id}`):**
+  - Added `protectedEntitlements` support on `financialState/current` (`>= 0`) and `protectedEntitlementsAfter` on `cashOperations/{opId}`.
+  - Enforced at the server boundary for `BUSINESS_ONLY` borrowing (`op.mutationType == 'UPSERT'`):
+    - `protectedAfter >= protectedBefore - 0.000001` (prevents tampering/zeroing out `protectedEntitlements` during business borrowing).
+    - `fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) - protectedBefore >= -0.000001`
+    - `fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) - protectedAfter >= -0.000001`
+    - `fsAfter.confirmedCash - fsAfter.get('reservedCash', 0) - bAfter.get('protectedEntitlementsSnapshot', 0) >= -0.000001`
+    - Verified linked `withdrawals/{withdrawalId}` and `settlementObligations/{obligationId}` match `operationId`, `amount`, and `creditorType == 'BUSINESS'`.
+  - Enforced `lenderWithdrawableSnapshot >= amount` on `APPROVE_RESERVE`.
+- **`AtomicCashControl.kt`, `Stage3AtomicControl.kt`, & `WorkspaceRepository.kt`:**
+  - Enforced `minProtectedCash = max(serverProtected, snapshotProtected)` in `Stage3AtomicControl.applyBorrowingRequest` (`EXECUTE_BUSINESS`) and preserved `protectedEntitlements` across all `writeCashStateAndReceipt` updates.
+- **Server-Boundary Tests Added & Verified:**
+  - `security-tests/loans-borrowing-settlements.test.cjs` (`business borrowing protects all partners withdrawable entitlements and approved commitments at the server boundary`)
+  - `app/src/test/java/com/example/Stage3AtomicOperationEmulatorTest.kt` (`businessBorrowingProtectsPartnerEntitlementsAndApprovedCommitmentsAtServerBoundary`)
+
+### Gate 3 — Complete Regression Suites with Synthetic Data (`PASSED`)
+- **Firestore Security Rules (`node scripts/run_backend_suite.mjs rules`):** **PASSED** (`392` passed, `0` failed).
+- **Backend / Functions / Cloudflare Worker (`node scripts/run_backend_suite.mjs backend`):** **PASSED** (`137` passed, `0` failed).
+- **Cloudflare Worker Production Build (`npm --prefix cloudflare run build`):** **PASSED** (`47.61 kB` bundle).
+- **Android Unit Partition (`-PciSuite=unit`):** **PASSED** (`0` failed).
+- **Android Database Partition (`-PciSuite=database`):** **PASSED** (`0` failed).
+- **Android Compose Partition (`-PciSuite=compose`):** **PASSED** (`0` failed).
+- **Android Outbox + Firestore Emulator Partition (`-PciSuite=outbox`):** **PASSED** (`0` failed).
+- **Synthetic Performance Baseline (`BusinessPerformanceTest`):** **PASSED** (`0` failed).
+- **Debug, Lint, & DeviceTest APK Builds (`assembleDebug`, `lintDebug`, `assembleDeviceTest`, `assembleDeviceTestAndroidTest`):** **PASSED**.
+
+### Gate 4 — Backward Compatibility & Rollback Plan (`VERIFIED`)
+- **Backward Compatibility:**
+  - `firestore.rules` gates atomic cash enforcement behind `atomicCashEnabled(ws)` (`syncCapabilities.atomicCashControlV1 == true` or existence of `financialState/current`) and treats `reservedCash`, `confirmedBank`, and `protectedEntitlements` with `.get(..., 0)` defaults so existing workspaces and pending protocol v2 operations continue to work seamlessly.
+  - `firestore.indexes.json` preserves the `pendingPhones` `COLLECTION_GROUP` index override.
+  - Room migrations (`MIGRATION_22_23`, `MIGRATION_23_24`) are additive (`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ADD COLUMN` with defaults), preserving all local customer records and queued `pending_operations`.
+- **Rollback Plan:**
+  1. **Firestore Rules & Indexes:** Export currently deployed rules (`firebase firestore:rules:get` / Firebase Console Rules History) before deployment; if any regression occurs, immediately re-deploy the prior ruleset revision in Firebase Console (`trac-aidhunt`) or via `firebase deploy --only firestore:rules --project trac-aidhunt`.
+  2. **Atomic Cash Capability Flag:** If an emergency bypass is needed for a specific workspace without rolling back rules, set `workspaces/{ws}.syncCapabilities.atomicCashControlV1 = false` (only if `financialState/current` has not been seeded).
+  3. **Cloudflare Worker:** Use `npx cf versions list` / `npx cf rollback` in `cloudflare/` (or Cloudflare Dashboard -> Workers -> Deployments -> Rollback) to revert to the previous Worker deployment instantaneously.
+
+### Gate 5 — Production Target Verification & Live Deployment Blocker (`STOPPED BEFORE DEPLOYMENT`)
+- **Production Targets Verified in Config:**
+  - `.firebaserc`: `default -> "trac-aidhunt"`
+  - `app/google-services.json`: `project_id: "trac-aidhunt"`, `package_name: "com.aistudio.aidhunttrac.cedlir"`
+  - `app/src/deviceTest/google-services.json`: `project_id: "demo-aidhunt-v16"`, `package_name: "com.aistudio.aidhunttrac.cedlir.devicetest"`
+  - `cloudflare/package.json`: `"name": "aidhunt-trac-trusted-worker"`
+- **Blocker Preventing Live Deployment from This Container:**
+  - `npx --yes firebase-tools@15.33.0 login:list` -> `No authorized accounts, run "firebase login"` (`Failed to list Firebase projects`).
+  - `cd cloudflare && npx cf whoami` -> `{"authenticated": false, "error": "Not logged in"}`.
+  - No `FIREBASE_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, or `CLOUDFLARE_API_TOKEN` credentials are present in the container environment, so live version comparison and live deployment to `trac-aidhunt` and Cloudflare cannot be executed from inside the AI Studio sandbox.
+

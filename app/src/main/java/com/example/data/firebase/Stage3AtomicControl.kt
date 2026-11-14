@@ -203,13 +203,19 @@ internal object Stage3AtomicControl {
                     require(wRef != null && obRef != null && wSnap != null && !wSnap.exists() && obSnap != null && !obSnap.exists()) {
                         "Withdrawal or obligation target already exists"
                     }
+                    val snapshotProtected = ((basePayload["protectedEntitlementsSnapshot"] as? Number)?.toDouble() ?: 0.0).coerceAtLeast(0.0)
                     if (atomicCashEnabled) {
+                        val serverProtected = (fsSnap?.getDouble("protectedEntitlements") ?: 0.0).coerceAtLeast(0.0)
+                        val requiredProtected = maxOf(serverProtected, snapshotProtected)
+                        val updateProtected = if (fsSnap?.contains("protectedEntitlements") == true || snapshotProtected > 0.0) requiredProtected else null
                         AtomicCashControl.writeCashStateAndReceipt(
                             tx, requireNotNull(fsSnap), fsDocRef, opRef,
                             op.workspaceId, op.operationId, "BORROWING_REQUEST", op.entityId.toString(),
                             "UPSERT", op.actorUid, op.actionTime,
                             cashDelta = -reqAmount,
-                            enforceNonNegativeAvailable = true
+                            enforceNonNegativeAvailable = true,
+                            minProtectedCash = requiredProtected,
+                            nextProtectedEntitlements = updateProtected
                         )
                     }
                     val reqDoc = basePayload.toMutableMap().apply {
@@ -217,6 +223,7 @@ internal object Stage3AtomicControl {
                         remove("stage3Action")
                         remove("withdrawalSnapshotMap")
                         remove("obligationSnapshotMap")
+                        put("protectedEntitlementsSnapshot", snapshotProtected)
                         put("status", "EXECUTED")
                         put("reservedAmount", 0.0)
                         put("executedAt", op.actionTime)
@@ -269,6 +276,14 @@ internal object Stage3AtomicControl {
                     require(reqSnap.getString("status") == "PENDING_APPROVAL") { "Request is no longer awaiting approval" }
                     require(reqSnap.getString("lendingPartnerUid") == op.actorUid) { "Only named lending partner can approve & reserve" }
                     val amt = reqSnap.getDouble("amount") ?: 0.0
+                    val lenderSnap = (basePayload["lenderWithdrawableSnapshot"] as? Number)?.toDouble() ?: amt
+                    if (lenderSnap < amt - 0.000001) {
+                        throw InsufficientSharedFundsException(
+                            "Exceeds lending partner withdrawable entitlement (available ₹%.2f, requested ₹%.2f)".format(
+                                java.util.Locale.US, lenderSnap, amt
+                            )
+                        )
+                    }
                     if (atomicCashEnabled) {
                         AtomicCashControl.writeCashStateAndReceipt(
                             tx, requireNotNull(fsSnap), fsDocRef, opRef,
@@ -279,23 +294,22 @@ internal object Stage3AtomicControl {
                             enforceNonNegativeAvailable = true
                         )
                     }
-                    tx.update(
-                        reqRef,
-                        mapOf(
-                            "status" to "APPROVED_RESERVED",
-                            "reservedAmount" to amt,
-                            "approvedByUid" to op.actorUid,
-                            "approvedAt" to op.actionTime,
-                            "updatedAt" to op.actionTime,
-                            "operationId" to op.operationId,
-                            "actorUid" to op.actorUid,
-                            "actionTime" to op.actionTime,
-                            "operationType" to "UPSERT",
-                            "protocolVersion" to 2,
-                            "dependencies" to (basePayload["dependencies"] ?: emptyList<Any>()),
-                            "isDeleted" to false
-                        )
+                    val updateFields = mutableMapOf<String, Any>(
+                        "status" to "APPROVED_RESERVED",
+                        "reservedAmount" to amt,
+                        "lenderWithdrawableSnapshot" to lenderSnap,
+                        "approvedByUid" to op.actorUid,
+                        "approvedAt" to op.actionTime,
+                        "updatedAt" to op.actionTime,
+                        "operationId" to op.operationId,
+                        "actorUid" to op.actorUid,
+                        "actionTime" to op.actionTime,
+                        "operationType" to "UPSERT",
+                        "protocolVersion" to 2,
+                        "dependencies" to (basePayload["dependencies"] ?: emptyList<Any>()),
+                        "isDeleted" to false
                     )
+                    tx.update(reqRef, updateFields)
                 }
 
                 "EXECUTE" -> {

@@ -30,7 +30,7 @@ const envDoc = (actor, opId, type = 'UPSERT') => ({
   isDeleted: false
 });
 
-async function seedWorkspace({ confirmedCash = 2000, reservedCash = 0, confirmedBank = 1000, version = 1 } = {}) {
+async function seedWorkspace({ confirmedCash = 2000, reservedCash = 0, confirmedBank = 1000, protectedEntitlements = undefined, version = 1 } = {}) {
   dbCache.clear();
   await env.clearFirestore();
   await env.withSecurityRulesDisabled(async ctx => {
@@ -50,7 +50,7 @@ async function seedWorkspace({ confirmedCash = 2000, reservedCash = 0, confirmed
         workspaceId: ws, uid, role, status, displayName: name
       });
     }
-    await setDoc(doc(d, `workspaces/${ws}/financialState/current`), {
+    const fsData = {
       workspaceId: ws,
       version,
       confirmedCash,
@@ -63,11 +63,15 @@ async function seedWorkspace({ confirmedCash = 2000, reservedCash = 0, confirmed
       lastActorUid: 'owner',
       actionTime: now - 1000,
       updatedAt: serverTimestamp()
-    });
+    };
+    if (protectedEntitlements !== undefined) {
+      fsData.protectedEntitlements = protectedEntitlements;
+    }
+    await setDoc(doc(d, `workspaces/${ws}/financialState/current`), fsData);
   });
 }
 
-function cashOpDoc(actor, opId, entityType, entityId, mutationType, cashDelta, expectedVersion, cashBefore, { reservedDelta = 0, reservedBefore = 0, bankDelta = 0, bankBefore = 1000 } = {}) {
+function cashOpDoc(actor, opId, entityType, entityId, mutationType, cashDelta, expectedVersion, cashBefore, { reservedDelta = 0, reservedBefore = 0, bankDelta = 0, bankBefore = 1000, protectedEntitlementsAfter = undefined } = {}) {
   const docData = {
     workspaceId: ws,
     operationId: opId,
@@ -88,11 +92,14 @@ function cashOpDoc(actor, opId, entityType, entityId, mutationType, cashDelta, e
     docData.bankDelta = bankDelta;
     docData.confirmedBankAfter = bankBefore + bankDelta;
   }
+  if (protectedEntitlementsAfter !== undefined) {
+    docData.protectedEntitlementsAfter = protectedEntitlementsAfter;
+  }
   return docData;
 }
 
-function fsUpdate(actor, opId, entityType, entityId, newVersion, nextCash, nextReserved = 0, nextBank = 1000) {
-  return {
+function fsUpdate(actor, opId, entityType, entityId, newVersion, nextCash, nextReserved = 0, nextBank = 1000, nextProtected = undefined) {
+  const upd = {
     version: newVersion,
     confirmedCash: nextCash,
     reservedCash: nextReserved,
@@ -104,6 +111,10 @@ function fsUpdate(actor, opId, entityType, entityId, newVersion, nextCash, nextR
     actionTime: now,
     updatedAt: serverTimestamp()
   };
+  if (nextProtected !== undefined) {
+    upd.protectedEntitlements = nextProtected;
+  }
+  return upd;
 }
 
 test.before(async () => {
@@ -337,4 +348,103 @@ test('named-partner borrowing enforces lender-only approval, reserves cash again
   const stateSnap = await getDoc(doc(db('owner'), `workspaces/${ws}/financialState/current`));
   assert.equal(stateSnap.data().confirmedCash, 300);
   assert.equal(stateSnap.data().reservedCash, 0);
+});
+
+test('business borrowing protects all partners withdrawable entitlements and approved commitments at the server boundary', async () => {
+  // confirmedCash = 1000, reservedCash = 200 (approved commitment), protectedEntitlements = 500 (partner withdrawable entitlements)
+  // Maximum business borrowing allowed = 1000 - 200 - 500 = 300.
+  await seedWorkspace({ confirmedCash: 1000, reservedCash: 200, confirmedBank: 500, protectedEntitlements: 500, version: 1 });
+
+  // 1. Borrowing Rs 350 (exceeds 300 available after protecting entitlements + commitments) MUST FAIL at server boundary
+  await assertFails(runTransaction(db('partnerA'), async tx => {
+    const fsRef = doc(db('partnerA'), `workspaces/${ws}/financialState/current`);
+    const d = (await tx.get(fsRef)).data();
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/borrowingRequests/551`), {
+      ...envDoc('partnerA', 'op-bb-over-551'),
+      id: 551, borrowerUid: 'partnerA', borrowerName: 'Partner A',
+      lendingPartnerUid: '', lendingPartnerName: '',
+      sourceType: 'BUSINESS_ONLY', amount: 350, note: 'Over entitlement limit',
+      status: 'EXECUTED', reservedAmount: 0, protectedEntitlementsSnapshot: 500,
+      withdrawalId: 751, obligationId: 851,
+      requestedByUid: 'partnerA', requestedByRole: 'PARTNER', executedAt: now, createdAt: now, updatedAt: now
+    });
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/withdrawals/751`), {
+      ...envDoc('partnerA', 'op-bb-over-551'),
+      id: 751, amount: 350, partnerName: 'Partner A', targetPartnerUid: 'partnerA', createdByUid: 'partnerA', createdByRole: 'PARTNER',
+      category: 'Borrow from Business', borrowingRequestId: 551,
+      createdAt: now, dateTimestamp: now, notes: '', authorizationTimeStatus: 'CLIENT_ORIGINAL_V2',
+      authorizationCreatedAt: Timestamp.fromMillis(now), serverReceivedAt: serverTimestamp()
+    });
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/settlementObligations/851`), {
+      ...envDoc('partnerA', 'op-bb-over-551'),
+      id: 851, borrowerUid: 'partnerA', borrowerName: 'Partner A', creditorType: 'BUSINESS', creditorUid: '',
+      creditorName: 'Business', sourceRequestId: 551, principalAmount: 350, repaidAmount: 0, directSettledAmount: 0,
+      status: 'OPEN', note: '', createdAt: now, updatedAt: now, createdByUid: 'partnerA'
+    });
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/cashOperations/op-bb-over-551`),
+      cashOpDoc('partnerA', 'op-bb-over-551', 'BORROWING_REQUEST', 551, 'UPSERT', -350, d.version, d.confirmedCash, { reservedBefore: d.reservedCash, protectedEntitlementsAfter: 500 }));
+    tx.update(fsRef, fsUpdate('partnerA', 'op-bb-over-551', 'BORROWING_REQUEST', 551, d.version + 1, d.confirmedCash - 350, d.reservedCash, d.confirmedBank, 500));
+  }));
+
+  // 2. Attempting to tamper/zero out protectedEntitlements on financialState/current to bypass the limit MUST FAIL
+  await assertFails(runTransaction(db('partnerA'), async tx => {
+    const fsRef = doc(db('partnerA'), `workspaces/${ws}/financialState/current`);
+    const d = (await tx.get(fsRef)).data();
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/borrowingRequests/552`), {
+      ...envDoc('partnerA', 'op-bb-tamper-552'),
+      id: 552, borrowerUid: 'partnerA', borrowerName: 'Partner A',
+      lendingPartnerUid: '', lendingPartnerName: '',
+      sourceType: 'BUSINESS_ONLY', amount: 350, note: 'Tamper attempt',
+      status: 'EXECUTED', reservedAmount: 0, protectedEntitlementsSnapshot: 0,
+      withdrawalId: 752, obligationId: 852,
+      requestedByUid: 'partnerA', requestedByRole: 'PARTNER', executedAt: now, createdAt: now, updatedAt: now
+    });
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/withdrawals/752`), {
+      ...envDoc('partnerA', 'op-bb-tamper-552'),
+      id: 752, amount: 350, partnerName: 'Partner A', targetPartnerUid: 'partnerA', createdByUid: 'partnerA', createdByRole: 'PARTNER',
+      category: 'Borrow from Business', borrowingRequestId: 552,
+      createdAt: now, dateTimestamp: now, notes: '', authorizationTimeStatus: 'CLIENT_ORIGINAL_V2',
+      authorizationCreatedAt: Timestamp.fromMillis(now), serverReceivedAt: serverTimestamp()
+    });
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/settlementObligations/852`), {
+      ...envDoc('partnerA', 'op-bb-tamper-552'),
+      id: 852, borrowerUid: 'partnerA', borrowerName: 'Partner A', creditorType: 'BUSINESS', creditorUid: '',
+      creditorName: 'Business', sourceRequestId: 552, principalAmount: 350, repaidAmount: 0, directSettledAmount: 0,
+      status: 'OPEN', note: '', createdAt: now, updatedAt: now, createdByUid: 'partnerA'
+    });
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/cashOperations/op-bb-tamper-552`),
+      cashOpDoc('partnerA', 'op-bb-tamper-552', 'BORROWING_REQUEST', 552, 'UPSERT', -350, d.version, d.confirmedCash, { reservedBefore: d.reservedCash, protectedEntitlementsAfter: 0 }));
+    tx.update(fsRef, fsUpdate('partnerA', 'op-bb-tamper-552', 'BORROWING_REQUEST', 552, d.version + 1, d.confirmedCash - 350, d.reservedCash, d.confirmedBank, 0));
+  }));
+
+  // 3. Borrowing Rs 250 (within 300 available after protecting 500 entitlements and 200 reserved commitments) SUCCEEDS
+  await assertSucceeds(runTransaction(db('partnerA'), async tx => {
+    const fsRef = doc(db('partnerA'), `workspaces/${ws}/financialState/current`);
+    const d = (await tx.get(fsRef)).data();
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/borrowingRequests/553`), {
+      ...envDoc('partnerA', 'op-bb-ok-553'),
+      id: 553, borrowerUid: 'partnerA', borrowerName: 'Partner A',
+      lendingPartnerUid: '', lendingPartnerName: '',
+      sourceType: 'BUSINESS_ONLY', amount: 250, note: 'Valid business borrow',
+      status: 'EXECUTED', reservedAmount: 0, protectedEntitlementsSnapshot: 500,
+      withdrawalId: 753, obligationId: 853,
+      requestedByUid: 'partnerA', requestedByRole: 'PARTNER', executedAt: now, createdAt: now, updatedAt: now
+    });
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/withdrawals/753`), {
+      ...envDoc('partnerA', 'op-bb-ok-553'),
+      id: 753, amount: 250, partnerName: 'Partner A', targetPartnerUid: 'partnerA', createdByUid: 'partnerA', createdByRole: 'PARTNER',
+      category: 'Borrow from Business', borrowingRequestId: 553,
+      createdAt: now, dateTimestamp: now, notes: '', authorizationTimeStatus: 'CLIENT_ORIGINAL_V2',
+      authorizationCreatedAt: Timestamp.fromMillis(now), serverReceivedAt: serverTimestamp()
+    });
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/settlementObligations/853`), {
+      ...envDoc('partnerA', 'op-bb-ok-553'),
+      id: 853, borrowerUid: 'partnerA', borrowerName: 'Partner A', creditorType: 'BUSINESS', creditorUid: '',
+      creditorName: 'Business', sourceRequestId: 553, principalAmount: 250, repaidAmount: 0, directSettledAmount: 0,
+      status: 'OPEN', note: '', createdAt: now, updatedAt: now, createdByUid: 'partnerA'
+    });
+    tx.set(doc(db('partnerA'), `workspaces/${ws}/cashOperations/op-bb-ok-553`),
+      cashOpDoc('partnerA', 'op-bb-ok-553', 'BORROWING_REQUEST', 553, 'UPSERT', -250, d.version, d.confirmedCash, { reservedBefore: d.reservedCash, protectedEntitlementsAfter: 500 }));
+    tx.update(fsRef, fsUpdate('partnerA', 'op-bb-ok-553', 'BORROWING_REQUEST', 553, d.version + 1, d.confirmedCash - 250, d.reservedCash, d.confirmedBank, 500));
+  }));
 });

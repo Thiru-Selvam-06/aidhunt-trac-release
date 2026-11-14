@@ -124,13 +124,11 @@ secrets {
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
   ignoreList.add("FIREBASE_API_KEY")
-  // Server-only CSV; an empty value is not a Java expression.
-  ignoreList.add("INVITATION_TEST_PHONES")
-  ignoreList.add("FIREBASE_AUTH_EMULATOR_HOST")
-  ignoreList.add("FIRESTORE_EMULATOR_HOST")
-  ignoreList.add("FUNCTIONS_EMULATOR")
-  ignoreList.add("GCLOUD_PROJECT")
-  ignoreList.add("INVITATION_SMS_ENABLED")
+  // Server/emulator settings are not Android constants or APK configuration.
+  listOf(
+    "GCLOUD_PROJECT", "FIRESTORE_EMULATOR_HOST", "FIREBASE_AUTH_EMULATOR_HOST",
+    "FUNCTIONS_EMULATOR", "INVITATION_SMS_ENABLED", "INVITATION_TEST_PHONES"
+  ).forEach { ignoreList.add(it) }
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
