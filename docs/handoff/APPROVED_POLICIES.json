@@ -1,0 +1,32 @@
+{
+  "sharedExpenseDebts": "DEFERRED by user; preserve investment",
+  "businessBorrowing": {
+    "creditor": "business only",
+    "automaticProfitOffset": false,
+    "limit": "Confirmed available funds after protecting currently withdrawable partner entitlements and approved commitments; named-partner route separate"
+  },
+  "externalLoans": {
+    "roles": [
+      "OWNER",
+      "PARTNER"
+    ],
+    "operatorAllowed": false,
+    "interest": "manual separate principal/interest",
+    "destinations": [
+      "BUSINESS_CASH",
+      "BUSINESS_BANK",
+      "DIRECT_TO_SUPPLIER"
+    ],
+    "historicalRecords": "Preserve old Cash, UPI and bank records; do not reclassify or seed balances automatically",
+    "repaymentSources": [
+      "BUSINESS_CASH",
+      "BUSINESS_BANK"
+    ],
+    "personalRepaymentPolicy": "DEFERRED; do not create new principal investment contributions"
+  },
+  "repayment": "recipient confirmation before debt reduction; authorized member for business receipts",
+  "productionDeployment": "NOT AUTHORIZED",
+  "ordinaryWorkDayPolicy": "Work-date corrections allowed; Owner-only creation refers to Old Entry workflow",
+  "businessRepaymentConfirmation": "Payer may confirm payment into business if an active authorized Owner/Partner; named lending Partner must still confirm direct repayment",
+  "operatorCustomerPolicy": "May create basic customer profiles; no customer balances, collections or financial-report access expansion"
+}
