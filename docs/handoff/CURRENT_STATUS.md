@@ -9,7 +9,10 @@ the implementation phases are 0–22, with additional process/deliverable sectio
 ## Exact source state
 
 - Repository: `Thiru-Selvam-06/aidhunt-trac-release`.
-- `main` remains at `24d7b91e0898a1eacb8a1daf6ff1ce64779e28ce`.
+- On 14 November 2026, the user explicitly requested that the development
+  snapshot be merged into `main` for AI Studio import. `main` was fast-forwarded
+  from `24d7b91e0898a1eacb8a1daf6ff1ce64779e28ce` to
+  `de19beac3d557896abb09bfcc534d63beb45394e`; this document update follows it.
 - Draft, unmerged PR stack: offline sync #3, Tamil #4, customer identity #5,
   core edits #6, expense categories #7, Operator customers #8, paise precision
   #9. PR #9's verified source commit is
@@ -22,7 +25,8 @@ the implementation phases are 0–22, with additional process/deliverable sectio
   Two files changed; 19 focused tests passed, but Android integration and full
   CI are pending. Fix the data flow and verify before a PR or release claim.
 - Production Rules, Functions, Worker, APK, live records and local pending
-  operations were not changed by this work. No branch above is merged to main.
+  operations were not changed by the merge. The development stack is now in main;
+  this does not establish customer release readiness.
 
 ## Progress by original phase
 
