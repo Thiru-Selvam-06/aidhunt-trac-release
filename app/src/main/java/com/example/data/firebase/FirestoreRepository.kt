@@ -62,7 +62,7 @@ class FirestoreRepository(
     val currentWorkspace: StateFlow<Workspace?> = _currentWorkspace.asStateFlow()
 
     // Real-time listener registrations per workspace (workspaceId -> Map of listener registrations)
-    private val activeWorkspaceListeners = mutableMapOf<String, MutableList<ListenerRegistration>>()
+    private val activeWorkspaceListeners = java.util.concurrent.ConcurrentHashMap<String, MutableList<ListenerRegistration>>()
     private val activeListenerCapabilities = mutableMapOf<String, WorkspaceSyncCapabilities>()
     private val activeListenerSessions = mutableMapOf<String, Triple<String, Boolean, Boolean>>()
     private fun WorkspaceSyncCapabilities?.orDefaultCapabilities() = this ?: WorkspaceSyncCapabilities()
@@ -312,6 +312,7 @@ class FirestoreRepository(
      * Registers real-time Firestore listeners for a set of visible workspaces.
      * Listens to entries, expenses, customers, tractors, attendees, withdrawals, settings for all given workspaces.
      */
+    @Synchronized
     fun startRealtimeListenersForWorkspaces(
         workspaceIds: Set<String>,
         onJobsUpdated: (List<JobEntryEntity>, String) -> Unit,
@@ -381,6 +382,9 @@ class FirestoreRepository(
             listenerHealth.begin(workspaceId, operational + if (workspaceId in operatorWorkspaceIds) {
                 if (capabilities.basicCustomerProfilesV1) setOf("customerDirectory") else emptySet()
             } else setOf("customers", "expenses", "withdrawals", "payments"))
+            // The SDK may dispatch an initial snapshot while more listeners are being added.
+            // Publish the registration before subscription so that snapshot isn't discarded.
+            activeWorkspaceListeners[workspaceId] = regList
             // The full members query loses permission after removal. The actor's own
             // member document remains readable so revocation still reaches this device.
             regList.add(wsRef.collection("members").document(currentUid).addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
@@ -651,6 +655,7 @@ class FirestoreRepository(
                     if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
                     if (error != null) {
                         listenerHealth.failed(workspaceId, "expenseCategories")
+                        Log.w(TAG, "Expense category listener failed: ${error.code}")
                         return@addSnapshotListener
                     }
                     if (snapshot != null) {
@@ -753,7 +758,6 @@ class FirestoreRepository(
                     })
             }
 
-            activeWorkspaceListeners[workspaceId] = regList
             Log.d(TAG, "All Firestore snapshot listeners started for workspace: $workspaceId")
         }
     }
@@ -879,6 +883,7 @@ class FirestoreRepository(
     /**
      * Cleanly stops and unregisters all real-time listeners across all workspaces.
      */
+    @Synchronized
     fun stopRealtimeListeners() {
         listenerEpoch.incrementAndGet()
         listenerHealth.clear()
