@@ -1,5 +1,14 @@
 # AIDHUNT TRAC — Development Progress & Final Reconciliation Log
 
+## Phase 1 UI restoration — 16 November 2026
+
+- Base `3629296b5dff45fd036cdada6123ad654b45c4aa` on GitHub `codex/stabilization-release`. Baseline Actions run 43664989563 reported 11 successful jobs and one optional manual job skipped. Working branch `codex/phase1-ui-restoration`.
+- Restored compact Home job cards and a single Entry For picker. Job displays use name-only attribution. The Home card shows the work date and actual creation time in IST, with a separate recording label for historical jobs or differing dates. Existing job snapshots, creator, selected UID and financial attribution fields remain authoritative.
+- Paused new loan, borrowing and repayment actions in Compose and ViewModel. Reports show Coming Soon cards and provide access to existing records when available. Already-recorded repayment confirmations and pending request rejection/cancellation remain under the existing authorization checks. Existing linked loan expenses are preserved in job edits.
+- `assembleDebug` passed with a synthetic Firebase configuration. All 43 focused Kotlin/Compose tests passed across seven suites with no skips, including a 320 dp layout, English/Tamil, creator/beneficiary IDs, personal and business expense funding, loan gates, and existing record access. The first test run found a Tamil job-label expectation that still counted a removed role prefix. The updated test asserts name-only job labels and retains collector-role coverage. Interaction inventory and `git diff --check` passed.
+- Remaining verification: physical devices and the final release-wide regression. No Firestore Rules, Firebase configuration, sync engine, financial formulas, production data, or Room schema changes. No release or production merge.
+- Exact next action: keep Phase 1 on its own branch for review and wait for direction before Phase 2.
+
 ## Stabilization development checkpoint — 15 November 2026
 
 - Base: GitHub main `894c38b4172118471e3c32adc38bbf13d8cbb51d`. Working branch: `codex/stabilization-release`.

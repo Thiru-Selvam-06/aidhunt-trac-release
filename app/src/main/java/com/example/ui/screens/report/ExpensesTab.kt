@@ -1,5 +1,7 @@
 
 package com.example.ui.screens.report
+
+import com.example.ui.util.FinancialFeatureAvailability
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.ExperimentalFoundationApi
 import android.app.DatePickerDialog
@@ -355,13 +357,15 @@ fun ExpensesTab(
             }
             ExpenseScreenView.EXPENSE_DETAILS -> {
                 activeExpense?.let { selected -> expenses.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { expense ->
-                    val canEdit = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canEditExpense(
+                    val canEdit = FinancialFeatureAvailability.canChangeExpense(expense) &&
+                        !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canEditExpense(
                         expense = expense,
                         isOwner = isOwner,
                         currentActorName = effectiveActorName,
                         currentUid = effectiveUid, role = com.example.data.auth.RoleUtils.normalizeRole(workspaceMembers.firstOrNull { it.uid == effectiveUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true) }?.role)
                     )
-                    val canDelete = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canDeleteExpense(
+                    val canDelete = FinancialFeatureAvailability.canChangeExpense(expense) &&
+                        !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canDeleteExpense(
                         expense = expense,
                         isOwner = isOwner,
                         currentActorName = effectiveActorName,
@@ -893,13 +897,15 @@ fun ExpenseReportListScreen(
             }
         } else {
             items(filteredExpenses, key = { it.id }) { expense ->
-                val canEdit = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canEditExpense(
+                val canEdit = FinancialFeatureAvailability.canChangeExpense(expense) &&
+                        !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canEditExpense(
                     expense = expense,
                     isOwner = isOwner,
                     currentActorName = actorName,
                     currentUid = currentUid, role = com.example.data.auth.RoleUtils.normalizeRole(workspaceMembers.firstOrNull { it.uid == currentUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true) }?.role)
                 )
-                val canDelete = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canDeleteExpense(
+                val canDelete = FinancialFeatureAvailability.canChangeExpense(expense) &&
+                        !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canDeleteExpense(
                     expense = expense,
                     isOwner = isOwner,
                     currentActorName = actorName,
@@ -1404,7 +1410,7 @@ fun AddOrEditExpenseScreen(
     val selectedLoan = availableDirectLoans.firstOrNull { it.id == selectedExternalLoanId }
     val parsedAmt = com.example.data.expense.ExpenseAmountInput.parseForRecord(amountText, originalAmount)
     val isLoanFundingMode = selectedWhoPaid == "Loan Funded"
-    val isLoanSelectionValid = !isLoanFundingMode || (selectedLoan != null && parsedAmt != null && parsedAmt > 0.0 && parsedAmt <= selectedLoan.principalAmount + 0.001)
+    val isLoanSelectionValid = !isLoanFundingMode || (FinancialFeatureAvailability.newLoanTransactionsEnabled && selectedLoan != null && parsedAmt != null && parsedAmt > 0.0 && parsedAmt <= selectedLoan.principalAmount + 0.001)
     val isAmountValid = parsedAmt != null && (!isLoanFundingMode || selectedLoan == null || parsedAmt <= selectedLoan.principalAmount + 0.001)
     val formDateFormat = remember(isTamil) { SimpleDateFormat("dd/MM/yyyy  hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH) }
     fun doSave() {
@@ -1751,39 +1757,41 @@ fun AddOrEditExpenseScreen(
                             }
                         }
 
-                        val isLoanOption = selectedWhoPaid == "Loan Funded"
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                width = if (isLoanOption) 1.5.dp else 1.dp,
-                                color = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFFCBD5E1)
-                            ),
-                            color = if (isLoanOption) Color(0xFFF0FDF4) else Color.White,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(52.dp)
-                                .clickable { selectedWhoPaid = "Loan Funded" }
-                                .testTag("who_paid_loan_funded")
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
+                        if (FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+                            val isLoanOption = selectedWhoPaid == "Loan Funded"
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = if (isLoanOption) 1.5.dp else 1.dp,
+                                    color = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFFCBD5E1)
+                                ),
+                                color = if (isLoanOption) Color(0xFFF0FDF4) else Color.White,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(52.dp)
+                                    .clickable { selectedWhoPaid = "Loan Funded" }
+                                    .testTag("who_paid_loan_funded")
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Payments,
-                                    contentDescription = null,
-                                    tint = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFF64748B),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = if (isTamil) "கடன் நிதி" else "Loan Funded",
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 12.sp,
-                                    maxLines = 1,
-                                    color = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFF334155)
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Payments,
+                                        contentDescription = null,
+                                        tint = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFF64748B),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (isTamil) "கடன் நிதி" else "Loan Funded",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        color = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFF334155)
+                                    )
+                                }
                             }
                         }
                     }

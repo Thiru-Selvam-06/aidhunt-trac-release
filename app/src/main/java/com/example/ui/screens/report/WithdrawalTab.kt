@@ -1,5 +1,7 @@
 package com.example.ui.screens.report
 
+import com.example.ui.util.FinancialFeatureAvailability
+
 import android.app.DatePickerDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -147,6 +149,7 @@ fun WithdrawalTab(
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     var takeAmountTargetStatus by remember { mutableStateOf<PartnerShareInvestmentStatus?>(null) }
     var showTakeAmountDialog by remember { mutableStateOf(false) }
+    val canStartBorrowing = FinancialFeatureAvailability.newLoanTransactionsEnabled && onRequestBorrowing != null
     var showBorrowDialog by remember { mutableStateOf(false) }
     var borrowActionError by remember { mutableStateOf("") }
     var showPdfOptionsDialog by remember { mutableStateOf(false) }
@@ -346,7 +349,7 @@ fun WithdrawalTab(
                     )
                 }
             }
-            if (onRequestBorrowing != null || onOpenSettlements != null) {
+            if (canStartBorrowing || onOpenSettlements != null) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -354,7 +357,7 @@ fun WithdrawalTab(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (onRequestBorrowing != null) {
+                    if (canStartBorrowing) {
                         OutlinedButton(
                             onClick = { showBorrowDialog = true },
                             shape = RoundedCornerShape(12.dp),
@@ -399,7 +402,7 @@ fun WithdrawalTab(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = if (isTamil) "தீர்வுகள்" else "Settlements",
+                                text = if (isTamil) "கடன் பதிவுகள்" else "Settlement history",
                                 color = Color(0xFF0F172A),
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 13.sp
@@ -905,7 +908,7 @@ fun WithdrawalTab(
         )
     }
 
-    if (showBorrowDialog && onRequestBorrowing != null) {
+    if (canStartBorrowing && showBorrowDialog && onRequestBorrowing != null) {
         BorrowDialog(
             workspaceId = settings.workspaceId,
             workspaceMembers = workspaceMembers,

@@ -1,5 +1,7 @@
 package com.example.ui.screens.entry
 
+import com.example.ui.util.FinancialFeatureAvailability
+
 import com.example.ui.utils.trackFocusedField
 import android.app.TimePickerDialog
 import android.content.Context
@@ -231,7 +233,7 @@ fun NewEntryScreen(
         settings.ownerName.ifBlank { "Owner" }
     }
     val activeMemberName = workspaceMembers.firstOrNull {
-        it.uid == currentUid && it.status.equals("active", ignoreCase = true)
+        it.uid == currentUid && it.workspaceId == settings.workspaceId && it.status.equals("active", ignoreCase = true)
     }?.displayName?.trim().orEmpty()
     val currentPartnerName = activeMemberName.ifBlank {
         settings.activePartnerName.ifBlank { settings.ownerName.ifBlank { "Partner" } }
@@ -256,8 +258,14 @@ fun NewEntryScreen(
     } else if (canSelectEntryPerson) selectedMember?.uid ?: currentUid else currentUid
     val effectivePersonName = if (draft.isEditingExistingEntry) {
         draft.selectedPersonName.ifBlank { currentPartnerName }
-    } else workspaceMembers.firstOrNull { it.uid == entryTargetUid && it.workspaceId == settings.workspaceId }
-        ?.displayName.orEmpty().ifBlank { if (entryTargetUid == ownerUid) ownerDisplayName else currentPartnerName }
+    } else if (entryTargetUid == currentUid) {
+        currentPartnerName
+    } else if (entryTargetUid == ownerUid) {
+        ownerDisplayName
+    } else {
+        selectedMember?.displayName?.trim().orEmpty()
+            .ifBlank { selectedMember?.phoneNumber.orEmpty().ifBlank { if (isTamil) "பெயர் இல்லை" else "Unnamed member" } }
+    }
 
     // 2. Tractor Selection & Lock State
     val ownTractors = remember(tractors, settings.workspaceId) {
@@ -664,9 +672,7 @@ fun NewEntryScreen(
                     notes
                 }
 
-                val resolvedOperatorName = if (canSelectEntryPerson && !draft.isEditingExistingEntry)
-                    draft.tractorOperatorName.trim().ifBlank { effectivePersonName }
-                else draft.originalJob?.operatorName.orEmpty().ifBlank { effectivePersonName }
+                val resolvedOperatorName = draft.originalJob?.operatorName ?: effectivePersonName
                 val job = JobEntryEntity(
                     id = entryId,
                     customerId = resolvedCustomerId,
@@ -686,8 +692,8 @@ fun NewEntryScreen(
                     pendingAmount = pendingAmount,
                     notes = finalNotes,
                     isHistorical = draft.isOldEntry,
-                    entryForUid = entryTargetUid,
-                    financialAttributionUid = entryTargetUid,
+                    entryForUid = draft.originalJob?.entryForUid ?: entryTargetUid,
+                    financialAttributionUid = draft.originalJob?.financialAttributionUid ?: entryTargetUid,
                     addedByPartner = resolvedCreatorName,
                     createdAt = resolvedCreatedAt,
                     createdByUid = resolvedCreatorUid,
@@ -932,20 +938,7 @@ fun NewEntryScreen(
                 }
             }
 
-            item {
-                if (canSelectEntryPerson && !draft.isEditingExistingEntry) {
-                    OutlinedTextField(
-                        value = draft.tractorOperatorName,
-                        onValueChange = { onUpdateDraft(draft.copy(tractorOperatorName = it.take(100))) },
-                        label = { Text(if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator") },
-                        placeholder = { Text(effectivePersonName) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-
-            // Financial attribution for the job and its linked entries.
+            // One member selection supplies the job operator and existing financial association.
             item {
                 if (canSelectEntryPerson && !draft.isEditingExistingEntry) {
                     var personDropdownExpanded by remember { mutableStateOf(false) }
@@ -959,7 +952,7 @@ fun NewEntryScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (isTamil) "பதிவின் நிதிப் பயனாளர்" else "Financial attribution",
+                                text = if (isTamil) "யாருக்காக" else "Entry For",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = DeepSageGreen
@@ -973,7 +966,7 @@ fun NewEntryScreen(
                                     .testTag("btn_person_lock")
                                     .clickable {
                                         val newLocked = !draft.isPersonLocked
-                                        val currentSelectedUid = draft.selectedPersonUid.ifBlank { currentUid }
+                                        val currentSelectedUid = entryTargetUid
                                         onUpdateDraft(draft.copy(isPersonLocked = newLocked, selectedPersonUid = currentSelectedUid))
                                         val lockedUid = if (newLocked) currentSelectedUid else ""
                                         onUpdateLockedPerson?.invoke(lockedUid)
@@ -1040,8 +1033,7 @@ fun NewEntryScreen(
                                 expanded = personDropdownExpanded,
                                 onDismissRequest = { personDropdownExpanded = false }
                             ) {
-                                // 1. Owner Option
-                                DropdownMenuItem(
+                                if (ownerUid.isNotBlank()) DropdownMenuItem(
                                     text = {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
@@ -1109,7 +1101,7 @@ fun NewEntryScreen(
                                                         color = AppTheme.colors.textMuted
                                                     )
                                                 }
-                                                if (draft.selectedPersonUid == partner.uid || draft.selectedPersonName == pName) {
+                                                if (entryTargetUid == partner.uid) {
                                                     Icon(
                                                         imageVector = Icons.Default.Check,
                                                         contentDescription = null,
@@ -1154,11 +1146,8 @@ fun NewEntryScreen(
                         )
 
                         Column(modifier = Modifier.weight(1f)) {
-                            val currentMember = workspaceMembers.find { it.uid == entryTargetUid && it.workspaceId == settings.workspaceId }
-                            val currentRole = currentMember?.role?.ifBlank { null } ?: "Partner"
-                            val roleLabel = com.example.ui.util.businessRoleDisplayName(currentRole, settings.workspaceId, workspaceMembers, isTamil)
                             Text(
-                                text = if (isTamil) "வேலை செய்பவர் ($roleLabel)" else "Entry for Operator: $roleLabel",
+                                text = if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator",
                                 fontSize = 10.5.sp,
                                 color = AppTheme.colors.textMuted,
                                 fontWeight = FontWeight.Medium
@@ -2046,13 +2035,15 @@ fun NewEntryScreen(
 
                         // Multiple Expenses List
                         draft.expensesList.forEachIndexed { index, exp ->
+                            val canEditFunding = draft.originalLinkedExpenses.firstOrNull { it.id == exp.id }
+                                ?.let(FinancialFeatureAvailability::canChangeExpense) ?: true
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = Color.White,
                                 border = androidx.compose.foundation.BorderStroke(1.dp, SageOutline.copy(alpha = 0.5f)),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable {
+                                    .clickable(enabled = canEditFunding) {
                                         expenseToEdit = exp
                                         showAddExpenseModal = true
                                     }
@@ -2129,7 +2120,7 @@ fun NewEntryScreen(
                                             fontSize = 14.sp,
                                             color = AppTheme.colors.textPrimary
                                         )
-                                        IconButton(
+                                        if (canEditFunding) IconButton(
                                             onClick = {
                                                 expenseToEdit = exp
                                                 showAddExpenseModal = true
@@ -2143,7 +2134,7 @@ fun NewEntryScreen(
                                                 modifier = Modifier.size(17.dp)
                                             )
                                         }
-                                        IconButton(
+                                        if (canEditFunding) IconButton(
                                             onClick = {
                                                 val updated = draft.expensesList.toMutableList().also { it.removeAt(index) }
                                                 onUpdateDraft(draft.copy(expensesList = updated))

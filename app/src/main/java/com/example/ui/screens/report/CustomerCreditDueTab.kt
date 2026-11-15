@@ -1649,9 +1649,8 @@ fun CustomerDetailSheet(
                                 color = TextMutedDark
                              )
                             if (!isPayment) {
-                                val hasPartnership = com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
-                                val createdByDisplay = com.example.data.auth.RoleUtils.getCreatedByDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil, hasPartnership)
-                                val entryForDisplay = com.example.data.auth.RoleUtils.getEntryForDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil, hasPartnership)
+                                val createdByDisplay = com.example.data.auth.RoleUtils.getCreatedByDisplay(job, workspaceMembers, partners, isTamil)
+                                val entryForDisplay = com.example.data.auth.RoleUtils.getEntryForDisplay(job, workspaceMembers, partners, isTamil)
                                 Spacer(modifier = Modifier.height(3.dp))
                                 Text(createdByDisplay, fontSize = 11.sp, color = Color(0xFF374151), fontWeight = FontWeight.Medium)
                                 if (entryForDisplay != null) {

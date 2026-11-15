@@ -1002,11 +1002,15 @@ private fun CollectionJobCard(
             }
 
             // Created Date & Sync Status
-            if (job != null) Text(
-                text = RoleUtils.getEntryForDisplay(job, ownerName, workspaceMembers, partners, isTamil,
-                    com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers))
-                    ?: if (isTamil) "யாருக்காக: அடையாளம் கிடைக்கவில்லை" else "Entry For: Attribution unavailable",
-                fontSize = 11.sp, color = TextSecondaryDark, modifier = Modifier.testTag("collection_entry_for_$identifierTag"))
+            if (job != null) {
+                Text(RoleUtils.getCreatedByDisplay(job, workspaceMembers, partners, isTamil),
+                    fontSize = 11.sp, color = TextSecondaryDark)
+                Text(
+                    text = RoleUtils.getEntryForDisplay(job, workspaceMembers, partners, isTamil)
+                        ?: if (isTamil) "வேலை இயக்குபவர்: அடையாளம் கிடைக்கவில்லை" else "Entry for Operator: Attribution unavailable",
+                    fontSize = 11.sp, color = TextSecondaryDark, modifier = Modifier.testTag("collection_entry_for_$identifierTag")
+                )
+            }
             Text(
                 text = "${if (isTamil) "உருவாக்கப்பட்டது" else "Created"}: ${job?.createdAt?.takeIf { it > 0 }?.let { dateFormat.format(Date(it)) } ?: "—"}",
                 fontSize = 11.sp,

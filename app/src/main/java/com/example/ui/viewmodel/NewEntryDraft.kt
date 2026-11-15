@@ -1,5 +1,7 @@
 package com.example.ui.viewmodel
 
+import com.example.ui.util.FinancialFeatureAvailability
+
 import java.util.Calendar
 
 data class FixedWorkType(val en: String, val ta: String)
@@ -37,7 +39,6 @@ data class NewEntryDraft(
     val isTractorLocked: Boolean = false,
     val selectedPersonUid: String = "",
     val selectedPersonName: String = "",
-    val tractorOperatorName: String = "",
     val isPersonLocked: Boolean = false,
     val isEditingExistingEntry: Boolean = false,
     val selectedWorkType: String = "Rotavator",
@@ -80,10 +81,14 @@ data class NewEntryDraft(
     val originalLinkedExpenses: List<com.example.data.entity.ExpenseEntity> = emptyList()
 ) {
     fun retainExpenseHistory(submitted: List<com.example.data.entity.ExpenseEntity>): List<com.example.data.entity.ExpenseEntity> =
-        submitted.map { edit -> originalLinkedExpenses.firstOrNull { it.id == edit.id }?.let { original ->
-            original.copy(expenseType = edit.expenseType, amount = edit.amount, paidBy = edit.paidBy,
+        submitted.map { edit ->
+            val original = originalLinkedExpenses.firstOrNull { it.id == edit.id } ?: return@map edit
+            if (!FinancialFeatureAvailability.canChangeExpense(original)) original
+            else original.copy(expenseType = edit.expenseType, amount = edit.amount, paidBy = edit.paidBy,
                 paidByPartner = edit.paidByPartner, paidByUid = edit.paidByUid)
-        } ?: edit }
+        } + originalLinkedExpenses.filter { original ->
+            !FinancialFeatureAvailability.canChangeExpense(original) && submitted.none { it.id == original.id }
+        }
 
     /** Reopening a minute/whole-rupee form must not round untouched historical values. */
     fun retainUneditedWork(submitted: com.example.data.entity.JobEntryEntity): com.example.data.entity.JobEntryEntity {

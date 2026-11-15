@@ -1,5 +1,7 @@
 package com.example.ui.viewmodel
 
+import com.example.ui.util.FinancialFeatureAvailability
+
 import com.example.data.firebase.asCustomerChoice
 
 import com.example.data.repository.awaitWorkspaceRequest
@@ -1095,6 +1097,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun queueExpense(expense: ExpenseEntity, original: ExpenseEntity?, editing: Boolean,
         onQueued: () -> Unit, onError: (String) -> Unit) {
+        if (!FinancialFeatureAvailability.canChangeExpense(expense) || (original != null && !FinancialFeatureAvailability.canChangeExpense(original))) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         // Bind the click to its account/workspace before dispatching asynchronous work.
         val actor = currentUid.orEmpty()
         val workspace = activeWorkspaceId.value.orEmpty()
@@ -1120,6 +1126,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteExpense(expense: ExpenseEntity, onQueued: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        if (!FinancialFeatureAvailability.canChangeExpense(expense)) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         if (!com.example.data.auth.AuthorizationManager.canViewExpenses(isCollaborationOwner.value, role = currentUserRole.value)) {
             _syncMessage.value = "Expense deletion restricted by administration"
             onError("Expense deletion restricted by administration")
@@ -1248,6 +1258,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun loanTransactionsPausedMessage(): String = FinancialFeatureAvailability.comingSoon(
+        settings.value.language.equals("TA", ignoreCase = true)
+    )
+
     fun canManageExternalLoans(): Boolean =
         com.example.data.auth.AuthorizationManager.canManageExternalLoans(isCollaborationOwner.value, currentUserRole.value)
 
@@ -1261,6 +1275,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: (Long) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         if (!canManageExternalLoans()) {
             onError("External loans are restricted to Owner and Partner")
             return
@@ -1288,6 +1306,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: (Long) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         if (!canManageExternalLoans()) {
             onError("External loan repayments are restricted to Owner and Partner")
             return
@@ -1314,6 +1336,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: (Long) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         if (!com.example.data.auth.AuthorizationManager.canViewWithdrawals(isCollaborationOwner.value, role = currentUserRole.value)) {
             onError("Borrowing is restricted for this role")
             return
@@ -1336,6 +1362,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun approveAndReserveBorrowing(requestId: Long, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         viewModelScope.launch {
             try {
                 workspaceRepository.approveAndReserveBorrowing(requestId)
@@ -1350,6 +1380,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun executeApprovedBorrowing(requestId: Long, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         viewModelScope.launch {
             try {
                 workspaceRepository.executeApprovedBorrowing(requestId)
@@ -1400,6 +1434,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: (Long) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         viewModelScope.launch {
             try {
                 val id = workspaceRepository.recordSettlementRepayment(obligationId, amount, mode, note, paidAt)

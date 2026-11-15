@@ -1,5 +1,7 @@
 package com.example.ui.screens.report
 
+import com.example.ui.util.FinancialFeatureAvailability
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -66,6 +68,7 @@ fun PartnerSettlementsScreen(
 
     val activeRequests = borrowingRequests.filter { it.status in setOf("PENDING_APPROVAL", "APPROVED_RESERVED") }
     val pendingConfirmations = repayments.filter { it.status == "PENDING_CONFIRMATION" }
+    val repaymentHistory = repayments.filter { it.status != "PENDING_CONFIRMATION" }
     val openObligations = obligations.filter { it.status != "SETTLED" }
     val settledObligations = obligations.filter { it.status == "SETTLED" }
 
@@ -83,8 +86,11 @@ fun PartnerSettlementsScreen(
                     color = Color(0xFF0F172A)
                 )
                 Text(
-                    text = if (isTamil) "அனுமதி, முன்பதிவு & உறுதிப்படுத்தப்பட்ட திருப்பிச் செலுத்தல்கள்"
-                    else "Approvals, cash reservations & recipient-confirmed repayments",
+                    text = if (FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+                        if (isTamil) "அனுமதி, முன்பதிவு & உறுதிப்படுத்தப்பட்ட திருப்பிச் செலுத்தல்கள்"
+                        else "Approvals, cash reservations & recipient-confirmed repayments"
+                    } else if (isTamil) "புதிய கடன்களும் திருப்பிச் செலுத்தல் பதிவுகளும் விரைவில்"
+                    else "New borrowing and repayment entries are coming soon",
                     fontSize = 11.5.sp,
                     color = Color(0xFF64748B)
                 )
@@ -300,9 +306,34 @@ fun PartnerSettlementsScreen(
                         obligation = ob,
                         currency = settings.currency,
                         isTamil = isTamil,
-                        canRecord = AuthorizationManager.canRecordSettlementRepayment(ob, currentUid, isOwner, currentRole),
+                        canRecord = FinancialFeatureAvailability.newLoanTransactionsEnabled && AuthorizationManager.canRecordSettlementRepayment(ob, currentUid, isOwner, currentRole),
                         onRecordClick = { repaymentTargetOb = ob }
                     )
+                }
+            }
+
+            if (repaymentHistory.isNotEmpty()) {
+                item {
+                    Text(
+                        if (isTamil) "திருப்பிச் செலுத்தல் வரலாறு" else "Repayment history",
+                        fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF475569)
+                    )
+                }
+                items(repaymentHistory, key = { "rep_history_${it.id}" }) { repayment ->
+                    val status = when (repayment.status) {
+                        "CONFIRMED" -> if (isTamil) "உறுதிசெய்யப்பட்டது" else "Confirmed"
+                        "REJECTED" -> if (isTamil) "நிராகரிக்கப்பட்டது" else "Rejected"
+                        else -> repayment.status
+                    }
+                    Card(colors = CardDefaults.cardColors(containerColor = Color.White), modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("${repayment.payerName} → ${repayment.creditorName}", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${formatInr(repayment.amount, settings.currency)} · $status · ${dateFormat.format(Date(repayment.paidAt))}",
+                                fontSize = 12.sp, color = Color(0xFF475569)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -328,7 +359,7 @@ fun PartnerSettlementsScreen(
         }
     }
 
-    repaymentTargetOb?.let { ob ->
+    repaymentTargetOb?.takeIf { FinancialFeatureAvailability.newLoanTransactionsEnabled }?.let { ob ->
         RecordSettlementRepaymentDialog(
             obligation = ob,
             currency = settings.currency,
@@ -529,8 +560,8 @@ fun BorrowingRequestCard(
     onExecute: () -> Unit,
     onCancel: () -> Unit
 ) {
-    val canApprove = AuthorizationManager.canApproveOrRejectBorrowing(req, currentUid, currentRole)
-    val canExecute = AuthorizationManager.canExecuteApprovedBorrowing(req, currentUid, isOwner, currentRole)
+    val canReviewRequest = AuthorizationManager.canApproveOrRejectBorrowing(req, currentUid, currentRole)
+    val canExecute = FinancialFeatureAvailability.newLoanTransactionsEnabled && AuthorizationManager.canExecuteApprovedBorrowing(req, currentUid, isOwner, currentRole)
     val canCancel = AuthorizationManager.canCancelBorrowingRequest(req, currentUid, isOwner, currentRole)
 
     Card(
@@ -556,7 +587,7 @@ fun BorrowingRequestCard(
             }
             if (req.note.isNotBlank()) Text(req.note, fontSize = 11.5.sp, color = Color(0xFF64748B))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                if (req.status == "PENDING_APPROVAL" && canApprove) {
+                if (req.status == "PENDING_APPROVAL" && canReviewRequest && FinancialFeatureAvailability.newLoanTransactionsEnabled) {
                     Button(
                         onClick = onApprove,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0B532E)),
@@ -567,6 +598,8 @@ fun BorrowingRequestCard(
                     ) {
                         Text(if (isTamil) "ஒப்புதல் & முன்பதிவு" else "Approve & Reserve", fontSize = 12.sp)
                     }
+                }
+                if (req.status == "PENDING_APPROVAL" && canReviewRequest) {
                     OutlinedButton(
                         onClick = onReject,
                         modifier = Modifier

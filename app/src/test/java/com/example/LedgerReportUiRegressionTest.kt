@@ -85,22 +85,46 @@ class LedgerReportUiRegressionTest {
     }
 
     @Test fun partnerCanSelectOwnerAndAnotherPartnerWithoutChangingRecorder() {
-        val draft = mutableStateOf(NewEntryDraft(selectedPersonUid = "partner", selectedPersonName = "Recorder"))
+        val draft = mutableStateOf(NewEntryDraft(customerNameInput = "Field Customer", matchedCustomerId = 10,
+            selectedTractor = "T", isDirectDurationMode = true, manualHoursInput = "1", hourlyRateInput = "1100",
+            expensesList = listOf(DraftExpenseItem(id = 4L, expenseType = "Diesel", amount = 200.0))))
+        var saved: JobEntryEntity? = null
+        var savedExpenses: List<ExpenseEntity> = emptyList()
         val members = listOf(
             WorkspaceMember(uid = "owner", workspaceId = "a", role = "OWNER", status = "ACTIVE", displayName = "Owner Account"),
             WorkspaceMember(uid = "partner", workspaceId = "a", role = "PARTNER", status = "ACTIVE", displayName = "Recorder"),
-            WorkspaceMember(uid = "other", workspaceId = "a", role = "PARTNER", status = "ACTIVE", displayName = "Other Partner"))
+            WorkspaceMember(uid = "other", workspaceId = "a", role = "PARTNER", status = "ACTIVE", displayName = "Other Partner"),
+            WorkspaceMember(uid = "removed", workspaceId = "a", role = "PARTNER", status = "REMOVED", displayName = "Former Member"))
         compose.setContent { MyApplicationTheme {
             NewEntryScreen(settings = AppSettingsEntity(workspaceId = "a", ownerName = "Owner"),
-                tractors = emptyList(), customers = emptyList(), draft = draft.value, currentUid = "partner",
-                workspaceMembers = members, onUpdateDraft = { draft.value = it }, onClearDraft = {}, onSaveJob = { _, _, _ -> })
+                tractors = listOf(TractorEntity(id = 2, workspaceId = "a", label = "T", chassisNo = "test")),
+                customers = listOf(CustomerEntity(id = 10, workspaceId = "a", name = "Field Customer", phone = "")),
+                draft = draft.value, currentUid = "partner", workspaceMembers = members,
+                onUpdateDraft = { draft.value = it }, onClearDraft = {}, onSaveJob = { job, _, expenses ->
+                    saved = job
+                    savedExpenses = expenses
+                })
         } }
-        compose.onNodeWithTag("entry_for_dropdown").performClick()
+        compose.onNodeWithText("Entry For").assertExists()
+        compose.onNodeWithTag("entry_for_dropdown").assertTextContains("Recorder").performClick()
+        compose.onNodeWithText("Former Member").assertDoesNotExist()
         compose.onNodeWithText("Owner Account", useUnmergedTree = true).performClick()
         compose.runOnIdle { org.junit.Assert.assertEquals("owner", draft.value.selectedPersonUid) }
         compose.onNodeWithTag("entry_for_dropdown").performClick()
         compose.onNodeWithText("Other Partner", useUnmergedTree = true).performClick()
         compose.runOnIdle { org.junit.Assert.assertEquals("other", draft.value.selectedPersonUid) }
+        compose.onNodeWithTag("new_entry_form").performScrollToNode(hasTestTag("btn_review_and_save"))
+        compose.onNodeWithTag("btn_review_and_save").performClick()
+        compose.onNodeWithTag("btn_confirm_final_save").performScrollTo().performClick()
+        compose.runOnIdle {
+            val result = requireNotNull(saved)
+            org.junit.Assert.assertEquals("partner", result.createdByUid)
+            org.junit.Assert.assertEquals("Recorder", result.addedByPartner)
+            org.junit.Assert.assertEquals("other", result.entryForUid)
+            org.junit.Assert.assertEquals("Other Partner", result.operatorName)
+            org.junit.Assert.assertEquals("other", result.financialAttributionUid)
+            org.junit.Assert.assertEquals("other", savedExpenses.single().paidByUid)
+        }
     }
 
     @Test @Config(sdk = [36], qualifiers = "w320dp-h640dp")
