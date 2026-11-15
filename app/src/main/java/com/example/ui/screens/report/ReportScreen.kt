@@ -181,7 +181,8 @@ fun ReportScreen(
                     workspaceMembers = workspaceMembers,
                     currentUid = currentUid,
                     isOwner = isOwner,
-                    initiateOldDatePick = currentSubPage == ReportSubPage.OLD_ENTRY && isOwner && com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner),
+                    currentRole = currentRole,
+                    initiateOldDatePick = currentSubPage == ReportSubPage.OLD_ENTRY && com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner, currentRole),
                     onStartOldEntry = onStartOldEntry,
                     onNavigate = onSubPageSelected
                 )
@@ -368,6 +369,7 @@ fun ReportMenuDashboard(
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     currentUid: String = "",
     isOwner: Boolean = false,
+    currentRole: String = "",
     initiateOldDatePick: Boolean = false,
     onStartOldEntry: ((Long) -> Unit)? = null,
     onNavigate: (ReportSubPage) -> Unit
@@ -638,15 +640,15 @@ fun ReportMenuDashboard(
                             onClick = { onNavigate(ReportSubPage.COLLECTION_HISTORY) }
                         )
 
-                        val canShowOldEntry = isOwner && com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner)
+                        val canShowOldEntry = com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner, currentRole)
                         if (canShowOldEntry) {
                             ReportTileCard(
-                                title = if (isTamil) "பழைய பதிவு" else "Old History",
+                                title = if (isTamil) "பழைய பதிவு" else "Old Entry",
                                 subtitle = if (isTamil) "முந்தைய பதிவுகள்" else "Previous entries & records",
                                 icon = Icons.Default.Description,
                                 iconBgColor = Color(0xFFEDE9FE),
                                 iconTint = Color(0xFF7C3AED),
-                                badgeText = if (isTamil) "உரிமையாளர் மட்டும்" else "Owner Only",
+                                badgeText = if (isTamil) "உரிமையாளர் / பங்குதாரர்" else "Owner / Partner",
                                 badgeBgColor = Color(0xFFF5F3FF),
                                 badgeTextColor = Color(0xFF6D28D9),
                                 cornerAuraColor = Color(0xFF8B5CF6).copy(alpha = 0.09f),

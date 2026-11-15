@@ -70,16 +70,20 @@ class CoreEnhancementTest {
         assertEquals(2,CustomerIdentity.ranked(listOf(rows[1],rows[1].copy(id=99)),"R").size)
         assertTrue(CustomerIdentity.matches("ரவி","ர"))
     }
-    @Test fun partnerEditsExistingHistoricalJobButCannotCreateOrGainDeleteRights() {
+    @Test fun partnerCanCreateAndEditHistoricalJobsWithoutGainingDeleteRights() {
         val job=JobEntryEntity(id=1,workspaceId="w",customerName="C",operatorName="Owner",tractorLabel="T",workType="R",startTimeMillis=1,endTimeMillis=2,durationMinutes=1,totalAmount=500.0,amountReceived=0.0,pendingAmount=500.0,addedByPartner="Owner",createdByUid="owner",createdAt=1,isHistorical=true,entryForUid="owner")
         assertTrue(AuthorizationManager.canEditEntry(job,false,"P","p",9999999999L,"Partner"))
-        assertFalse(AuthorizationManager.canCreateOldEntry(false,"Partner"))
+        assertTrue(AuthorizationManager.canCreateOldEntry(false,"Partner"))
+        assertFalse(AuthorizationManager.canCreateOldEntry(false,"Operator"))
         assertFalse(AuthorizationManager.canEditEntry(job,false,"O","o",2,"Operator"))
         assertFalse(AuthorizationManager.canDeleteEntry(job,false,"P","p",2,"Partner"))
         val members=listOf(WorkspaceMember(uid="p",workspaceId="w",role="PARTNER",status="ACTIVE"),WorkspaceMember(uid="owner",workspaceId="w",role="OWNER",status="ACTIVE"))
         val payload=org.json.JSONObject().put("operationProtocolVersion",2).put("workspaceId","w").put("createdByUid","owner").put("entryForUid","owner").put("isHistorical",true).put("createdAt",1).put("expectedBaseJson","{}")
         val op=PendingOperationEntity("edit","w","p","JOB",1,"UPSERT",1,9999999999L,payload.toString())
         OperationPolicy.requireAuthorized(op,"PARTNER",members)
+        val create = org.json.JSONObject(payload.toString()).put("createdByUid","p")
+            .put("createdAt",op.actionTime).put("expectedBaseJson","null")
+        OperationPolicy.requireAuthorized(op.copy(operationId="create",payloadJson=create.toString()),"PARTNER",members)
         try { OperationPolicy.requireAuthorized(op.copy(mutationType="DELETE"),"PARTNER",members); fail("Historical deletion accepted") } catch (_:SecurityException) {}
     }
     @Test fun auditRetainsPreviousValuesAndOriginalOperation() {

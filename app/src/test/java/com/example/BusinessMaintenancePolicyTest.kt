@@ -74,14 +74,18 @@ class BusinessMaintenancePolicyTest {
             members[1].copy(uid = "operator", role = "OPERATOR")).size)
     }
 
-    @Test fun entryForDisplayResolvesExactWorkspaceBeneficiaryNotCreatorCollectorOrDuplicateNames() {
+    @Test fun entryForDisplayKeepsActualOperatorSeparateFromTheWorkspaceBeneficiary() {
         val labels = members.map { it.copy(displayName = it.uid) }
-        val source = job(1, "partner-b", 500.0)
+        val source = job(1, "partner-b", 500.0).copy(operatorName = "partner-b")
         assertEquals("Entry for Operator: Partner — partner-b", RoleUtils.getEntryForDisplay(source, workspaceMembers = labels))
+        val separate = source.copy(operatorName = "Tractor driver", financialAttributionUid = "partner-b")
+        assertEquals("Entry for Operator: Tractor driver", RoleUtils.getEntryForDisplay(separate, workspaceMembers = labels))
+        assertEquals("partner-b", separate.financialAttributionUid)
         assertEquals("owner", source.createdByUid)
         assertEquals("partner-b", source.entryForUid)
         assertNull(RoleUtils.getEntryForDisplay(source.copy(entryForUid = ""), workspaceMembers = labels))
-        assertFalse(RoleUtils.getEntryForDisplay(source, workspaceMembers = labels.map { it.copy(workspaceId = "foreign") })!!.contains("partner-b"))
+        assertEquals("Entry for Operator: Tractor driver",
+            RoleUtils.getEntryForDisplay(separate, workspaceMembers = labels.map { it.copy(workspaceId = "foreign") }))
     }
 
     @Test fun initialCollectorUsesSelectedEligibleMemberWhileLaterCollectionPolicyRemainsSelfOnly() {

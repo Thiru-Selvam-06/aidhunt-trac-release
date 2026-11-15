@@ -1020,7 +1020,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val isHistorical = job.isHistorical
         if (isHistorical && !com.example.data.auth.AuthorizationManager.canCreateOldEntry(isCollaborationOwner.value, currentUserRole.value)) {
             val isTamil = settings.value.language.equals("TA", ignoreCase = true)
-            onError(if (isTamil) "பழைய பதிவு உருவாக்கம் உரிமையாளருக்கு மட்டுமே அனுமதிக்கப்படுகிறது" else "Old/historical entry creation is restricted to the workspace Owner")
+            onError(if (isTamil) "உரிமையாளரும் பங்குதாரர்களும் மட்டுமே பழைய பதிவை உருவாக்க முடியும்" else "Only the workspace Owner and Partners can create Old Entries")
             return
         }
         if (!isEditing && !isHistorical && !com.example.data.auth.AuthorizationManager.canCreateNewEntry(isCollaborationOwner.value)) {
@@ -2383,6 +2383,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun logout(onComplete: () -> Unit = {}) {
         viewModelScope.launch {
+            try {
+                com.example.data.firebase.OwnerActivityPush.unregister(getApplication<Application>())
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                Log.w("TRAC_OWNER_PUSH", "Owner activity registration cleanup unavailable")
+            }
             try {
                 authRepository.signOut()
             } catch (e: Exception) {

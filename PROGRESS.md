@@ -1,5 +1,15 @@
 # AIDHUNT TRAC — Development Progress & Final Reconciliation Log
 
+## Stabilization development checkpoint — 15 November 2026
+
+- Base: GitHub main `894c38b4172118471e3c32adc38bbf13d8cbb51d`. Working branch: `codex/stabilization-release`.
+- Restored the tracked demo Firebase file and generated inventories, restored runner script modes, and returned debug variants to Android's default debug signing.
+- Added compatibility for older Rules that deny the optional cash-state read, while leaving enabled cash controls and financial deletion checks in force. Exact live rejection causes and deployed versions are still pending verification. No retained production operation was retried or changed.
+- Enabled Partner Old Entry creation in Android, queue policy and source Rules. Recorded operator display is independent from the existing financial attribution selection on new jobs. Home offers a compact sync warning with the existing diagnostics destination.
+- Added owner activity messaging service, Firestore events and device registration, and server triggers based on confirmed writes and deletion proofs. Native delivery still needs isolated FCM setup and Android runtime evidence.
+- Local evidence: 111 Python harness checks, 222 focused Firestore Rules checks (synthetic emulator), and 2 owner activity sender tests passed. The first Rules attempt ran suites against shared fixtures in parallel. The serial rerun passed. The first Kotlin run found a Partner creation time-window regression, which was corrected; final source verification is in progress.
+- Next: verify CI against this branch, verify old and new Rules compatibility plus original-operation retention, then obtain the missing device and active backend evidence. Production deployment, recovery, and APK distribution follow the separate controls in the stabilization brief.
+
 **Base Repository:** `Thiru-Selvam-06/aidhunt-trac-release` (`main`)  
 **Target Customer Package ID:** `com.aistudio.aidhunttrac.cedlir` (`app/google-services.json` preserved, `INVITATION_TEST_PHONES` kept empty, release signing configs untouched)  
 **Environment Limitations (Recorded Honestly):**

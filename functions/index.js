@@ -1,12 +1,23 @@
 "use strict";
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { initializeApp } = require("firebase-admin/app");
-const { getFirestore } = require("firebase-admin/firestore");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getMessaging } = require("firebase-admin/messaging");
+const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { publishOwnerActivity } = require("./owner-activity");
 const { getAuth } = require("firebase-admin/auth");
 const { validateInvitation } = require("./invitation-policy");
 initializeApp();
 const db = getFirestore();
 db.settings({ useBigInt: true }); // Android record IDs are 63-bit Longs, beyond JavaScript's exact Number range.
+for (const collection of ["entries", "entryDeletionProofs", "collections", "expenses", "cashDeleteProofs", "withdrawals"]) {
+  exports[`ownerActivity_${collection}`] = onDocumentWritten({
+    document: `workspaces/{wsId}/${collection}/{recordId}`, retry: true
+  }, event => publishOwnerActivity({
+    db, event, collection, fieldValue: FieldValue, messaging: getMessaging(),
+    emulator: process.env.FUNCTIONS_EMULATOR === "true"
+  }));
+}
 function requiredString(data, key) {
   const value = data?.[key];
   if (typeof value !== "string" || !value.trim()) throw new HttpsError("invalid-argument", `${key} is required`);

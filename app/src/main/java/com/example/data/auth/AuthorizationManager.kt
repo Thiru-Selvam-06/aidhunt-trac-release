@@ -55,13 +55,13 @@ object AuthorizationManager {
 
     /**
      * CAN CREATE OLD / HISTORICAL ENTRY:
-     * - Strictly OWNER-ONLY workspace authority capability.
-     * - Partners and Operators are permanently denied.
-     * - Requires account to be ACTIVE (not suspended/expired).
-     * - Does not depend on generic subordinate access-control permissions or partner page locks.
+     * - Available to the workspace Owner and active Partners.
+     * - Operators are excluded. Repository and Rules checks enforce active membership.
      */
     fun canCreateOldEntry(isOwner: Boolean, role: String = ""): Boolean {
-        return isOwner && (role.isBlank() || RoleUtils.normalizeRole(role) == RoleUtils.ROLE_OWNER)
+        val normalized = RoleUtils.normalizeRole(role)
+        return if (isOwner) role.isBlank() || normalized == RoleUtils.ROLE_OWNER
+        else normalized == RoleUtils.ROLE_PARTNER
     }
 
     /**

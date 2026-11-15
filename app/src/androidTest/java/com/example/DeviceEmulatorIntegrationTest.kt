@@ -445,35 +445,39 @@ class DeviceEmulatorIntegrationTest {
   }
  }
 
- @Test(timeout=180000) fun nInitialCollectorFollowsBeneficiaryForPartnerNewAndOwnerHistoricalEntries()=runBlocking {
-  for(role in listOf("owner","partner")) {
+ @Test(timeout=240000) fun nInitialCollectionPreservesTheAuthorizedCollectorForNewAndOldEntries()=runBlocking {
+  for((role, historical) in listOf("owner" to true, "partner" to false, "partner" to true)) {
    login(role);val actor="device-"+role;val target=if(role=="owner") "device-partner" else "device-owner"
+   val collector=if(role=="partner" && historical) actor else target
    val db=AppDatabase.getInstance(context);val authRepo=com.example.data.repository.AuthRepository.getInstance(context);authRepo.startListening()
    val profile=kotlinx.coroutines.withTimeout(15000){authRepo.currentUserProfile.first{it?.uid==actor}}!!
    val workspace=com.example.data.repository.WorkspaceRepository.getInstance(context,db);assertTrue(workspace.initializeForUser(profile).isSuccess)
-   val now=System.currentTimeMillis();val historical=role=="owner";val created=if(historical) now-3*86400000L else now
+   val now=System.currentTimeMillis();val workDate=if(historical) now-3*86400000L else now
+   val created=if(role=="owner" && historical) workDate else now
    val total=if(historical) 2000.0 else 1100.0;val received=if(historical) 1200.0 else 900.0
    val id:Long;val originals:List<PendingOperationEntity>
    cloud.disableNetwork().await()
    try {
     id=workspace.saveJobEntry(com.example.data.entity.JobEntryEntity(workspaceId=ws,customerName="Initial receipt synthetic "+now,
      operatorName="Selected Partner",tractorId=3,tractorLabel="Disposable Tractor",workType="Rotavator",
-     startTimeMillis=created-60000,endTimeMillis=created,durationMinutes=1,totalAmount=total,amountReceived=received,
+     startTimeMillis=workDate-60000,endTimeMillis=workDate,durationMinutes=1,totalAmount=total,amountReceived=received,
      pendingAmount=total-received,addedByPartner="Recorder",createdAt=created,entryForUid=target,isHistorical=historical))
     originals=db.pendingOperationDao().observeActor(ws,actor).first().filter{it.entityType=="JOB" && it.entityId==id ||
      it.entityType=="PAYMENT" && JSONObject(it.payloadJson).optLong("jobEntryId")==id}
     assertEquals(setOf("JOB","PAYMENT"),originals.map{it.entityType}.toSet())
     val payment=JSONObject(originals.single{it.entityType=="PAYMENT"}.payloadJson)
-    assertEquals(target,payment.getString("collectorUid"));assertEquals(actor,payment.getString("collectedByUid"))
+    assertEquals(collector,payment.getString("collectorUid"));assertEquals(actor,payment.getString("collectedByUid"))
     assertEquals(originals.single{it.entityType=="JOB"}.operationId,payment.getString("initialJobOperationId"))
    } finally {cloud.enableNetwork().await()}
    workspace.pushUnsyncedToCloud(isOnline=true)
    kotlinx.coroutines.withTimeout(60000){db.pendingOperationDao().observe(ws).first{rows->originals.all{op->rows.any{it.operationId==op.operationId && it.state=="ACKNOWLEDGED"}}}}
    val source=cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await()
    assertEquals(created,source.getLong("createdAt"));assertEquals(actor,source.getString("createdByUid"));assertEquals(target,source.getString("entryForUid"))
+   assertEquals(workDate,source.getLong("endTimeMillis"));assertEquals(historical,source.getBoolean("isHistorical"))
+   assertEquals("Selected Partner",source.getString("operatorName"))
    assertEquals(received,source.getDouble("amountReceived")!!,0.0);assertEquals(total-received,source.getDouble("pendingAmount")!!,0.0)
    val payment=originals.single{it.entityType=="PAYMENT"};val receipt=cloud.document("workspaces/$ws/collections/${payment.entityId}").get(Source.SERVER).await()
-   assertEquals(target,receipt.getString("collectorUid"));assertEquals(actor,receipt.getString("collectedByUid"))
+   assertEquals(collector,receipt.getString("collectorUid"));assertEquals(actor,receipt.getString("collectedByUid"))
    FirestoreRepository(context).applyPendingOperation(payment)
    assertEquals(received,cloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().getDouble("amountReceived")!!,0.0)
    assertEquals(1,cloud.collection("workspaces/$ws/collections").whereEqualTo("jobEntryId",id).get(Source.SERVER).await().size())

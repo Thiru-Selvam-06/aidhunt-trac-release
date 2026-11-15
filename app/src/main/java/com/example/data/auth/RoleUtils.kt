@@ -109,7 +109,8 @@ object RoleUtils {
         hasBusinessPartnership: Boolean = false
     ): String? {
         val member = workspaceMembers.firstOrNull { it.uid == job.entryForUid && it.workspaceId == job.workspaceId && it.uid.isNotBlank() }
-        val entryForName = member?.displayName?.takeIf { it.isNotBlank() } ?: job.operatorName.trim()
+        val memberName = member?.displayName?.trim().orEmpty()
+        val entryForName = job.operatorName.trim().ifBlank { memberName }
         if (entryForName.isBlank() || job.entryForUid.isBlank()) return null
 
         val entryForRole = member?.role?.let(::normalizeRole)
@@ -117,7 +118,8 @@ object RoleUtils {
             ?: ""
 
         val displayRole = if (hasBusinessPartnership && entryForRole == ROLE_OWNER) ROLE_PARTNER else entryForRole
-        val roleAndName = formatRoleAndName(displayRole, entryForName, isTamil)
+        val roleAndName = if (memberName == entryForName) formatRoleAndName(displayRole, entryForName, isTamil)
+        else entryForName
         val prefix = if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator"
         return "$prefix: $roleAndName"
     }

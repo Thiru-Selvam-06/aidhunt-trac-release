@@ -1082,9 +1082,17 @@ class FirestoreRepository(
             WorkspaceSyncCapabilities.fromWorkspace(workspace.data.orEmpty()).also { it.requireSupported(op) }
         } else WorkspaceSyncCapabilities()
         val atomicCashEnabled = if (op.entityType in setOf("PAYMENT", "EXPENSE", "WITHDRAWAL", "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT", "BORROWING_REQUEST", "SETTLEMENT_REPAYMENT")) {
-            capabilities.atomicCashControlV1 || firestore.collection("workspaces").document(op.workspaceId)
-                .collection("financialState").document("current")
-                .get(com.google.firebase.firestore.Source.SERVER).await().exists()
+            capabilities.atomicCashControlV1 || try {
+                firestore.collection("workspaces").document(op.workspaceId)
+                    .collection("financialState").document("current")
+                    .get(com.google.firebase.firestore.Source.SERVER).await().exists()
+            } catch (error: com.google.firebase.firestore.FirebaseFirestoreException) {
+                // Older policies cannot read this optional document. The write still
+                // uses the actor's credentials and remains subject to the active rules.
+                if (error.code != com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED ||
+                    op.entityType !in setOf("PAYMENT", "EXPENSE", "WITHDRAWAL")) throw error
+                false
+            }
         } else false
         // Server Rules reject even milliseconds of future skew. Confirm eligibility
         // before the first mutation, retaining original IDs/times and rejected states.

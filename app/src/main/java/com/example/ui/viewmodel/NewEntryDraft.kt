@@ -37,6 +37,7 @@ data class NewEntryDraft(
     val isTractorLocked: Boolean = false,
     val selectedPersonUid: String = "",
     val selectedPersonName: String = "",
+    val tractorOperatorName: String = "",
     val isPersonLocked: Boolean = false,
     val isEditingExistingEntry: Boolean = false,
     val selectedWorkType: String = "Rotavator",

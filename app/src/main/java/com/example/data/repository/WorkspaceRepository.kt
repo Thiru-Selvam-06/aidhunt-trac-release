@@ -2205,7 +2205,7 @@ class WorkspaceRepository(
             val isHistorical = job.isHistorical
             if (isHistorical && !com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner, role = actorRole)) {
                 Log.w(TAG, "Security rejection: User ($currentActorName, isOwner=$isOwner, uid=$actorUid, role=$actorRole) is not authorized to create old/historical entry")
-                throw SecurityException("Unauthorized: Old/historical entry creation is restricted to the workspace Owner")
+                throw SecurityException("Only the workspace Owner and Partners can create Old Entries")
             }
         }
 
@@ -2242,16 +2242,14 @@ class WorkspaceRepository(
         }
         val finalCreatedByRole = existingJob?.createdByRole ?: candidateRole
         val finalOperator = if (existingJob == null) {
-            _activeWorkspaceMembers.value.firstOrNull { it.uid == entryTarget && it.workspaceId == wsId }
-                ?.displayName.orEmpty().ifBlank { job.operatorName.ifBlank { currentActorName } }
+            job.operatorName.trim().ifBlank {
+                _activeWorkspaceMembers.value.firstOrNull { it.uid == entryTarget && it.workspaceId == wsId }
+                    ?.displayName.orEmpty().ifBlank { currentActorName }
+            }
         } else if (verifiedActorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) {
             currentActorName
-        } else if (job.operatorName.isNotBlank()) {
-            job.operatorName
-        } else if (existingJob != null && existingJob.operatorName.isNotBlank()) {
-            existingJob.operatorName
         } else {
-            currentActorName
+            existingJob.operatorName.ifBlank { job.operatorName.ifBlank { currentActorName } }
         }
 
         val currentCustomer = if (verifiedActorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR)
@@ -2319,7 +2317,10 @@ class WorkspaceRepository(
         val entrySnapshot = if (existingJob == null && localJob.amountReceived > 0) localJob.copy(amountReceived = 0.0, pendingAmount = localJob.totalAmount) else localJob
         enqueue("JOB", localJob.id, entrySnapshot.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid, baseSnapshot = existingJob?.toFirestoreMap(), operationId = initialJobOperationId)
         if (existingJob == null && localJob.amountReceived > 0) {
-            val initialCollector = com.example.data.auth.CollectionPolicy.requireInitialCollector(wsId, localJob.entryForUid, _activeWorkspaceMembers.value)
+            // Historical Partner entries use the existing self-only collector rule.
+            // The job's independent financial attribution is unchanged.
+            val initialCollectorUid = if (localJob.isHistorical && !isOwner) actorUid else localJob.entryForUid
+            val initialCollector = com.example.data.auth.CollectionPolicy.requireInitialCollector(wsId, initialCollectorUid, _activeWorkspaceMembers.value)
             val collection = PaymentEntity(id = IdGenerator.generateId(), workspaceId = wsId, jobEntryId = localJob.id,
                 customerId = customerId, customerName = localJob.customerName, tractorId = localJob.tractorId, tractorLabel = localJob.tractorLabel,
                 amount = localJob.amountReceived, collectedByUid = actorUid, collectedByName = currentActorName,

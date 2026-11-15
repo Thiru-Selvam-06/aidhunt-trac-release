@@ -11,6 +11,18 @@ function db(role) { return env.authenticatedContext(uid[role]).firestore(); }
 function path(collection, id='1') { return `workspaces/${ws}/${collection}/${id}`; }
 function envelope(actor='partner', actionTime=now) { return { protocolVersion:2,operationType:'UPSERT',dependencies:[],authorizationTimeStatus:'CLIENT_ORIGINAL_V2', workspaceId:ws, actorUid:uid[actor], operationId:`op-${actor}-${actionTime}`, actionTime, isDeleted:false }; }
 function entry(actor='partner', extra={}) { return { id:1, ...envelope(actor), createdByUid:uid[actor], createdByRole:actor.toUpperCase(), createdAt:now-1000, authorizationCreatedAt:Timestamp.fromMillis(now-1000),serverReceivedAt:serverTimestamp(), isHistorical:false, entryForUid:uid[actor], financialAttributionUid:uid[actor], customerId:2, totalAmount:50000, amountReceived:0, pendingAmount:50000, ...extra }; }
+
+test('only the original Owner can register an activity device and only the server can write events', async () => {
+ const registration = actor => ({uid:uid[actor], token:'synthetic-token', language:'TA', updatedAt:serverTimestamp()});
+ await assertSucceeds(setDoc(doc(db('owner'),path('ownerPushDevices','device')),registration('owner')));
+ await assertFails(setDoc(doc(db('partner'),path('ownerPushDevices','device-2')),registration('partner')));
+ await assertFails(setDoc(doc(db('owner'),path('ownerPushDevices','device-3')),registration('partner')));
+ await assertFails(getDoc(doc(db('partner'),path('ownerPushDevices','device'))));
+ await assertFails(setDoc(doc(db('owner'),path('ownerActivityEvents','event')), {recipientUid:uid.owner}));
+ await seed('ownerActivityEvents',{recipientUid:uid.owner},'event');
+ await assertSucceeds(getDoc(doc(db('owner'),path('ownerActivityEvents','event'))));
+ await assertFails(getDoc(doc(db('partner'),path('ownerActivityEvents','event'))));
+});
 async function seed(collection, data, id='1') {
  const trusted = Object.prototype.hasOwnProperty.call(data,'authorizationCreatedAt') && data.authorizationCreatedAt === null
    ? data : {...data, authorizationCreatedAt: data.authorizationCreatedAt instanceof Timestamp ? data.authorizationCreatedAt : Timestamp.fromMillis(now-1000)};
@@ -92,7 +104,7 @@ for(const role of ['partner','operator']) {
  test(`${role} edits own ordinary entry before deadline`,async()=>{await seed('entries',entry(role));await assertSucceeds(updateDoc(doc(db(role),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
  test(`${role} cannot bypass checked Entry deletion with a direct tombstone`,async()=>{await seed('entries',entry(role));await assertFails(updateDoc(doc(db(role),path('entries')),{isDeleted:true,authorizationDeletedAt:serverTimestamp()}));});
  test(`${role} historical editing follows approved role policy`,async()=>{await seed('entries',entry(role,{isHistorical:true}));await (role==='partner'?assertSucceeds:assertFails)(updateDoc(doc(db(role),path('entries')),{totalAmount:60000,pendingAmount:60000}));});
- test(`${role} cannot create historical entry`,async()=>assertFails(setDoc(doc(db(role),path('entries')),entry(role,{isHistorical:true}))));
+ test(`${role} historical creation follows the approved role policy`,async()=> (role==='partner'?assertSucceeds:assertFails)(setDoc(doc(db(role),path('entries')),entry(role,{isHistorical:true}))));
  test(`${role} cannot reset creation time`,async()=>{await seed('entries',entry(role));await assertFails(updateDoc(doc(db(role),path('entries')),{createdAt:now}));});
  test(`${role} cross-creator editing follows approved role policy`,async()=>{await seed('entries',entry('other'));await (role==='partner'?assertSucceeds:assertFails)(updateDoc(doc(db(role),path('entries')),{...envelope(role),totalAmount:60000,pendingAmount:60000}));});
 }

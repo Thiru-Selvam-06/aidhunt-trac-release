@@ -664,7 +664,9 @@ fun NewEntryScreen(
                     notes
                 }
 
-                val resolvedOperatorName = effectivePersonName
+                val resolvedOperatorName = if (canSelectEntryPerson && !draft.isEditingExistingEntry)
+                    draft.tractorOperatorName.trim().ifBlank { effectivePersonName }
+                else draft.originalJob?.operatorName.orEmpty().ifBlank { effectivePersonName }
                 val job = JobEntryEntity(
                     id = entryId,
                     customerId = resolvedCustomerId,
@@ -930,7 +932,20 @@ fun NewEntryScreen(
                 }
             }
 
-            // 1. Entry For Section (No outer card)
+            item {
+                if (canSelectEntryPerson && !draft.isEditingExistingEntry) {
+                    OutlinedTextField(
+                        value = draft.tractorOperatorName,
+                        onValueChange = { onUpdateDraft(draft.copy(tractorOperatorName = it.take(100))) },
+                        label = { Text(if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator") },
+                        placeholder = { Text(effectivePersonName) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            // Financial attribution for the job and its linked entries.
             item {
                 if (canSelectEntryPerson && !draft.isEditingExistingEntry) {
                     var personDropdownExpanded by remember { mutableStateOf(false) }
@@ -944,7 +959,7 @@ fun NewEntryScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator",
+                                text = if (isTamil) "பதிவின் நிதிப் பயனாளர்" else "Financial attribution",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = DeepSageGreen

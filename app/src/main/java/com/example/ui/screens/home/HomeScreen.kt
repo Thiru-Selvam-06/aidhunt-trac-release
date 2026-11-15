@@ -145,6 +145,7 @@ fun HomeScreen(
     unsyncedCount: Int = 0,
     syncMessage: String = "",
     retainedOperationWarning: String = "",
+    onOpenSyncDetails: (() -> Unit)? = null,
     retainedActions: List<com.example.data.entity.PendingOperationEntity> = emptyList(),
     isOwner: Boolean = true,
     currentUid: String = "",
@@ -340,19 +341,22 @@ fun HomeScreen(
                 }
             }
 
-            if (retainedOperationWarning.isNotBlank()) item {
-                Card(colors = CardDefaults.cardColors(containerColor = AlertDueRedBg), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                    Text(retainedOperationWarning, color = AlertDueRed, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
+            val hasReview = retainedOperationWarning.isNotBlank() || retainedActions.any { it.state == "REJECTED" }
+            val hasPending = retainedActions.any { it.state == "PENDING" }
+            if (hasReview || hasPending) item {
+                val summary = if (hasReview) {
+                    if (isTamil) "ஒத்திசைவு பதிவுகளுக்கு ஆய்வு தேவை" else "Sync items need review"
+                } else {
+                    if (isTamil) "ஒத்திசைவுக்காக காத்திருக்கும் பதிவுகள்" else "Records waiting to sync"
                 }
-            }
-
-            // Immutable rejected snapshots stay visible without contaminating confirmed balances.
-            items(retainedActions.filter { it.state in setOf("PENDING", "REJECTED") }, key = { "retained-${it.operationId}" }) { action ->
-                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = AlertDueRedBg)) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("${action.entityType}: ${com.example.ui.util.RetainedActionDetails.status(action)}", fontWeight = FontWeight.Bold)
-                        Text(com.example.ui.util.RetainedActionDetails.summary(action), fontSize = 12.sp)
-                        Text("Original local action; awaiting server confirmation or review. Details in Account → SQLite & Cloud Sync.", fontSize = 12.sp)
+                Card(colors = CardDefaults.cardColors(containerColor = if (hasReview) AlertDueRedBg else AppTheme.colors.cardBg),
+                    shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(summary, modifier = Modifier.weight(1f).padding(vertical = 10.dp), fontSize = 12.sp,
+                            color = if (hasReview) AlertDueRed else AppTheme.colors.textPrimary)
+                        if (onOpenSyncDetails != null) TextButton(onClick = onOpenSyncDetails) {
+                            Text(if (isTamil) "விவரங்கள்" else "Details")
+                        }
                     }
                 }
             }

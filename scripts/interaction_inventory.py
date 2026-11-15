@@ -12,7 +12,7 @@ def discover(root=ROOT):
     sources=[root/"app/src/main/java/com/example/ui", root/"app/src/main/java/com/example/MainActivity.kt"]
     files=sorted({p for source in sources for p in ([source] if source.is_file() else source.rglob("*.kt"))})
     tests=list((root/"app/src/test").rglob("*.kt"))+list((root/"app/src/androidTest").rglob("*.kt"))
-    test_text={str(p.relative_to(root)):p.read_text(encoding="utf-8") for p in tests}
+    test_text={p.relative_to(root).as_posix():p.read_text(encoding="utf-8") for p in sorted(tests)}
     for path in files:
         text=path.read_text(encoding="utf-8")
         functions=list(FUNCTION.finditer(text))
@@ -84,7 +84,7 @@ def main():
     output.mkdir(parents=True,exist_ok=True)
     manifest.write_text(json.dumps(rows,indent=2)+"\n",encoding="utf-8")
     with (output/"interaction-inventory.csv").open("w",encoding="utf-8",newline="") as f:
-        writer=csv.DictWriter(f,fieldnames=list(rows[0]))
+        writer=csv.DictWriter(f,fieldnames=list(rows[0]),lineterminator="\n")
         writer.writeheader();writer.writerows(rows)
     (output/"asset-inventory.json").write_text(json.dumps(assets(),indent=2)+"\n",encoding="utf-8")
     print(f"Indexed {len(rows)} callback/control candidates; runtime verification remains explicit")

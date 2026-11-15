@@ -742,8 +742,8 @@ service cloud.firestore {
           request.resource.data.isDeleted == false && request.resource.data.isHistorical is bool &&
           active(ws, request.resource.data.entryForUid) && request.resource.data.financialAttributionUid == request.resource.data.entryForUid &&
           validEntryAmounts(request.resource.data) && request.resource.data.amountReceived == 0 &&
-          (owner(ws) || (!request.resource.data.isHistorical &&
-            (partner(ws) || (operator(ws) && request.resource.data.entryForUid == request.auth.uid))));
+          (owner(ws) || partner(ws) || (!request.resource.data.isHistorical &&
+            operator(ws) && request.resource.data.entryForUid == request.auth.uid));
         allow update: if unlockedEntry(ws, resource.data) && !customerLocked(ws, request.resource.data.customerId) && envelope(ws) && !request.resource.data.isDeleted && notDeleted() && original() && validJobEditAudit(resource.data, request.resource.data) && validCustomerReassignment(resource.data, request.resource.data) && same(['isHistorical', 'entryForUid', 'financialAttributionUid']) &&
           (request.resource.data.customerId == resource.data.customerId || reference(ws, 'customers', request.resource.data.customerId)) &&
           (request.resource.data.amountReceived != resource.data.amountReceived
@@ -1150,6 +1150,18 @@ service cloud.firestore {
             (resource.data.mode == 'DIRECT_TO_PARTNER' || !atomicCashEnabled(ws) ||
               matchesCashOp(ws, request.resource.data.operationId, 'SETTLEMENT_REPAYMENT', id, 'CONFIRM', resource.data.amount))));
         allow delete: if false;
+      }
+      match /ownerPushDevices/{installationId} {
+        allow get, delete: if owner(ws) && resource.data.uid == request.auth.uid;
+        allow create, update: if owner(ws) && request.resource.data.keys().hasOnly(['uid', 'token', 'language', 'updatedAt']) &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.token is string && request.resource.data.token.size() <= 1024 &&
+          request.resource.data.token.size() > 0 && request.resource.data.language in ['EN', 'TA'] &&
+          request.resource.data.updatedAt == request.time;
+      }
+      match /ownerActivityEvents/{id} {
+        allow read: if owner(ws);
+        allow write: if false;
       }
       match /notifications/{notifId} {
         allow read: if owner(ws) || (partner(ws) && resource.data.recipientUid == request.auth.uid);

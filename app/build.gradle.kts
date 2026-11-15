@@ -29,12 +29,6 @@ android {
 
   // Release credentials stay outside source; debug/test variants use Android's debug key.
   signingConfigs {
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
-    }
     create("release") {
       val credentialsFile = rootProject.file(
         providers.gradleProperty("releaseSigningProperties").orElse("keystore.properties").get()
@@ -74,7 +68,6 @@ android {
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
-      signingConfig = signingConfigs.getByName("debugConfig")
       enableUnitTestCoverage = providers.gradleProperty("ciCoverage").orNull == "true"
     }
     create("deviceTest") {
@@ -138,6 +131,7 @@ googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.W
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
+  implementation("com.google.firebase:firebase-messaging")
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   // implementation(libs.androidx.camera.camera2)
