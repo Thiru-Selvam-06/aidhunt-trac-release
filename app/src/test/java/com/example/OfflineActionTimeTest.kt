@@ -87,7 +87,9 @@ class OfflineActionTimeTest {
             else try {OperationPolicy.requireAuthorized(command,"PARTNER",members());fail("Boundary accepted")}catch(_:ExpiredOperationException){}
         }
         OperationPolicy.requireAuthorized(op("owner",1,72,snapshot(100.0)),"OWNER",members("OWNER"))
-        for(command in listOf(op("historical",1,18,snapshot(100.0)+("isHistorical" to true)),op("other",1,18,snapshot(100.0)+("createdByUid" to "other")))) {
+        val historical = op("historical",1,18,snapshot(100.0)+("isHistorical" to true))
+        OperationPolicy.requireAuthorized(historical,"PARTNER",members())
+        for(command in listOf(op("other",1,18,snapshot(100.0)+("createdByUid" to "other")))) {
             try{OperationPolicy.requireAuthorized(command,"PARTNER",members());fail("Unauthorized")}catch(_:SecurityException){}
         }
         try{OperationPolicy.requireAuthorized(op("revoked",1,18,snapshot(100.0)),"PARTNER",members(status="REMOVED"));fail("Revoked")}catch(_:SecurityException){}

@@ -32,7 +32,7 @@ def inspect(root=ROOT):
         body=p.read_text(encoding="utf-8")
         package=re.search(r"(?m)^\s*package\s+([\w.]+)",body)
         unit.append({"source":p.relative_to(root).as_posix(),"class":package[1]+"."+p.stem if package else None,
-                     "partition":"compose" if "createComposeRule" in body else "database" if "Room." in body or "SupportSQLite" in body else "outbox" if re.match(r".*(Command|Offline|Acknowledgement|Deletion|Operation|Sync|Dependencies|Routing|Recovery|Protocol).*Test.kt",p.name) else "unit",
+                     "partition":"outbox" if p.name.endswith("EmulatorTest.kt") else "compose" if "createComposeRule" in body else "database" if "Room." in body or "SupportSQLite" in body else "outbox" if re.match(r".*(Command|Offline|Acknowledgement|Deletion|Operation|Sync|Dependencies|Routing|Recovery|Protocol).*Test.kt",p.name) else "unit",
                      "assertionStatus":"SOURCE INVENTORY ONLY; consult executed JUnit"})
     return {"unitClasses":unit,"instrumentation":plan,"backendFiles":sorted(expected),"errors":errors,
             "allControlsVerified":False,"liveServicesVerified":False}
