@@ -8,10 +8,11 @@ const record = { workspaceId: "ws_test", actorUid: "partner", operationId: "op-1
 
 test("classifies committed jobs, collections, expenses and ordinary withdrawals", () => {
   assert.equal(confirmedActivity("entries", null, record).type, "JOB_CREATED");
-  assert.equal(confirmedActivity("entries", { operationId: "old" }, record).type, "JOB_EDITED");
+  assert.equal(confirmedActivity("entries", { operationId: "old" }, { ...record, notes: "new notes" }).type, "JOB_EDITED");
+  assert.equal(confirmedActivity("entries", { operationId: "old" }, record), null);
   assert.equal(confirmedActivity("entries", { amountReceived: 0 },
     { ...record, collectionId: "7", amountReceived: 700 }), null);
-  assert.equal(confirmedActivity("collections", null, record).type, "COLLECTION");
+  assert.equal(confirmedActivity("collections", null, { ...record, status: "ACTIVE" }).type, "COLLECTION");
   assert.equal(confirmedActivity("entryDeletionProofs", null, record).type, "JOB_DELETED");
   assert.equal(confirmedActivity("cashDeleteProofs", null, { ...record, kind: "EXPENSE" }).type, "EXPENSE");
   assert.equal(confirmedActivity("expenses", null, record).type, "EXPENSE");

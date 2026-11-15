@@ -2,6 +2,13 @@
 
 const { createHash } = require("node:crypto");
 
+const jobFields = ["customerId", "customerName", "customerPhone", "customerLocation", "operatorName",
+  "tractorId", "tractorLabel", "workType", "startTimeMillis", "endTimeMillis", "durationMinutes", "hourlyRate",
+  "totalAmount", "notes"];
+const expenseFields = ["expenseType", "amount", "description", "paidBy", "paidByUid", "paidByPartner", "dateTimestamp",
+  "tractorId", "tractorLabel", "operatorName", "relatedJobId"];
+const changesBusinessFields = (before, after, fields) => fields.some(field => (before[field] ?? null) !== (after[field] ?? null));
+
 function confirmedActivity(collection, before, after) {
   if (collection === "entryDeletionProofs" || collection === "cashDeleteProofs") {
     if (before || !after) return null;
@@ -13,12 +20,13 @@ function confirmedActivity(collection, before, after) {
       ? { data: before, type: "EXPENSE" } : null;
   }
   if (after.isDeleted || after.operationType !== "UPSERT" || after.operationId === before?.operationId) return null;
-  if (collection === "entries" && after.collectionId && before &&
-      (after.amountReceived !== before.amountReceived || after.pendingAmount !== before.pendingAmount)) return null;
-  if (collection === "entries") return { data: after, type: before ? "JOB_EDITED" : "JOB_CREATED" };
-  if (collection === "collections" && (!before || (before.status === "ACTIVE" && after.status === "REVERSED")))
+  if (collection === "entries" && (!before || changesBusinessFields(before, after, jobFields)))
+    return { data: after, type: before ? "JOB_EDITED" : "JOB_CREATED" };
+  if (collection === "collections" && ((!before && after.status === "ACTIVE") ||
+      (before?.status === "ACTIVE" && after.status === "REVERSED")))
     return { data: after, type: "COLLECTION" };
-  if (collection === "expenses") return { data: after, type: "EXPENSE" };
+  if (collection === "expenses" && (!before || changesBusinessFields(before, after, expenseFields)))
+    return { data: after, type: "EXPENSE" };
   if (collection === "withdrawals" && !before && !after.borrowingRequestId && after.operationSource !== "BORROWING")
     return { data: after, type: "WITHDRAWAL" };
   return null;
