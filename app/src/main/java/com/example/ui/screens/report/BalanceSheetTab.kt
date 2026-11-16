@@ -22,7 +22,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.entity.*
 import com.example.data.firebase.WorkspaceMember
-import com.example.pdf.BalanceSheetRow
 import com.example.pdf.PdfGeneratorHelper
 import com.example.ui.components.PdfOptionsDialog
 import com.example.ui.components.formatDate
@@ -67,7 +66,8 @@ fun BalanceSheetTab(
     totalExpenses: Double = 0.0,
     netBalance: Double = 0.0,
     initialScope: FinancialScope = FinancialScope(mode = FinancialScopeMode.OVERALL),
-    onUpdateFinancialScope: ((FinancialScope) -> Unit)? = null
+    onUpdateFinancialScope: ((FinancialScope) -> Unit)? = null,
+    pendingActions: List<PendingOperationEntity> = emptyList()
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     val context = LocalContext.current
@@ -79,18 +79,16 @@ fun BalanceSheetTab(
     // Track expanded state for breakdown cards by their unique key
     val expandedCards = remember { mutableStateMapOf<String, Boolean>() }
 
-    // Customer receipts are dated by their collection transaction, not by job work date.
-    val periodGroups = remember(payments, expenses, selectedTabMode, settings.workspaceId, isTamil) {
-        ReceiptPeriodReport.periods(settings.workspaceId, payments, expenses, selectedTabMode, isTamil).map { period ->
-            BreakdownPeriodGroup(period.key, period.title, period.timestamp, period.received, period.spent,
-                period.received - period.spent, emptyList(), period.expenses, period.payments)
-        }
+    val report = remember(settings.workspaceId, payments, expenses, jobs, selectedTabMode, isTamil, pendingActions) {
+        ReceiptPeriodReport.project(settings.workspaceId, payments, expenses, jobs, selectedTabMode, isTamil, pendingActions)
     }
-    val unknownReceived = ReceiptPeriodReport.undatedReceived(settings.workspaceId, payments, jobs)
-    val totalSalesReceived = FinancialCalculationEngine.roundMoney(periodGroups.sumOf { it.sales } + unknownReceived)
-    val totalExpenseAmount = FinancialCalculationEngine.roundMoney(expenses.filter { it.workspaceId == settings.workspaceId }.sumOf { it.amount })
-    val unknownExpenses = FinancialCalculationEngine.roundMoney(totalExpenseAmount - periodGroups.sumOf { it.expenses })
-    val netProfitMargin = totalSalesReceived - totalExpenseAmount
+    val periodGroups = report.periods.map { period ->
+        BreakdownPeriodGroup(period.key, period.title, period.timestamp, period.received, period.spent,
+            FinancialCalculationEngine.roundMoney(period.received - period.spent), emptyList(), period.expenses, period.payments)
+    }
+    val totalSalesReceived = report.totalReceived
+    val totalExpenseAmount = report.totalExpenses
+    val netProfitMargin = report.netBalance
 
     // Auto-expand first item if none expanded yet
     LaunchedEffect(selectedTabMode, periodGroups) {
@@ -252,8 +250,31 @@ fun BalanceSheetTab(
             }
         }
 
-        if (unknownReceived != 0.0 || unknownExpenses != 0.0) item {
-            Text((if (isTamil) "தேதி தெரியாத பழைய வசூல் (மொத்தத்தில் மட்டும்): " else "Legacy receipts — date unknown (overall only): ") + formatInr(unknownReceived, settings.currency) + (if (isTamil) " · தேதி தெரியாத செலவுகள்: " else " · Undated expenses: ") + formatInr(unknownExpenses, settings.currency), fontSize = 12.sp)
+        if (report.embeddedUndatedReceived != 0.0 || report.explicitUndatedReceived != 0.0 || report.undatedExpenses != 0.0) item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    if (isTamil) "தேதியுள்ள வசூல்கள் (அனைத்து ஆண்டுகளும்)" else "Dated collections (all years)",
+                    fontSize = 12.sp
+                )
+                Text(formatInr(report.datedReceived, settings.currency), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                if (report.embeddedUndatedReceived != 0.0) Text(
+                    (if (isTamil) "பழைய வசூல்கள் — தேதி உறுதிப்படுத்தப்படவில்லை: " else "Historical receipts — date unverified: ") +
+                        formatInr(report.embeddedUndatedReceived, settings.currency), fontSize = 12.sp
+                )
+                if (report.explicitUndatedReceived != 0.0) Text(
+                    (if (isTamil) "தேதி பதிவில்லாத வசூல்கள்: " else "Collections without a recorded date: ") +
+                        formatInr(report.explicitUndatedReceived, settings.currency), fontSize = 12.sp
+                )
+                if (report.undatedExpenses != 0.0) Text(
+                    (if (isTamil) "தேதி பதிவில்லாத செலவுகள்: " else "Expenses without a recorded date: ") +
+                        formatInr(report.undatedExpenses, settings.currency), fontSize = 12.sp
+                )
+                Text(if (isTamil) "தேதியில்லாத தொகைகள் மொத்தத்தில் மட்டும் உள்ளன." else "Amounts without a date are included in the overall summary only.",
+                    fontSize = 11.sp, color = Color(0xFF64748B))
+            }
+        }
+        report.syncNotices(isTamil).forEach { notice ->
+            item { Text(notice, modifier = Modifier.testTag("balance_sync_notice"), fontSize = 12.sp, color = Color(0xFF92400E)) }
         }
         // 3. Section Title ("Daily Breakdown" / "Monthly Breakdown" / "Yearly Breakdown")
         item {
@@ -394,9 +415,9 @@ fun BalanceSheetTab(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            val implement = com.example.ui.util.JobAuditPresentation.date(receipt.collectedAt)
+                                            val collectionDate = reportDate(receipt.collectedAt, isTamil)
                                             Text(
-                                                text = "• ${receipt.customerName} ($implement)",
+                                                text = "• ${receipt.customerName} ($collectionDate)",
                                                 fontSize = 12.5.sp,
                                                 color = Color(0xFF334155),
                                                 modifier = Modifier.weight(1f, fill = false)
@@ -417,17 +438,21 @@ fun BalanceSheetTab(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             val desc = exp.description.ifBlank { exp.expenseType }
+                                            val refund = exp.amount < 0.0
+                                            val label = if (refund) {
+                                                if (isTamil) "திருப்பிய தொகை" else "Refund"
+                                            } else exp.expenseType
                                             Text(
-                                                text = "• $desc (${exp.expenseType})",
+                                                text = "• $desc ($label)",
                                                 fontSize = 12.5.sp,
                                                 color = Color(0xFF334155),
                                                 modifier = Modifier.weight(1f, fill = false)
                                             )
                                             Text(
-                                                text = "-${formatInr(exp.amount, settings.currency)}",
+                                                text = (if (refund) "+" else "−") + formatInr(kotlin.math.abs(exp.amount), settings.currency),
                                                 fontSize = 12.5.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = Color(0xFFDC2626)
+                                                color = if (refund) Color(0xFF0F9D58) else Color(0xFFDC2626)
                                             )
                                         }
                                     }
@@ -441,51 +466,29 @@ fun BalanceSheetTab(
     }
 
     if (showPdfDialog) {
+        fun buildPdf() = PdfGeneratorHelper.generateBalanceSheetPdf(
+            context = context,
+            settings = settings,
+            totalSales = report.totalReceived,
+            totalExpenses = report.totalExpenses,
+            netBalance = report.netBalance,
+            periodSummary = report.pdfRows(isTamil),
+            syncNotices = report.syncNotices(isTamil)
+        )
+
         PdfOptionsDialog(
             title = if (isTamil) "இருப்புநிலை அறிக்கை PDF" else "Balance Sheet Report PDF",
             subtitle = if (isTamil) "இருப்புநிலை அறிக்கையை பகிரவும் அல்லது பதிவிறக்கவும்" else "Share or download balance sheet report",
             isTamil = isTamil,
             onSharePdf = {
-                val periodSummary = periodGroups.map { g ->
-                    BalanceSheetRow(
-                        periodLabel = g.title,
-                        sales = g.sales,
-                        expenses = g.expenses,
-                        balance = g.netMargin
-                    )
-                }
-                val completeSummary = ReceiptPeriodReport.withUndated(periodSummary, unknownReceived, unknownExpenses, isTamil)
-                val file = PdfGeneratorHelper.generateBalanceSheetPdf(
-                    context = context,
-                    settings = settings,
-                    totalSales = totalSalesReceived,
-                    totalExpenses = totalExpenseAmount,
-                    netBalance = netProfitMargin,
-                    periodSummary = completeSummary
-                )
+                val file = buildPdf()
                 file?.let {
                     PdfGeneratorHelper.sharePdf(context, it, "Balance Sheet Report - ${settings.businessName}")
                 }
                 showPdfDialog = false
             },
             onDownloadPdf = {
-                val periodSummary = periodGroups.map { g ->
-                    BalanceSheetRow(
-                        periodLabel = g.title,
-                        sales = g.sales,
-                        expenses = g.expenses,
-                        balance = g.netMargin
-                    )
-                }
-                val completeSummary = ReceiptPeriodReport.withUndated(periodSummary, unknownReceived, unknownExpenses, isTamil)
-                val file = PdfGeneratorHelper.generateBalanceSheetPdf(
-                    context = context,
-                    settings = settings,
-                    totalSales = totalSalesReceived,
-                    totalExpenses = totalExpenseAmount,
-                    netBalance = netProfitMargin,
-                    periodSummary = completeSummary
-                )
+                val file = buildPdf()
                 file?.let {
                     val displayName = "Balance_Sheet_${selectedTabMode.name}_${System.currentTimeMillis()}"
                     PdfGeneratorHelper.downloadPdfToDownloads(context, it, displayName, isTamil)

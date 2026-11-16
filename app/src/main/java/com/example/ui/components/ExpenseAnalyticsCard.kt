@@ -24,13 +24,18 @@ fun ExpenseAnalyticsCard(expenses: List<ExpenseEntity>, isTamil: Boolean) {
         if (expanded) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = !byFunding, onClick = { byFunding = false },
-                    label = { Text(if (isTamil) "வகை" else "Category") })
+                    label = { Text(if (isTamil) "செலவு வகை" else "Expense Type") })
                 FilterChip(selected = byFunding, onClick = { byFunding = true },
-                    label = { Text(if (isTamil) "பணம் செலுத்திய மூலம்" else "Funding source") })
+                    label = { Text(if (isTamil) "யார் செலுத்தியது?" else "Who Paid?") })
             }
             Text((if (isTamil) "நிகரச் செலவு: " else "Net expense: ") + formatInr(summary.net))
-            Text((if (isTamil) "செலுத்தியது: " else "Charges: ") + formatInr(summary.charged) +
-                (if (isTamil) " · திரும்பப் பெற்றது: " else " · Refunds: ") + formatInr(summary.refunded))
+            Text((if (isTamil) "திருப்பிய தொகைக்கு முந்தைய செலவு: " else "Spending before refunds: ") + formatInr(summary.charged) +
+                (if (isTamil) " · திருப்பிய தொகை: " else " · Refunds: ") + formatInr(summary.refunded))
+            Text(
+                if (isTamil) "நிகரச் செலவு என்பது செலவிலிருந்து திருப்பிய தொகையைக் கழித்தது. திருப்பிய தொகை பணம் திரும்பக் கிடைத்ததையோ முந்தைய செலவுத் திருத்தத்தையோ குறிக்கும்."
+                else "Net expense is spending minus refunds. A refund is money returned or a correction to an earlier expense.",
+                style = MaterialTheme.typography.bodySmall
+            )
             if (summary.pendingCount > 0) Text(if (isTamil) "ஒத்திசைவு நிலுவையில் உள்ள ${summary.pendingCount} செலவுகள் அடங்கும்"
                 else "Includes ${summary.pendingCount} expenses pending sync")
             if (summary.invalidCount > 0) Text(if (isTamil) "${summary.invalidCount} தவறான தொகைகளுக்கு மதிப்பாய்வு தேவை"
@@ -38,10 +43,10 @@ fun ExpenseAnalyticsCard(expenses: List<ExpenseEntity>, isTamil: Boolean) {
             val rows = if (byFunding) summary.funding else summary.categories
             fun label(key: String, name: String): String = if (byFunding) when (key) {
                 "BUSINESS" -> if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid"
-                "PERSONAL" -> if (isTamil) "தனிப்பட்ட பணம் / முதலீடு" else "Personally Paid / Investment"
+                "PERSONAL" -> if (isTamil) "நான் செலுத்தினேன் (முதலீடு)" else "I Paid (member investment)"
                 "EXTERNAL_LOAN" -> if (isTamil) "கடன் நிதி (நேரடி)" else "Loan Funded (Direct)"
                 else -> if (isTamil) "மூலம் தெரியவில்லை" else "Funding unavailable"
-            } else if (key == "unknown-category") (if (isTamil) "வகை தெரியவில்லை" else "Category unavailable")
+            } else if (key == "unknown-category") (if (isTamil) "வகை தெரியவில்லை" else "Expense type unavailable")
                 else ExpenseCategories.label(name, isTamil)
             val slices = rows.mapIndexed { index, row -> PieChartSlice(label(row.key, row.name), row.charged,
                 ChartPalette[index % ChartPalette.size],

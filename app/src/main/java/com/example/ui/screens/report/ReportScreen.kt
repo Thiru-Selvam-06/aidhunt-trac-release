@@ -153,7 +153,8 @@ fun ReportScreen(
     onCancelBorrowing: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
     onRecordSettlementRepayment: ((Long, Double, String, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
     onConfirmSettlementRepayment: ((Long, () -> Unit, (String) -> Unit) -> Unit)? = null,
-    onRejectSettlementRepayment: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null
+    onRejectSettlementRepayment: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    pendingActions: List<com.example.data.entity.PendingOperationEntity> = emptyList()
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     val hasLoanHistory = externalLoans.isNotEmpty() || externalLoanRepayments.isNotEmpty()
@@ -224,7 +225,8 @@ fun ReportScreen(
                     totalExpenses = totalExpenses,
                     netBalance = netBalance,
                     initialScope = initialScope,
-                    onUpdateFinancialScope = onUpdateFinancialScope
+                    onUpdateFinancialScope = onUpdateFinancialScope,
+                    pendingActions = pendingActions
                 )
             }
             ReportSubPage.BUSINESS_OVERVIEW -> {

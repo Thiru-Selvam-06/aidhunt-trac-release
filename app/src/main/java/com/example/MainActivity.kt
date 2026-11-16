@@ -687,6 +687,7 @@ fun MainAppContent(
 
                             BottomTab.REPORT -> {
                                 ReportScreen(
+                                    pendingActions = retainedHomeActions,
                                     customExpenseCategories = expenseCategories.map { it.name },
                                     onAddExpenseCategory = if (syncCapabilities.expenseCategoriesV1) viewModel::addExpenseCategory else null,
                                     currentSubPage = currentReportSubPage,

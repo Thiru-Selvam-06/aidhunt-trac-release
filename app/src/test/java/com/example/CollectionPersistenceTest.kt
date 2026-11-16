@@ -54,6 +54,40 @@ class CollectionPersistenceTest {
             assertEquals(command, db.pendingOperationDao().getOperation(command.operationId))
         } finally { db.close(); context.deleteDatabase(name) }
     }
+    @Test fun balanceSheetProjectionSurvivesRoomReloadWithoutInventingDates() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "balance-sheet-reload-test.db"
+        context.deleteDatabase(name)
+        fun open() = Room.databaseBuilder(context, AppDatabase::class.java, name).build()
+        var db = open()
+        val recorded = java.time.Instant.parse("2026-11-13T01:00:00Z").toEpochMilli()
+        val collection = PaymentEntity(id = 10, workspaceId = "a", customerId = 1, amount = 600.25,
+            collectedAt = recorded - 86400000L, createdAt = recorded)
+        val undated = collection.copy(id = 11, amount = 400.0, collectedAt = 0)
+        val rejected = PendingOperationEntity("rejected", "a", "partner", "PAYMENT", 12, "UPSERT", 1,
+            recorded, """{"amount":4500.0}""", state = "REJECTED")
+        fun project(receipts: List<PaymentEntity>, action: PendingOperationEntity) =
+            com.example.ui.screens.report.ReceiptPeriodReport.project("a", receipts, emptyList(), emptyList(),
+                com.example.ui.screens.report.BalanceSheetTabMode.DAILY, actions = listOf(action))
+        try {
+            db.paymentDao().insertPayments(listOf(collection, undated))
+            db.pendingOperationDao().insert(rejected)
+            db.close(); db = open()
+            val stored = db.paymentDao().getPaymentsForCustomer("a", 1)
+            val restored = requireNotNull(db.pendingOperationDao().getOperation(rejected.operationId))
+            val result = project(stored, restored)
+            val before = project(listOf(collection, undated), rejected)
+            assertEquals(before.pdfRows(false), result.pdfRows(false))
+            assertEquals(1000.25, result.totalReceived, 0.0)
+            assertEquals(400.0, result.explicitUndatedReceived, 0.0)
+            assertEquals(recorded, stored.single { it.id == collection.id }.createdAt)
+            assertEquals(0L, stored.single { it.id == undated.id }.collectedAt)
+            assertEquals(rejected, restored)
+            assertTrue(result.needsReview)
+            assertFalse(result.hasPendingChanges)
+        } finally { db.close(); context.deleteDatabase(name) }
+    }
+
     @Test fun migrationPreservesLegacyRowsAndEveryOutboxByteWithoutInventingCollectorIdentity() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "collection-v18-migration-test.db"

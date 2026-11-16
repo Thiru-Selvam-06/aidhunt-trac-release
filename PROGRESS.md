@@ -1,5 +1,13 @@
 # AIDHUNT TRAC — Development Progress & Final Reconciliation Log
 
+## Phase 3 financial reconciliation — 16 November 2026
+
+- Base `c2469b7c6f5af44650ac2f9c63c395e797f5a5db` on `codex/phase2-job-editing-report-filters`. Actions run 43851231931 passed on that exact commit. Phase branch `codex/phase3-financial-reconciliation`.
+- Authorized read-only transaction reconciliation confirmed that the yearly difference is undated embedded receipts and the cash-versus-net difference is the subset with no recorded payment method. The private reconciliation report contains the transaction-level evidence. No record date, payment method, investment or withdrawal eligibility was changed.
+- Balance Sheet now shares one report projection with PDF export, preserves undated transactions in the overall figure, identifies provisional/review states and retains every PDF period across pages. Expenses analytics explains funding and refunds in English and Tamil. No changes to Rules, sync, Room schemas, production configuration or production records.
+- Added synthetic FIN-001 to FIN-024 coverage and expanded the report UI and reopened Room checks. Regenerated interaction and test asset inventories. Demo debug build, lint (0 errors, 74 existing warnings), 150 focused tests across 14 classes, and 111 harness checks passed. Three Room tests needed a shorter Windows scratch path on the first local run, then passed with all assertions intact.
+- Exact next action: verify the Phase 3 branch validation and review any dated receipt/channel evidence or financial-policy change with the business before acting on it. Physical-device verification is pending. Stop before Phase 4.
+
 ## Phase 2 job editing and report filters — 16 November 2026
 
 - Base `3a29c08a5ceb3f12ef6875817a9a35869a0ed3f9` on `codex/phase1-ui-restoration`. GitHub run 43752094050 passed on that exact commit. Phase branch `codex/phase2-job-editing-report-filters`.
