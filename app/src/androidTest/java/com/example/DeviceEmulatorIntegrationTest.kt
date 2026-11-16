@@ -702,7 +702,11 @@ class DeviceEmulatorIntegrationTest {
   cloud.disableNetwork().await()
   val operation:PendingOperationEntity
   try {
-   workspace.saveJobEntry(source.copy(notes="Partner correction"))
+   workspace.saveJobEntry(source.copy(notes="Partner correction", updatedAt=now), expectedEditBase=source)
+   val stale = runCatching {
+    workspace.saveJobEntry(source.copy(notes="Stale form", updatedAt=now), expectedEditBase=source)
+   }.exceptionOrNull()
+   assertTrue(stale is IllegalArgumentException && stale.message.orEmpty().contains("changed while"))
    operation=db.pendingOperationDao().observeActor(ws,"device-partner").first().last{it.entityType=="JOB"&&it.entityId==id}
    assertEquals("PENDING",operation.state)
    assertEquals(1,JobEditAudit.read(db.jobEntryDao().getJobById(ws,id)!!.jobEditHistoryJson).size)
@@ -722,8 +726,31 @@ class DeviceEmulatorIntegrationTest {
   ownerAuth.signInWithEmailAndPassword("owner@device.invalid","EmulatorOnly123!").await()
   assertEquals(confirmed,ownerCloud.document("workspaces/$ws/entries/$id").get(Source.SERVER).await().data)
   assertEquals(receiptBefore,ownerCloud.document(receipt.reference.path).get(Source.SERVER).await().data)
+  FirestoreRepository(context).applyPendingOperation(operation)
+  assertEquals(1,cloud.collection("workspaces/$ws/entries").whereEqualTo("operationId",operation.operationId).get(Source.SERVER).await().size())
 
   assertEquals(1,JobEditAudit.read(db.jobEntryDao().getJobById(ws,id)!!.jobEditHistoryJson).size)
+
+  login("owner")
+  val receivingProfile=kotlinx.coroutines.withTimeout(15000){profiles.currentUserProfile.first{it?.uid=="device-owner"}}!!
+  val receivingDb=androidx.room.Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).build()
+  val receivingScope=kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()+kotlinx.coroutines.Dispatchers.IO)
+  val receivingCloud=FirestoreRepository(context,receivingScope)
+  try {
+   assertNull(receivingDb.jobEntryDao().getJobById(ws,id))
+   val receivingWorkspace=com.example.data.repository.WorkspaceRepository(context,receivingDb,receivingCloud,receivingScope)
+   assertTrue(receivingWorkspace.initializeForUser(receivingProfile).isSuccess)
+   val downloaded=kotlinx.coroutines.withTimeout(30000){
+    receivingDb.jobEntryDao().getJobsForWorkspace(ws).first{rows->rows.any{it.id==id&&it.notes=="Partner correction"}}
+   }.single{it.id==id}
+   assertTrue(downloaded.isSynced);assertEquals("device-owner",downloaded.createdByUid)
+   assertEquals("device-partner",downloaded.editedByUid);assertEquals(200.0,downloaded.amountReceived,0.0)
+   assertEquals(1800.0,downloaded.pendingAmount,0.0)
+  } finally {
+   receivingCloud.stopRealtimeListeners()
+   receivingScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+   receivingDb.close()
+  }
   Unit
  }
 

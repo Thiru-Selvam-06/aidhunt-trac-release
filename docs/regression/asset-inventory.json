@@ -121,6 +121,8 @@
     "app/src/test/java/com/example/PaymentReversalAndCollectionHistoryTest.kt",
     "app/src/test/java/com/example/PdfAuthorizationTest.kt",
     "app/src/test/java/com/example/PendingInvitationCleanupContractTest.kt",
+    "app/src/test/java/com/example/PhaseTwoPolicyTest.kt",
+    "app/src/test/java/com/example/PhaseTwoReportUiTest.kt",
     "app/src/test/java/com/example/PhoneOnlySignupRoutingTest.kt",
     "app/src/test/java/com/example/PurgeReconciliationProtocolTest.kt",
     "app/src/test/java/com/example/RecordIdentityPolicyTest.kt",

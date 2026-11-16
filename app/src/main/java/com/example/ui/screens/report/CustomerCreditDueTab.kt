@@ -1414,6 +1414,10 @@ fun CustomerDetailSheet(
 ) {
     val context = LocalContext.current
     val isTamil = settings.language == "TA"
+    val canOfferEdit = isOwner || workspaceMembers.any {
+        it.workspaceId == settings.workspaceId && it.uid == actorUid && actorUid.isNotBlank() &&
+            it.status.equals("active", true) && com.example.data.auth.RoleUtils.normalizeRole(it.role) == com.example.data.auth.RoleUtils.ROLE_PARTNER
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val workJobs = jobs.filterNot { com.example.ui.util.FinancialCalculationEngine.isSyntheticPayment(it) }
     val totalMinutes = workJobs.sumOf { it.durationMinutes }
@@ -1429,6 +1433,7 @@ fun CustomerDetailSheet(
     ) {
         LazyColumn(
             modifier = Modifier
+                .testTag("customer_job_history")
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -1670,8 +1675,10 @@ fun CustomerDetailSheet(
                                     Text("${if (isTamil) "நிலுவை" else "Due"}: ${formatInr(job.pendingAmount)}", fontSize = 11.sp, color = dueTextColor, fontWeight = FontWeight.SemiBold)
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
-                                val canEdit = isOwner
                                 val role = workspaceMembers.firstOrNull { it.uid == actorUid && it.workspaceId == job.workspaceId && it.status.equals("active", true) }?.role.orEmpty()
+                                val canEdit = canOfferEdit && onEditJob != null && job.workspaceId == settings.workspaceId &&
+                                    !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(job.workspaceId, job.createdByUid, job.entryForUid, workspaceMembers) &&
+                                    com.example.data.auth.AuthorizationManager.canEditEntry(job, isOwner, actorName, actorUid, role = role)
                                 val canDelete = com.example.data.auth.AuthorizationManager.canDeleteEntry(job, isOwner, actorName, actorUid, role = role)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1844,7 +1851,7 @@ fun CustomerDetailSheet(
                     jobToDelete = job
                 }
             },
-            onEditJob = if (isOwner) { editJob ->
+            onEditJob = if (canOfferEdit && onEditJob != null) { editJob ->
                 selectedJobForDetail = null
                 onDismiss()
                 onEditJob?.invoke(editJob)

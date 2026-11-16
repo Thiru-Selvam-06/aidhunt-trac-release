@@ -41,6 +41,7 @@ class CollectionHistoryDetailsTest {
                 )
             }
         }
+        val history = compose.onNodeWithTag("collection_history_list")
         // Active total reflects only active payments
         compose.onAllNodesWithText("₹100").onFirst().assertExists()
         compose.onNodeWithText("₹150").assertDoesNotExist()
@@ -50,25 +51,33 @@ class CollectionHistoryDetailsTest {
         compose.onNodeWithTag("collection_history_card_11").assertDoesNotExist()
 
         // Switch to reversed filter
+        history.performScrollToNode(hasTestTag("collection_filter_reversed"))
         compose.onNodeWithTag("collection_filter_reversed").performClick()
         compose.onNodeWithTag("collection_history_card_10").assertDoesNotExist()
 
         // Expand reversed card
-        compose.onNodeWithTag("expand_job_card_42").performScrollTo().performClick()
-        compose.onNodeWithTag("collection_history_card_11").performScrollTo().assertExists()
+        history.performScrollToNode(hasTestTag("expand_job_card_42"))
+        compose.onNodeWithTag("expand_job_card_42").performClick()
+        history.performScrollToNode(hasTestTag("collection_history_card_11"))
+        compose.onNodeWithTag("collection_history_card_11").assertExists()
         compose.onNodeWithTag("reversed_collection_11", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("reverse_collection_11", useUnmergedTree = true).assertDoesNotExist()
 
         // Switch back to active filter
+        history.performScrollToNode(hasTestTag("collection_filter_active"))
         compose.onNodeWithTag("collection_filter_active").performClick()
         // Expand active card
-        compose.onNodeWithTag("expand_job_card_10").performScrollTo().performClick()
-        compose.onNodeWithTag("collection_history_card_10").performScrollTo().assertExists()
+        history.performScrollToNode(hasTestTag("expand_job_card_10"))
+        compose.onNodeWithTag("expand_job_card_10").performClick()
+        history.performScrollToNode(hasTestTag("collection_history_card_10"))
+        compose.onNodeWithTag("collection_history_card_10").assertExists()
         compose.onNodeWithTag("reverse_collection_10", useUnmergedTree = true).assertExists()
 
         // Switch to reversed filter and open details dialog (card 42 remains expanded via rememberSaveable)
+        history.performScrollToNode(hasTestTag("collection_filter_reversed"))
         compose.onNodeWithTag("collection_filter_reversed").performClick()
-        compose.onNodeWithTag("collection_history_card_11").performScrollTo().performClick()
+        history.performScrollToNode(hasTestTag("collection_history_card_11"))
+        compose.onNodeWithTag("collection_history_card_11").performClick()
         compose.onNodeWithText("Collection Details").assertExists()
         compose.onNodeWithText("Status: REVERSED").assertExists()
         compose.onNodeWithText("Entry: 42").assertDoesNotExist()

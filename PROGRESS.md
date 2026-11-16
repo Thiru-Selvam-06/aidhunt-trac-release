@@ -1,5 +1,14 @@
 # AIDHUNT TRAC — Development Progress & Final Reconciliation Log
 
+## Phase 2 job editing and report filters — 16 November 2026
+
+- Base `3a29c08a5ceb3f12ef6875817a9a35869a0ed3f9` on `codex/phase1-ui-restoration`. GitHub run 43752094050 passed on that exact commit. Phase branch `codex/phase2-job-editing-report-filters`.
+- Customer Dues had Owner-only Edit controls. The save handler applied the new-job creator check to cross-creator edits, and the form required missing legacy work duration or tractor data even for an unchanged record. Fixed these paths, sent the original draft snapshot into the existing Room transaction, and prevented a stale or missing source from being overwritten or recreated. The record's original creator and the latest editor remain separate. Existing audit, member, payment and queue safeguards still apply.
+- Collection History sorts latest matching collection dates or totals of matching allocations and retains the oldest-first payment timeline. All three reports offer IST month/year and inclusive date ranges, plus existing compatible filters. Undated transactions remain visible in All Time. Expense and withdrawal decoding preserves absent transaction dates for display.
+- Verified the exact active live Rules revision `e7981704-cf72-453b-a867-ad3faa10c75f` read-only. Eight targeted Firebase emulator tests passed against that exact source. Demo Android build, lint (0 errors, 74 warnings), 153 focused tests across 15 suites with no skips, and the Git/inventory checks passed. English and Tamil report journeys and Phase 1 focused regressions were included. The test runner had stalled in the earlier keyboard-based picker, and the final fixture supplies a synthetic user to the Expense screen.
+- The extended Android integration test exercises a Partner offline edit of an Owner's historical job, stale-form rejection, receipt preservation, idempotent retry and download into another authenticated Room database. Check the push workflow for its result. Physical-device verification is pending. No Rules, production configuration, customer data, Balance Sheet formulas, sync protocol or production release changed.
+- Exact next action: verify the Phase 2 push workflow and stop before financial reconciliation and notifications.
+
 ## Phase 1 UI restoration — 16 November 2026
 
 - Base `3629296b5dff45fd036cdada6123ad654b45c4aa` on GitHub `codex/stabilization-release`. Baseline Actions run 43664989563 reported 11 successful jobs and one optional manual job skipped. Working branch `codex/phase1-ui-restoration`.

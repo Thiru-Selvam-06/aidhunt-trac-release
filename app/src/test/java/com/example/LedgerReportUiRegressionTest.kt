@@ -42,11 +42,15 @@ class LedgerReportUiRegressionTest {
                 jobs = listOf(job, job.copy(id = 2, customerId = 11, customerName = "New Customer", amountReceived = 25.0)), payments = listOf(PaymentEntity(id = 20, workspaceId = "a",
                     jobEntryId = 2, customerId = 11, customerName = "New Customer", amount = 25.0)), currentUid = "owner")
         } }
-        compose.onNodeWithTag("collection_job_card_a:job:1").performScrollTo().assertExists()
+        val history = compose.onNodeWithTag("collection_history_list")
+        history.performScrollToNode(hasTestTag("expand_job_card_1"))
+        compose.onNodeWithTag("collection_job_card_a:job:1").assertExists()
         compose.onNodeWithTag("expand_job_card_1").performClick()
-        compose.onNodeWithTag("collection_history_card_-1").performScrollTo().assertExists()
+        history.performScrollToNode(hasTestTag("collection_history_card_-1"))
+        compose.onNodeWithTag("collection_history_card_-1").assertExists()
         compose.onNodeWithTag("reverse_collection_-1", useUnmergedTree = true).assertDoesNotExist()
-        compose.onNodeWithTag("collection_job_card_a:job:2").performScrollTo().assertExists()
+        history.performScrollToNode(hasTestTag("collection_job_card_a:job:2"))
+        compose.onNodeWithTag("collection_job_card_a:job:2").assertExists()
     }
 
     @Test fun deletingLastEntryRemovesCustomerFromDuesAndClosesTheStaleStatement() {

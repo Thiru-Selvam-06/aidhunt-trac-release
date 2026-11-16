@@ -1009,6 +1009,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         linkedExpense: ExpenseEntity? = null,
         linkedExpenses: List<ExpenseEntity> = emptyList(),
         createNewCustomer: Boolean = false,
+        expectedEditBase: JobEntryEntity? = null,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
@@ -1017,10 +1018,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             onError("Account access is suspended or expired by administration")
             return
         }
-        val isEditing = job.updatedAt > 0L
+        val isEditing = expectedEditBase != null
 
         val isHistorical = job.isHistorical
-        if (isHistorical && !com.example.data.auth.AuthorizationManager.canCreateOldEntry(isCollaborationOwner.value, currentUserRole.value)) {
+        if (!isEditing && isHistorical && !com.example.data.auth.AuthorizationManager.canCreateOldEntry(isCollaborationOwner.value, currentUserRole.value)) {
             val isTamil = settings.value.language.equals("TA", ignoreCase = true)
             onError(if (isTamil) "உரிமையாளரும் பங்குதாரர்களும் மட்டுமே பழைய பதிவை உருவாக்க முடியும்" else "Only the workspace Owner and Partners can create Old Entries")
             return
@@ -1029,7 +1030,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             onError("New entry creation is restricted by administration")
             return
         }
-        if (!isCollaborationOwner.value) {
+        if (!isEditing && !isCollaborationOwner.value) {
             val myUid = currentUid ?: ""
             if (job.createdByUid.isNotBlank() && job.createdByUid != myUid) {
                 onError("Unauthorized: You can only create entries for yourself")
@@ -1039,7 +1040,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isSavingJob.value = true
         viewModelScope.launch {
             try {
-                workspaceRepository.saveJobEntry(job, linkedExpense, linkedExpenses, createNewCustomer)
+                workspaceRepository.saveJobEntry(job, linkedExpense, linkedExpenses, createNewCustomer, expectedEditBase)
                 clearNewEntryDraft()
                 _syncMessage.value = "Saved on this device; cloud sync pending"
                 _isSavingJob.value = false

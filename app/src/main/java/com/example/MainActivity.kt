@@ -1099,6 +1099,7 @@ fun MainAppContent(
                                             linkedExpense = linkedExpense,
                                             linkedExpenses = linkedExpenses,
                                             createNewCustomer = draft.createNewCustomer,
+                                            expectedEditBase = draft.originalJob,
                                             onSuccess = {
                                                 android.util.Log.d("TRAC_ENTRY", "SAVE_SUCCESS entryId=${job.id} -> NAVIGATE_HOME")
                                                 onShowToast(if (isTamil) "வேலைப் பதிவு வெற்றிகரமாகச் சேமிக்கப்பட்டது!" else "Job Entry saved successfully!")

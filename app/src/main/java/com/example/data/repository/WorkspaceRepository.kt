@@ -2106,7 +2106,8 @@ class WorkspaceRepository(
         job: JobEntryEntity,
         linkedExpense: ExpenseEntity? = null,
         linkedExpenses: List<ExpenseEntity> = emptyList(),
-        createNewCustomer: Boolean = false
+        createNewCustomer: Boolean = false,
+        expectedEditBase: JobEntryEntity? = null
     ): Long {
         val operationActorUid = getEffectiveActorUid().orEmpty()
         val operationTime = System.currentTimeMillis()
@@ -2121,6 +2122,14 @@ class WorkspaceRepository(
             throw SecurityException("Entry does not belong to the active workspace")
         }
         val verifiedActorRole = requireWorkspaceActor(wsId)
+        if (expectedEditBase != null || job.updatedAt > 0L) {
+            require(existingJob != null) { "This entry is no longer available. Return to the job list before editing." }
+            if (expectedEditBase != null) {
+                require(existingJob.copy(isSynced = expectedEditBase.isSynced) == expectedEditBase) {
+                    "This entry changed while you were editing. Reopen it and review the latest record."
+                }
+            }
+        }
         if (job.workspaceId.isNotBlank() && job.workspaceId != wsId) throw SecurityException("Entry workspace mismatch")
         val authenticatedUid = getEffectiveActorUid().orEmpty()
         val entryTarget = existingJob?.entryForUid ?: job.entryForUid.ifBlank { authenticatedUid }
@@ -2218,18 +2227,8 @@ class WorkspaceRepository(
         // - Preserve the original entry creation date/time exactly.
         // - Editing must never overwrite or reset the original entry timestamp or author.
         val finalCreatedAt = existingJob?.createdAt ?: if (job.createdAt > 0) job.createdAt else operationTime
-        val finalAddedBy = if (!isOwner && existingJob == null) {
-            currentActorName
-        } else if (existingJob != null) {
-            existingJob.addedByPartner.ifBlank { job.addedByPartner }
-        } else {
-            currentActorName
-        }
-        val finalCreatedByUid = if (existingJob != null) {
-            existingJob.createdByUid.ifBlank { job.createdByUid }
-        } else {
-            actorUid
-        }
+        val finalAddedBy = existingJob?.addedByPartner ?: currentActorName
+        val finalCreatedByUid = existingJob?.createdByUid ?: actorUid
         val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
         val resolvedDefaultRole = if (isOwner) "Owner" else (currentMember?.role?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() } ?: "Partner")
         val candidateRole = if (existingJob != null) {

@@ -271,7 +271,9 @@ fun NewEntryScreen(
     val ownTractors = remember(tractors, settings.workspaceId) {
         tractors.filter { it.workspaceId == settings.workspaceId }
     }
-    val selectedTractor = if (draft.selectedTractor.isNotBlank() && tractors.any { it.label == draft.selectedTractor }) {
+    val originalJob = draft.originalJob
+    val retainsTractor = originalJob != null && originalJob.tractorLabel == draft.selectedTractor
+    val selectedTractor = if (retainsTractor || (draft.selectedTractor.isNotBlank() && ownTractors.any { it.label == draft.selectedTractor })) {
         draft.selectedTractor
     } else if (settings.lockedTractorLabel.isNotBlank() && tractors.any { it.label == settings.lockedTractorLabel }) {
         settings.lockedTractorLabel
@@ -383,10 +385,12 @@ fun NewEntryScreen(
         showClearConfirmationDialog = false
     }
 
-    val isTractorInvalid = selectedTractor.isBlank() || (tractors.isNotEmpty() && tractors.none { it.label == selectedTractor })
+    val isTractorInvalid = !retainsTractor && (selectedTractor.isBlank() || ownTractors.none { it.label == selectedTractor })
     val isCustomerNameInvalid = customerNameInput.isBlank()
     val isCustomerPhoneInvalid = !com.example.ui.util.isOptionalContactPhoneValid(customerPhoneInput)
-    val isTimeInvalid = computedDurationMinutes <= 0L
+    val originalDraft = remember(originalJob) { originalJob?.let { NewEntryDraft.fromJobEntry(it) } }
+    val isTimeInvalid = computedDurationMinutes <= 0L &&
+        !(originalJob != null && originalJob.durationMinutes == 0L && originalDraft != null && draft.hasUnchangedWorkTime(originalDraft))
     val isWorkAmountInvalid = if (isWorkAmountManuallyEdited) {
         (customWorkAmountInput.toDoubleOrNull() ?: 0.0) <= 0.0
     } else {
@@ -624,9 +628,9 @@ fun NewEntryScreen(
 
                 val (resolvedCreatorUid, resolvedCreatorRole, resolvedCreatorName) = if (draft.isEditingExistingEntry) {
                     Triple(
-                        draft.originalCreatedByUid,
-                        draft.originalCreatedByRole.ifBlank { activeCreatorRole },
-                        if (!originalAddedBy.isNullOrBlank()) originalAddedBy else activeCreatorName
+                        originalJob?.createdByUid ?: draft.originalCreatedByUid,
+                        originalJob?.createdByRole ?: draft.originalCreatedByRole,
+                        originalJob?.addedByPartner ?: draft.originalAddedByPartner
                     )
                 } else {
                     Triple(
@@ -660,7 +664,7 @@ fun NewEntryScreen(
 
                 val resolvedCustomerId = draft.matchedCustomerId
 
-                val finalNotes = if (draft.isOldEntry) {
+                val finalNotes = if (draft.isOldEntry && !draft.isEditingExistingEntry) {
                     if (notes.isBlank()) {
                         "Historical Entry"
                     } else if (!notes.contains("Old", ignoreCase = true) && !notes.contains("Historical", ignoreCase = true)) {
@@ -679,7 +683,7 @@ fun NewEntryScreen(
                     customerName = resolvedCustomerName,
                     customerPhone = resolvedCustomerPhone,
                     customerLocation = customerLocationInput.trim(),
-                    tractorId = matchedTractor?.id ?: 0L,
+                    tractorId = if (retainsTractor) originalJob?.tractorId ?: 0L else matchedTractor?.id ?: 0L,
                     tractorLabel = selectedTractor,
                     operatorName = resolvedOperatorName,
                     workType = selectedWorkType,
@@ -1890,7 +1894,7 @@ fun NewEntryScreen(
                     ) {
                         OutlinedTextField(
                             value = amountReceivedInput,
-                            enabled = canReceivePayment && draft.originalCreatedAt == null,
+                            enabled = canReceivePayment && !draft.isEditingExistingEntry,
                             onValueChange = { onUpdateDraft(draft.copy(amountReceivedInput = it)) },
                             label = { Text(if (isTamil) "பெற்ற தொகை *" else "Amount Received (${settings.currency}) *", fontSize = 11.5.sp, maxLines = 1) },
                             singleLine = true,
@@ -2205,7 +2209,7 @@ fun NewEntryScreen(
                     onClick = {
                         if (effectiveIsSaving) return@Button
                         onUpdateDraft(draft.copy(hasAttemptedReview = true))
-                        if (tractors.isEmpty()) {
+                        if (ownTractors.isEmpty() && !retainsTractor) {
                             Toast.makeText(
                                 context,
                                 if (isTamil) "முதலில் ஒரு டிராக்டரைச் சேர்க்கவும்" else "Please add a tractor before creating an entry.",

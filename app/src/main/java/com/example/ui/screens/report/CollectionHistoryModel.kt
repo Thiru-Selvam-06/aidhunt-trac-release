@@ -84,3 +84,33 @@ internal fun collectionJobHistory(
                 rows.map { it.event }.sortedWith(compareBy({ it.payment.collectedAt }, { it.payment.id })), rows.any { it.invalid })
         }.sortedWith(compareByDescending<CollectionJobHistory> { it.events.maxOf { event -> event.payment.collectedAt } }.thenBy { it.key })
 }
+
+internal enum class CollectionSort(val english: String, val tamil: String) {
+    NEWEST("Date — Newest First", "தேதி — புதியவை முதலில்"),
+    OLDEST("Date — Oldest First", "தேதி — பழையவை முதலில்"),
+    HIGHEST("Amount Collected — High to Low", "வசூல் தொகை — அதிகத்திலிருந்து குறைவு"),
+    LOWEST("Amount Collected — Low to High", "வசூல் தொகை — குறைவிலிருந்து அதிகம்");
+
+    fun label(isTamil: Boolean): String = if (isTamil) tamil else english
+}
+
+internal fun sortCollectionHistory(
+    groups: List<CollectionJobHistory>,
+    matching: Map<String, List<PaymentDisplayModel>>,
+    order: CollectionSort
+): List<CollectionJobHistory> {
+    data class MatchedGroup(val group: CollectionJobHistory, val latest: Long?, val amount: BigDecimal)
+    val filtered = groups.mapNotNull { group ->
+        val rows = matching[group.key]?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        MatchedGroup(group, rows.maxOf { it.collectedAt }.takeIf { it > 0 },
+            rows.fold(BigDecimal.ZERO) { total, row -> total + BigDecimal.valueOf(row.amount.takeIf { it.isFinite() } ?: 0.0) })
+    }
+    val datedFirst = compareBy<MatchedGroup> { it.latest == null }
+    val comparator = when (order) {
+        CollectionSort.NEWEST -> datedFirst.thenByDescending { it.latest }
+        CollectionSort.OLDEST -> datedFirst.thenBy { it.latest }
+        CollectionSort.HIGHEST -> compareByDescending { it.amount }
+        CollectionSort.LOWEST -> compareBy { it.amount }
+    }
+    return filtered.sortedWith(comparator.thenBy { it.group.key }).map { it.group }
+}

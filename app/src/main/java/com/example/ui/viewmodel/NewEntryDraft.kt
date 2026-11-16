@@ -90,13 +90,16 @@ data class NewEntryDraft(
             !FinancialFeatureAvailability.canChangeExpense(original) && submitted.none { it.id == original.id }
         }
 
+    fun hasUnchangedWorkTime(initial: NewEntryDraft): Boolean =
+        isDirectDurationMode == initial.isDirectDurationMode && manualHoursInput == initial.manualHoursInput &&
+            manualMinutesInput == initial.manualMinutesInput && startHour == initial.startHour && startMinute == initial.startMinute &&
+            endHour == initial.endHour && endMinute == initial.endMinute && historicalDateMillis == initial.historicalDateMillis
+
     /** Reopening a minute/whole-rupee form must not round untouched historical values. */
     fun retainUneditedWork(submitted: com.example.data.entity.JobEntryEntity): com.example.data.entity.JobEntryEntity {
         val original = originalJob ?: return submitted
         val initial = fromJobEntry(original)
-        val sameTime = isDirectDurationMode == initial.isDirectDurationMode && manualHoursInput == initial.manualHoursInput &&
-            manualMinutesInput == initial.manualMinutesInput && startHour == initial.startHour && startMinute == initial.startMinute &&
-            endHour == initial.endHour && endMinute == initial.endMinute && historicalDateMillis == initial.historicalDateMillis
+        val sameTime = hasUnchangedWorkTime(initial)
         val sameRate = hourlyRateInput == initial.hourlyRateInput
         val sameBill = sameTime && sameRate && customWorkAmountInput == initial.customWorkAmountInput &&
             isWorkAmountManuallyEdited == initial.isWorkAmountManuallyEdited && extraChargesInput == initial.extraChargesInput
