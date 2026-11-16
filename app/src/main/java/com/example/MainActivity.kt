@@ -26,6 +26,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
+import com.example.data.firebase.OwnerActivityDestination
+import com.example.data.firebase.OwnerActivityItem
+import com.example.data.firebase.OwnerActivityPush
 import com.example.ui.components.AppBottomNav
 import com.example.ui.components.AppTopHeader
 import com.example.ui.components.StartupSplashScreen
@@ -44,22 +47,22 @@ import com.example.ui.viewmodel.ReportSubPage
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
-    private var openOwnerActivity by mutableStateOf<Pair<String, String>?>(null)
+    private var openOwnerActivity by mutableStateOf<OwnerActivityDestination?>(null)
+    private var ownerActivityResume by mutableStateOf(0)
 
-    private fun ownerActivityDestination(intent: Intent): Pair<String, String>? {
-        if (intent.action != com.example.data.firebase.OwnerActivityPush.ACTION_OPEN) return null
-        val uid = intent.getStringExtra("recipientUid") ?: return null
-        val workspace = intent.getStringExtra("workspaceId") ?: return null
-        return uid to workspace
+    override fun onResume() {
+        super.onResume()
+        ownerActivityResume++
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        openOwnerActivity = ownerActivityDestination(intent)
+        openOwnerActivity = OwnerActivityPush.destination(intent)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
                 MainAppContent(viewModel = viewModel, openOwnerActivity = openOwnerActivity,
+                    ownerActivityResume = ownerActivityResume,
                     onOwnerActivityOpened = { openOwnerActivity = null }, onShowToast = { msg ->
                     Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
                 })
@@ -69,15 +72,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        ownerActivityDestination(intent)?.let { openOwnerActivity = it }
+        OwnerActivityPush.destination(intent)?.let { openOwnerActivity = it }
     }
 }
 
 @Composable
-fun MainAppContent(
+internal fun MainAppContent(
     viewModel: MainViewModel,
     onShowToast: (String) -> Unit,
-    openOwnerActivity: Pair<String, String>? = null,
+    openOwnerActivity: OwnerActivityDestination? = null,
+    ownerActivityResume: Int = 0,
     onOwnerActivityOpened: () -> Unit = {}
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -151,15 +155,22 @@ fun MainAppContent(
     var showNotificationsSheet by remember { mutableStateOf(false) }
     val pushContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val pushUid = viewModel.currentUid.orEmpty()
-    androidx.compose.runtime.LaunchedEffect(activeWorkspaceId, isCollaborationOwner, pushUid, settings.language, isOnline) {
+    var openedActivity by remember(pushUid, activeWorkspaceId, isCollaborationOwner) {
+        mutableStateOf<OwnerActivityItem?>(null)
+    }
+    var permissionResult by remember { mutableStateOf(false) }
+    val notificationPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { permissionResult = it }
+    androidx.compose.runtime.LaunchedEffect(activeWorkspaceId, isCollaborationOwner, pushUid, settings.language,
+        isOnline, ownerActivityResume, permissionResult) {
+        val workspace = activeWorkspaceId ?: return@LaunchedEffect
         if (isOnline && isCollaborationOwner && pushUid.isNotBlank()) {
-            try {
-                com.example.data.firebase.OwnerActivityPush.register(pushContext, activeWorkspaceId.orEmpty(), pushUid, settings.language)
-            } catch (error: kotlinx.coroutines.CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                android.util.Log.w("TRAC_OWNER_PUSH", "Owner activity registration or refresh unavailable")
+            if (OwnerActivityPush.shouldRequestPermission(pushContext, pushUid)) {
+                OwnerActivityPush.markPermissionAsked(pushContext, pushUid)
+                notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
             }
+            OwnerActivityPush.scheduleRegister(pushContext, workspace, pushUid, settings.language)
         }
     }
     val coroutineScope = rememberCoroutineScope()
@@ -316,24 +327,49 @@ fun MainAppContent(
 
     val isStartupAuthResolved by viewModel.isStartupAuthResolved.collectAsState()
     val workspaceInitState by viewModel.workspaceInitState.collectAsState()
-    androidx.compose.runtime.LaunchedEffect(openOwnerActivity, pushUid, activeWorkspaceId, workspaceInitState, isCollaborationOwner) {
-        val (recipient, workspace) = openOwnerActivity ?: return@LaunchedEffect
+    androidx.compose.runtime.LaunchedEffect(openOwnerActivity, pushUid, activeWorkspaceId, workspaceInitState,
+        isCollaborationOwner) {
+        val target = openOwnerActivity ?: return@LaunchedEffect
         if (pushUid.isBlank() || activeWorkspaceId.isNullOrBlank()) return@LaunchedEffect
-        if (recipient != pushUid) {
+        if (target.uid != pushUid || !OwnerActivityPush.wasRegistered(pushContext, target.workspaceId, pushUid)) {
             onOwnerActivityOpened()
             return@LaunchedEffect
         }
-        if (workspace == activeWorkspaceId) {
-            if (isCollaborationOwner) showNotificationsSheet = true
+        val item = try {
+            OwnerActivityPush.fetch(pushContext, target)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        }
+        if (item == null) {
             onOwnerActivityOpened()
-        } else if (com.example.data.firebase.OwnerActivityPush.wasRegistered(pushContext, workspace, pushUid)) {
-            onOwnerActivityOpened()
-            viewModel.switchWorkspace(workspace, onSuccess = {
-                if (viewModel.isCollaborationOwner.value && viewModel.currentUid == recipient) showNotificationsSheet = true
-            }, onError = onShowToast)
+            onShowToast(if (settings.language.equals("TA", true)) "இந்தச் செயல்பாடு இப்போது கிடைக்கவில்லை."
+                else "This activity is currently unavailable.")
+            return@LaunchedEffect
+        }
+        if (target.workspaceId != activeWorkspaceId) {
+            viewModel.switchWorkspace(target.workspaceId, onSuccess = {}, onError = {
+                onOwnerActivityOpened()
+                onShowToast(it)
+            })
         } else {
+            if (target.matches(pushUid, activeWorkspaceId, isCollaborationOwner)) openedActivity = item
             onOwnerActivityOpened()
         }
+    }
+    openedActivity?.let { item ->
+        val tamil = settings.language.equals("TA", true)
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { openedActivity = null },
+            title = { androidx.compose.material3.Text(if (tamil) "வணிகச் செயல்பாடு" else "Business activity") },
+            text = { androidx.compose.material3.Text(item.label(tamil).orEmpty()) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { openedActivity = null }) {
+                    androidx.compose.material3.Text(if (tamil) "மூடு" else "Close")
+                }
+            }
+        )
     }
     var pendingGoogleProfile by remember { mutableStateOf<com.example.data.firebase.UserProfile?>(null) }
 

@@ -14,6 +14,7 @@ android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
+  val ownerActivityLiveTest = providers.gradleProperty("ownerActivityLiveTest").orNull == "true"
   defaultConfig {
     applicationId = "com.aistudio.aidhunttrac.cedlir"
     minSdk = 24
@@ -21,6 +22,7 @@ android {
     versionCode = 12
     versionName = "1.0.11"
 
+    buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", "false")
     buildConfigField("boolean", "DEVICE_TEST", "false")
     buildConfigField("boolean", "LIVE_TEST", "false")
     buildConfigField("boolean", "PHYSICAL_TEST", "false")
@@ -62,6 +64,7 @@ android {
 
   buildTypes {
     release {
+      buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", "true")
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -83,6 +86,7 @@ android {
       versionNameSuffix = "-live-test"
       matchingFallbacks += listOf("debug")
       buildConfigField("boolean", "LIVE_TEST", "true")
+      buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", ownerActivityLiveTest.toString())
     }
     create("physicalTest") {
       initWith(getByName("debug"))

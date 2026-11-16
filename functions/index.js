@@ -3,21 +3,24 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
-const { onDocumentWritten } = require("firebase-functions/v2/firestore");
-const { publishOwnerActivity } = require("./owner-activity");
+const { onDocumentWrittenWithAuthContext } = require("firebase-functions/v2/firestore");
+const { REGION, publishOwnerActivity } = require("./owner-activity");
+const { ownerActivitySession } = require("./owner-activity-session");
 const { getAuth } = require("firebase-admin/auth");
 const { validateInvitation } = require("./invitation-policy");
 initializeApp();
 const db = getFirestore();
 db.settings({ useBigInt: true }); // Android record IDs are 63-bit Longs, beyond JavaScript's exact Number range.
 for (const collection of ["entries", "entryDeletionProofs", "collections", "expenses", "cashDeleteProofs", "withdrawals"]) {
-  exports[`ownerActivity_${collection}`] = onDocumentWritten({
-    document: `workspaces/{wsId}/${collection}/{recordId}`, retry: true
+  exports[`ownerActivity_${collection}`] = onDocumentWrittenWithAuthContext({
+    document: `workspaces/{wsId}/${collection}/{recordId}`, region: REGION, retry: true
   }, event => publishOwnerActivity({
     db, event, collection, fieldValue: FieldValue, messaging: getMessaging(),
     emulator: process.env.FUNCTIONS_EMULATOR === "true"
   }));
 }
+exports.ownerActivitySession = onCall({ region: REGION }, request => ownerActivitySession(db, request));
+
 function requiredString(data, key) {
   const value = data?.[key];
   if (typeof value !== "string" || !value.trim()) throw new HttpsError("invalid-argument", `${key} is required`);

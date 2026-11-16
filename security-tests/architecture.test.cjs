@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const { initializeTestEnvironment, assertSucceeds, assertFails } = require('@firebase/rules-unit-testing');
-const { doc, setDoc, updateDoc, deleteDoc, getDoc, writeBatch, serverTimestamp, Timestamp } = require('firebase/firestore');
+const { doc, setDoc, updateDoc, deleteDoc, getDoc, getDocFromCache, disableNetwork, enableNetwork, writeBatch, serverTimestamp, Timestamp } = require('firebase/firestore');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 let env;
@@ -23,6 +23,85 @@ test('only the original Owner can register an activity device and only the serve
  await assertSucceeds(getDoc(doc(db('owner'),path('ownerActivityEvents','event'))));
  await assertFails(getDoc(doc(db('partner'),path('ownerActivityEvents','event'))));
 });
+test("PUSH-010 to 016: reconcile only committed offline activity through the authenticated Owner session", async () => {
+ const backendRequire = require('node:module').createRequire(require.resolve('../functions/package.json'));
+ const {initializeApp, deleteApp} = backendRequire('firebase-admin/app');
+ const {getFirestore, FieldValue} = backendRequire('firebase-admin/firestore');
+ const {publishOwnerActivity} = require('../functions/owner-activity');
+ const {ownerActivitySession} = require('../functions/owner-activity-session');
+ const app = initializeApp({projectId:'demo-aidhunt-v16'}, 'push-workspace');
+ const admin = getFirestore(app);
+ const workspace = admin.doc(`workspaces/${ws}`);
+ const feed = workspace.collection("ownerActivityEvents");
+ const devices = workspace.collection("ownerPushDevices");
+ const phoneA = "00000000-0000-0000-0000-00000000000a";
+ const phoneB = "00000000-0000-0000-0000-00000000000b";
+ const call = (role, action, data = {}) => ownerActivitySession(admin, {auth:{uid:uid[role]},
+  data:{workspaceId:ws,action,...data}});
+ const auth = db('partner');
+ const ref = doc(auth, path('entries'));
+ const publish = async (recordId = '1') => {
+  const after = await workspace.collection('entries').doc(recordId).get();
+  return publishOwnerActivity({db:admin, messaging:{send:async()=>assert.fail('Emulator must not call FCM')},
+   fieldValue:FieldValue, emulator:true, collection:'entries',
+   event:{authType:'unknown',authId:uid.partner,params:{wsId:ws,recordId},data:{after}}});
+ };
+ try {
+  await assert.rejects(call('partner','register',{installationId:phoneA,token:'forged',language:'EN'}), {code:'permission-denied'});
+  await assert.rejects(call('other','history'), {code:'permission-denied'});
+  await assert.rejects(call('owner','history',{workspaceId:'foreign'}), {code:'permission-denied'});
+  await call('owner','register',{installationId:phoneA,token:'a',language:'EN'});
+  await call('owner','register',{installationId:phoneB,token:'b',language:'TA'});
+  await call('owner','register',{installationId:phoneA,token:'a-refreshed',language:'TA'});
+  assert.equal((await devices.doc(phoneA).get()).get('token'), 'a-refreshed');
+  await disableNetwork(auth);
+  const commit = setDoc(ref, entry('partner')).then(() => null, error => error);
+  let local;
+  for (let i = 0; i < 20 && !local; i++) {
+   local = await getDocFromCache(ref).catch(() => null);
+   if (!local?.exists()) { local = null; await new Promise(resolve => setTimeout(resolve, 30)); }
+  }
+  assert.ok(local?.metadata.hasPendingWrites);
+  await publish();
+  assert.equal((await feed.get()).size, 0);
+  await enableNetwork(auth);
+  assert.equal(await commit, null);
+  await publish(); await publish();
+  const cloud = await feed.get();
+  assert.equal(cloud.size, 1);
+  assert.equal(cloud.docs[0].get('recipientUid'), uid.owner);
+  assert.equal(cloud.docs[0].get('operationId'), entry('partner').operationId);
+  assert.equal(cloud.docs[0].get('deliverySweepCompletedAt'), undefined);
+  const first = await call('owner','history');
+  assert.equal(first.items.length, 1);
+  assert.equal(first.items[0].type, 'JOB_CREATED');
+  assert.deepEqual((await call('owner','event',{eventId:first.nextId})).item, first.items[0]);
+  assert.deepEqual((await call('owner','history',{afterId:first.nextId})).items, []);
+  await assert.rejects(call('partner','event',{eventId:first.nextId}), {code:'permission-denied'});
+  await assertFails(setDoc(doc(db('other'),path('entries','2')),entry('partner',{id:2})));
+  await publish('2');
+  assert.equal((await feed.get()).size, 1);
+  const tied = FieldValue.serverTimestamp();
+  const batch = admin.batch();
+  const ids = Array.from({length:51}, (_, i) => (i+1).toString(16).padStart(64,'0'));
+  ids.forEach(id => batch.create(feed.doc(id), {recipientUid:uid.owner,eventType:'JOB_CREATED',recordedAt:tied}));
+  await batch.commit();
+  const pageA = await call('owner','history',{afterId:first.nextId});
+  const pageB = await call('owner','history',{afterId:pageA.nextId});
+  assert.deepEqual(pageA.items.map(item=>item.id),ids.slice(0,50));
+  assert.equal(pageA.more,true);
+  assert.deepEqual(pageB.items.map(item=>item.id),ids.slice(50));
+  assert.equal(pageB.more,false);
+  await call('owner','unregister',{installationId:phoneA});
+  assert.equal((await devices.doc(phoneA).get()).exists, false);
+  assert.equal((await devices.doc(phoneB).get()).get('token'), 'b');
+ } finally {
+  await disableNetwork(auth);
+  await admin.terminate();
+  await deleteApp(app);
+ }
+});
+
 async function seed(collection, data, id='1') {
  const trusted = Object.prototype.hasOwnProperty.call(data,'authorizationCreatedAt') && data.authorizationCreatedAt === null
    ? data : {...data, authorizationCreatedAt: data.authorizationCreatedAt instanceof Timestamp ? data.authorizationCreatedAt : Timestamp.fromMillis(now-1000)};

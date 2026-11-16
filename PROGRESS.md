@@ -1,5 +1,13 @@
 # AIDHUNT TRAC — Development Progress & Final Reconciliation Log
 
+## Phase 4 original Owner notifications
+
+- Baseline `2a986651bc45c4e854892a7b886ef43a138f5b3e`, published working branch `codex/phase4-owner-notifications` after local validation.
+- Read-only production evidence showed disabled billing, no deployed Functions sender, zero Owner registrations and zero Owner activity documents in the inspected workspace. Deployed Rules do not expose either push collection to direct Android access.
+- Actual original Owner is selected by workspace owner UID and current active membership. Existing confirmed ledger writes feed the trusted sender. Android authenticates every private history/event request, handles permission and localization, and scopes tap and logout to the authenticated session. Emulator/synthetic builds remain isolated.
+- Added sender, Auth, Firestore and Functions Emulator checks, Android native-output tests and an explicit controlled live-test flag. All 101 focused Android tests and 143 backend tests passed. Demo build, lint with zero errors, one actual Functions Emulator trigger, and the offline and paginated history integration test passed. Generated BuildConfigs verified gated Live Test and isolated Device/Physical Test. See docs/phase4-owner-notifications.md for the infrastructure, rollback and physical tests still requiring approval or execution.
+- Exact next action: verify the Phase 4 branch's GitHub tests and stop before production billing, deployment, merge or APK distribution.
+
 ## Phase 3 financial reconciliation — 16 November 2026
 
 - Base `c2469b7c6f5af44650ac2f9c63c395e797f5a5db` on `codex/phase2-job-editing-report-filters`. Actions run 43851231931 passed on that exact commit. Phase branch `codex/phase3-financial-reconciliation`.

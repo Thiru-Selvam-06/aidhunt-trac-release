@@ -10,6 +10,7 @@ class TracApplication : Application() {
         if (BuildConfig.DEVICE_TEST || BuildConfig.LIVE_TEST || BuildConfig.PHYSICAL_TEST) {
             val demoApp = FirebaseApp.getInstance()
             com.example.data.firebase.FirebaseEnvironment.initialize(demoApp)
+            com.example.data.firebase.OwnerActivityPush.observeAuthentication(this)
             com.example.data.sync.WorkspaceSyncScheduler.start(this)
             return
         }
@@ -19,6 +20,7 @@ class TracApplication : Application() {
             } else {
                 FirebaseApp.getInstance()
             }
+            com.example.data.firebase.OwnerActivityPush.observeAuthentication(this)
             val opts = app?.options
             Log.i("TRAC_FIREBASE_VERIFY", "=== RUNTIME FIREBASE VERIFICATION ===")
             Log.i("TRAC_FIREBASE_VERIFY", "Package Name: $packageName")
