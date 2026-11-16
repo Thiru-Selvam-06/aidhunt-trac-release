@@ -149,7 +149,7 @@ class TamilLocalizationUiTest {
         compose.onAllNodesWithText("Partner").assertCountEquals(2)
     }
 
-    private val expenseTime = Calendar.getInstance().apply {
+    private val expenseTime = Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Kolkata")).apply {
         set(2026, Calendar.OCTOBER, 21, 10, 5, 0)
         set(Calendar.MILLISECOND, 0)
     }.timeInMillis

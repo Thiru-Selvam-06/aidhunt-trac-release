@@ -81,7 +81,7 @@ internal fun dateUnavailable(isTamil: Boolean): String = if (isTamil) "தேத
 
 internal fun reportDate(time: Long, isTamil: Boolean, pattern: String = "dd MMM yyyy"): String =
     if (time <= 0L) dateUnavailable(isTamil)
-    else SimpleDateFormat(pattern, Locale.forLanguageTag(if (isTamil) "ta-IN" else "en-IN")).apply {
+    else SimpleDateFormat(pattern, if (isTamil) Locale.forLanguageTag("ta-IN") else Locale.ENGLISH).apply {
         timeZone = businessReportZone
     }.format(Date(time))
 
