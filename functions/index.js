@@ -1,25 +1,48 @@
 "use strict";
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { initializeApp } = require("firebase-admin/app");
+const { defineBoolean, defineString } = require("firebase-functions/params");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
 const { onDocumentWrittenWithAuthContext } = require("firebase-functions/v2/firestore");
 const { REGION, publishOwnerActivity } = require("./owner-activity");
 const { ownerActivitySession } = require("./owner-activity-session");
+const { ownerActivityPilotScope, SESSION_SERVICE_ACCOUNT, SENDER_SERVICE_ACCOUNT } = require("./owner-activity-pilot");
 const { getAuth } = require("firebase-admin/auth");
 const { validateInvitation } = require("./invitation-policy");
-initializeApp();
+const app = initializeApp();
 const db = getFirestore();
 db.settings({ useBigInt: true }); // Android record IDs are 63-bit Longs, beyond JavaScript's exact Number range.
+const ownerPilotEnabled = defineBoolean("OWNER_ACTIVITY_PILOT_ENABLED", { default: false });
+const ownerPilotWorkspace = defineString("OWNER_ACTIVITY_PILOT_WORKSPACE_ID", { default: "" });
+const ownerPilotUid = defineString("OWNER_ACTIVITY_PILOT_OWNER_UID", { default: "" });
+const ownerPilotOptions = { region: REGION, minInstances: 0, maxInstances: 1, concurrency: 4 };
+
+function ownerActivityScope(workspaceId, sourceProjectId) {
+  const emulator = process.env.FUNCTIONS_EMULATOR === "true";
+  const projectId = app.options.projectId ?? process.env.GCLOUD_PROJECT;
+  return ownerActivityPilotScope({ projectId, emulator, enabled: ownerPilotEnabled.value(),
+    pilotWorkspaceId: ownerPilotWorkspace.value(), pilotOwnerUid: ownerPilotUid.value() }, workspaceId, sourceProjectId);
+}
+
 for (const collection of ["entries", "entryDeletionProofs", "collections", "expenses", "cashDeleteProofs", "withdrawals"]) {
   exports[`ownerActivity_${collection}`] = onDocumentWrittenWithAuthContext({
-    document: `workspaces/{wsId}/${collection}/{recordId}`, region: REGION, retry: true
-  }, event => publishOwnerActivity({
-    db, event, collection, fieldValue: FieldValue, messaging: getMessaging(),
-    emulator: process.env.FUNCTIONS_EMULATOR === "true"
-  }));
+    ...ownerPilotOptions, serviceAccount: SENDER_SERVICE_ACCOUNT,
+    document: `workspaces/{wsId}/${collection}/{recordId}`, retry: true
+  }, event => {
+    if (!event.project) return;
+    const scope = ownerActivityScope(event.params.wsId, event.project);
+    if (!scope) return;
+    return publishOwnerActivity({ db, event, collection, fieldValue: FieldValue, messaging: getMessaging(),
+      emulator: process.env.FUNCTIONS_EMULATOR === "true", expectedOwnerUid: scope.expectedOwnerUid });
+  });
 }
-exports.ownerActivitySession = onCall({ region: REGION }, request => ownerActivitySession(db, request));
+exports.ownerActivitySession = onCall({ ...ownerPilotOptions, serviceAccount: SESSION_SERVICE_ACCOUNT }, request => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first");
+  const scope = ownerActivityScope(request.data?.workspaceId);
+  if (!scope) throw new HttpsError("permission-denied", "Owner activity pilot unavailable");
+  return ownerActivitySession(db, request, scope.expectedOwnerUid);
+});
 
 function requiredString(data, key) {
   const value = data?.[key];

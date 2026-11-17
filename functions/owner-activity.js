@@ -73,7 +73,7 @@ function eventForOwner(snapshot, uid) {
   return { id: snapshot.id, type: snapshot.get("eventType"), actorName: safeActorName(snapshot.get("actorName")) };
 }
 
-async function publishOwnerActivity({ db, messaging, event, collection, fieldValue, emulator, now = Date.now }) {
+async function publishOwnerActivity({ db, messaging, event, collection, fieldValue, emulator, expectedOwnerUid, now = Date.now }) {
   const { wsId, recordId } = event.params;
   const before = event.data?.before?.data();
   const after = event.data?.after?.data();
@@ -101,7 +101,8 @@ async function publishOwnerActivity({ db, messaging, event, collection, fieldVal
       tx.get(workspace), tx.get(workspace.collection("members").doc(data.actorUid)), tx.get(eventRef)
     ]);
     const ownerUid = root.get("ownerUid");
-    if (!validId(ownerUid) || ownerUid === data.actorUid || !activeMember(actor, wsId, data.actorUid, "PARTNER")) return null;
+    if (!validId(ownerUid) || ownerUid === data.actorUid || (expectedOwnerUid != null && ownerUid !== expectedOwnerUid) ||
+        !activeMember(actor, wsId, data.actorUid, "PARTNER")) return null;
     const owner = await tx.get(workspace.collection("members").doc(ownerUid));
     if (!activeMember(owner, wsId, ownerUid, "OWNER")) return null;
     if (existing.exists) return existing.get("recipientUid") === ownerUid &&

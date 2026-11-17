@@ -71,8 +71,8 @@ function fixture() {
     return next;
   } };
   const run = ({ after = base, before, collection = "entries", recordId = "123", authId = after?.actorUid,
-    emulator = false, project = "trac-aidhunt", send = async message => pushes.push(message) } = {}) => publishOwnerActivity({
-    db, messaging: { send }, fieldValue: { serverTimestamp: () => stamp }, emulator, now: () => clock,
+    emulator = false, project = "trac-aidhunt", expectedOwnerUid, send = async message => pushes.push(message) } = {}) => publishOwnerActivity({
+    db, messaging: { send }, fieldValue: { serverTimestamp: () => stamp }, emulator, expectedOwnerUid, now: () => clock,
     collection, event: { authType: "unknown", authId, project, params: { wsId: workspaceId, recordId },
       data: { before: { data: () => before }, after: { data: () => after } } }
   });
@@ -165,4 +165,80 @@ test("PUSH-020: the fixed Functions Emulator principal only applies to the isola
   await f.run({ authId, project: "demo-aidhunt-v16", emulator: true });
   assert.equal(f.events().length, 1);
   assert.equal(f.pushes.length, 0);
+});
+
+
+test("pilot scope fails closed and accepts only the exact project, workspace, and pinned Owner", () => {
+  const { ownerActivityPilotScope } = require("./owner-activity-pilot");
+  const config = { projectId: "trac-aidhunt", emulator: false, enabled: true,
+    pilotWorkspaceId: "ws_pilot", pilotOwnerUid: "pilotOwner" };
+  assert.deepEqual(ownerActivityPilotScope(config, "ws_pilot"), { expectedOwnerUid: "pilotOwner" });
+  for (const change of [
+    { enabled: false }, { pilotWorkspaceId: undefined }, { pilotWorkspaceId: "*" },
+    { pilotOwnerUid: "" }, { pilotOwnerUid: "owner/foreign" }, { projectId: "foreign" }, { emulator: true }
+  ]) {
+    assert.equal(ownerActivityPilotScope({ ...config, ...change }, "ws_pilot"), null);
+  }
+  assert.equal(ownerActivityPilotScope(config, "ws_pilot_suffix"), null);
+  assert.equal(ownerActivityPilotScope(config, "ws_pilot", "foreign"), null);
+  assert.equal(ownerActivityPilotScope({ projectId: "demo-aidhunt-v16" }, "ws_test"), null);
+  assert.deepEqual(ownerActivityPilotScope({ projectId: "demo-aidhunt-v16", emulator: true }, "ws_test"),
+    { expectedOwnerUid: null });
+});
+
+test("an incorrectly pinned workspace Owner cannot generate events or token acceptance", async () => {
+  const f = fixture();
+  await f.run({ expectedOwnerUid: "differentOwner" });
+  assert.equal(f.events().length, 0);
+  assert.equal(f.pushes.length, 0);
+  await f.run({ expectedOwnerUid: "original" });
+  await f.run({ expectedOwnerUid: "original" });
+  assert.equal(f.events().length, 1);
+  assert.equal(f.pushes.length, 2);
+});
+
+test("all seven exported pilot handlers enforce the production scope before touching data", async () => {
+  const keys = ["FIREBASE_CONFIG", "FUNCTIONS_EMULATOR", "OWNER_ACTIVITY_PILOT_ENABLED",
+    "OWNER_ACTIVITY_PILOT_WORKSPACE_ID", "OWNER_ACTIVITY_PILOT_OWNER_UID"];
+  const original = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  process.env.FIREBASE_CONFIG = JSON.stringify({ projectId: "trac-aidhunt" });
+  delete process.env.FUNCTIONS_EMULATOR;
+  process.env.OWNER_ACTIVITY_PILOT_ENABLED = "true";
+  process.env.OWNER_ACTIVITY_PILOT_WORKSPACE_ID = "ws_pilot";
+  process.env.OWNER_ACTIVITY_PILOT_OWNER_UID = "pilotOwner";
+  try {
+    const functions = require("./index");
+    const triggers = ["entries", "entryDeletionProofs", "collections", "expenses", "cashDeleteProofs", "withdrawals"];
+    assert.deepEqual(Object.keys(functions).filter(key => key.startsWith("ownerActivity")).sort(),
+      [...triggers.map(name => "ownerActivity_" + name), "ownerActivitySession"].sort());
+    for (const collection of triggers) {
+      const handler = functions["ownerActivity_" + collection];
+      assert.deepEqual(handler.__endpoint.region, ["asia-south1"]);
+      assert.equal(handler.__endpoint.serviceAccountEmail, "trac-notify-sender@trac-aidhunt.iam.gserviceaccount.com");
+      assert.equal(handler.__endpoint.minInstances, 0);
+      assert.equal(handler.__endpoint.maxInstances, 1);
+      const unreadable = { before: { data: () => assert.fail("Read ledger data outside the pilot") } };
+      await handler.run({ project: "trac-aidhunt", params: { wsId: "ws_customer" }, data: unreadable });
+      await handler.run({ project: "foreign", params: { wsId: "ws_pilot" }, data: unreadable });
+      await handler.run({ params: { wsId: "ws_pilot" }, data: unreadable });
+    }
+    const session = functions.ownerActivitySession;
+    assert.deepEqual(session.__endpoint.region, ["asia-south1"]);
+    assert.equal(session.__endpoint.serviceAccountEmail, "trac-notify-session@trac-aidhunt.iam.gserviceaccount.com");
+    assert.equal(session.__endpoint.maxInstances, 1);
+    for (const action of ["register", "unregister", "history", "event"]) {
+      await assert.rejects(async () => session.run({ auth: { uid: "pilotOwner" },
+        data: { workspaceId: "ws_customer", action } }), { code: "permission-denied" });
+      await assert.rejects(async () => session.run({ auth: { uid: "partner" },
+        data: { workspaceId: "ws_pilot", action } }), { code: "permission-denied" });
+    }
+    process.env.OWNER_ACTIVITY_PILOT_ENABLED = "false";
+    await assert.rejects(async () => session.run({ auth: { uid: "pilotOwner" },
+      data: { workspaceId: "ws_pilot", action: "register" } }), { code: "permission-denied" });
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });

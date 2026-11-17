@@ -9,9 +9,11 @@ const eventPattern = /^[a-f0-9]{64}$/;
 const tokenPattern = /^[A-Za-z0-9:_-]{1,1024}$/;
 const pageSize = 50;
 
-async function ownerActivitySession(db, request) {
+async function ownerActivitySession(db, request, expectedOwnerUid) {
   const uid = request.auth?.uid;
   if (!validId(uid)) throw new HttpsError("unauthenticated", "Sign in first");
+  if (expectedOwnerUid != null && uid !== expectedOwnerUid)
+    throw new HttpsError("permission-denied", "Original Owner access required");
   const { workspaceId, action, installationId, token, language, eventId, afterId } = request.data ?? {};
   if (!validId(workspaceId) || !["register", "unregister", "history", "event"].includes(action))
     throw new HttpsError("invalid-argument", "Invalid activity request");
