@@ -545,7 +545,9 @@ internal fun MainAppContent(
         com.example.ui.screens.auth.WorkspaceRecoveryScreen(
             message = (workspaceInitState as? com.example.data.repository.WorkspaceInitState.Error)?.exception?.message ?: "Choose the workspace and role you want to use.",
             workspaces = (workspaceInitState as? com.example.data.repository.WorkspaceInitState.SelectionRequired)?.workspaces ?: choices,
-            canCreate = !com.example.BuildConfig.PHYSICAL_TEST,
+            canCreate = !com.example.BuildConfig.PHYSICAL_TEST && !com.example.BuildConfig.OWNER_VISIT_PILOT &&
+                (workspaceInitState as? com.example.data.repository.WorkspaceInitState.Error)?.exception
+                    is com.example.data.repository.NoActiveWorkspaceException,
             onRetry = { viewModel.retryWorkspaceDiscovery() },
             onSwitch = { ws -> viewModel.switchWorkspace(ws, onError = onShowToast) },
             onCreate = { name, business -> viewModel.createAccountForPhoneUser(name, business, onError = onShowToast) },

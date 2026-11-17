@@ -53,6 +53,11 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
+/** A successful membership discovery found no authorized workspace. */
+internal class NoActiveWorkspaceException : SecurityException(
+    "No active workspace was found. Ask the business Owner to verify your invitation or membership."
+)
+
 sealed class WorkspaceInitState {
     object Uninitialized : WorkspaceInitState()
     object Loading : WorkspaceInitState()
@@ -710,6 +715,9 @@ class WorkspaceRepository(
      */
     suspend fun createPersonalWorkspace(user: com.google.firebase.auth.FirebaseUser, fullName: String, businessName: String): UserProfile {
         check(!com.example.BuildConfig.OWNER_VISIT_PILOT) { "This test build uses the existing pilot workspace." }
+        check(getAvailableWorkspaces(UserProfile(uid = user.uid)).isEmpty()) {
+            "An authorized workspace already exists. Retry workspace verification to open it."
+        }
         return firestoreRepository.createPersonalWorkspace(user, fullName, businessName)
     }
 
@@ -761,7 +769,11 @@ class WorkspaceRepository(
                 return@withTimeout Result.failure(IllegalStateException("Choose a workspace to continue"))
             }
             val membership = selected?.let { id -> choices.firstOrNull { it.workspaceId == id } }
-                ?: throw SecurityException(if (com.example.BuildConfig.PHYSICAL_TEST) "Signed in. This isolated test build cannot open business workspaces. Choose an authorized staging workspace, or use the standard app for your personal/business workspace." else "No active workspace. Create a personal workspace or ask the Owner to complete your invitation.")
+                ?: if (com.example.BuildConfig.PHYSICAL_TEST) {
+                    throw SecurityException("This test build can only open authorized staging workspaces.")
+                } else {
+                    throw NoActiveWorkspaceException()
+                }
             if (com.example.BuildConfig.PHYSICAL_TEST && !com.example.data.firebase.FirebaseEnvironment.isStagingWorkspace(membership.workspaceId))
                 throw SecurityException("Physical test membership is outside the staging workspace")
             authoritativeWsId = membership.workspaceId
@@ -794,6 +806,12 @@ class WorkspaceRepository(
             if (normalizedFinalRole.isBlank()) throw SecurityException("Unsupported workspace role")
             val verifiedMembers = firestoreRepository.getWorkspaceMembers(targetWsId)
             workspaceRequests.check(request)
+            if (uid != getEffectiveActorUid() || verifiedMembers.none { member ->
+                    member.uid == uid && member.workspaceId == targetWsId && member.status.equals("active", true) &&
+                        com.example.data.auth.RoleUtils.normalizeRole(member.role) == normalizedFinalRole
+                }) {
+                throw SecurityException("Workspace membership changed. Verify your access and retry.")
+            }
             _activeWorkspaceMembers.value = verifiedMembers
             _workspaceMembers.value = verifiedMembers
             cacheVerifiedMembership(uid, targetWsId, verifiedMembers)
@@ -909,27 +927,27 @@ class WorkspaceRepository(
             workspaceRequests.check(request)
             if (e is kotlinx.coroutines.CancellationException && e !is kotlinx.coroutines.TimeoutCancellationException) throw e
             Log.w(TAG, "Workspace verification unavailable: ${e.message}")
-            if (e is SecurityException || (e is com.google.firebase.firestore.FirebaseFirestoreException &&
-                e.code in setOf(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,
-                    com.google.firebase.firestore.FirebaseFirestoreException.Code.UNAUTHENTICATED))) {
+            val networkFailure = com.example.data.firebase.WorkspaceDiscoveryPolicy.mayRestoreCachedWorkspace(e)
+            if (networkFailure) {
+                restoreVerifiedMembership(uid)
+                val cachedId = _activeWorkspaceId.value
+                if (!cachedId.isNullOrBlank() && _verifiedWorkspaceContext.value == (uid to cachedId) &&
+                    uid == getEffectiveActorUid() && resolveRoleForWorkspace(cachedId).isNotBlank()) {
+                    val cachedSettings = appSettingsDao.getSettingsForWorkspaceOnce(cachedId)
+                    if (cachedSettings != null) _settingsSyncState.value = SettingsSyncState.LoadedFromCloud(cachedSettings)
+                    return@withContext Result.success(cachedId)
+                }
+            } else if (e is SecurityException || (e is com.google.firebase.firestore.FirebaseFirestoreException &&
+                    e.code in setOf(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,
+                        com.google.firebase.firestore.FirebaseFirestoreException.Code.UNAUTHENTICATED))) {
                 context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE).edit().clear().commit()
-                _activeWorkspaceMembers.value = emptyList()
-                _workspaceMembers.value = emptyList()
-                currentUserRole = null
-                stopWorkspaceListeners()
-                _workspaceInitState.value = WorkspaceInitState.Error(e)
-                return@withContext Result.failure(e)
             }
-            restoreVerifiedMembership(uid)
-            val cachedId = _activeWorkspaceId.value
-            if (!cachedId.isNullOrBlank() && resolveRoleForWorkspace(cachedId).isNotBlank()) {
-                val cachedSettings = appSettingsDao.getSettingsForWorkspaceOnce(cachedId)
-                if (cachedSettings != null) _settingsSyncState.value = SettingsSyncState.LoadedFromCloud(cachedSettings)
-                Result.success(cachedId)
-            } else {
-                _workspaceInitState.value = WorkspaceInitState.Error(e)
-                Result.failure(e)
-            }
+            stopWorkspaceListeners()
+            val error = if (networkFailure)
+                IllegalStateException("Unable to verify workspace access. Check your internet connection and retry.", e)
+            else e
+            _workspaceInitState.value = WorkspaceInitState.Error(error)
+            Result.failure(error)
         }
     }
 
@@ -1404,6 +1422,7 @@ class WorkspaceRepository(
         _visibleWorkspaceIds.value = emptySet()
         _activeWorkspaceId.value = null
         _genuinePartnerWorkspaces.value = emptyList()
+        _availableWorkspaces.value = emptyList()
         // Reset to the least-privileged state. Owner must be re-resolved from the
         // membership record on the next initializeForUser(), never assumed.
         _isCollaborationOwner.value = false

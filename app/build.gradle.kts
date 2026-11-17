@@ -21,8 +21,8 @@ android {
     applicationId = "com.aistudio.aidhunttrac.cedlir"
     minSdk = 24
     targetSdk = 36
-    versionCode = 12
-    versionName = "1.0.11"
+    versionCode = 14
+    versionName = "1.0.13"
 
     buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", "false")
     buildConfigField("boolean", "DEVICE_TEST", "false")
@@ -67,7 +67,6 @@ android {
 
   buildTypes {
     release {
-      buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", "true")
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

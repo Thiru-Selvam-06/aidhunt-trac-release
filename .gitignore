@@ -44,6 +44,7 @@ trac-release-key.jks
 /google-services.json
 /app/google-services.json
 /app/src/physicalTest/google-services.json
+/app/src/release/google-services.json
 !/app/src/deviceTest/google-services.json
 /docs/test-artifacts/
 /scripts/__pycache__/
