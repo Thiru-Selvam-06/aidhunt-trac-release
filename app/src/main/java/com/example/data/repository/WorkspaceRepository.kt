@@ -50,6 +50,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 sealed class WorkspaceInitState {
@@ -707,11 +708,19 @@ class WorkspaceRepository(
      * then resolves Firestore bootstrap & verification, attaches real-time snapshot listeners,
      * resolves settings safely, and performs safe initial migration.
      */
-    suspend fun createPersonalWorkspace(user: com.google.firebase.auth.FirebaseUser, fullName: String, businessName: String): UserProfile =
-        firestoreRepository.createPersonalWorkspace(user, fullName, businessName)
+    suspend fun createPersonalWorkspace(user: com.google.firebase.auth.FirebaseUser, fullName: String, businessName: String): UserProfile {
+        check(!com.example.BuildConfig.OWNER_VISIT_PILOT) { "This test build uses the existing pilot workspace." }
+        return firestoreRepository.createPersonalWorkspace(user, fullName, businessName)
+    }
 
     suspend fun initializeForUser(userProfile: UserProfile, selectedWorkspaceId: String? = null): Result<String> = kotlinx.coroutines.withContext(Dispatchers.IO) {
         val uid = userProfile.uid
+        if (com.example.BuildConfig.OWNER_VISIT_PILOT && uid !in setOf("notifyOwner_4a2ff95fafcb8b", "notifyPartner_4a2ff95fafcb8b")) {
+            val error = SecurityException("Use one of the authorized synthetic pilot accounts.")
+            stopWorkspaceListeners()
+            _workspaceInitState.value = WorkspaceInitState.Error(error)
+            return@withContext Result.failure(error)
+        }
         if (uid.isBlank()) {
             val err = IllegalArgumentException("User profile UID is blank")
             _workspaceInitState.value = WorkspaceInitState.Error(err)
@@ -1309,6 +1318,7 @@ class WorkspaceRepository(
                     _hasConfirmedFinancialState.value = true
                 }
             },
+            onOwnerLedgerChanged = ::signalOwnerActivity,
             onNotificationsUpdated = { remoteNotifications, listenerWsId ->
                 val snapshotActor = getEffectiveActorUid()
                 scope.launch {
@@ -1316,7 +1326,7 @@ class WorkspaceRepository(
                         return@launch
                     }
                     require(remoteNotifications.all { it.workspaceId == listenerWsId }) { "Notification snapshot workspace mismatch" }
-                    appNotificationDao.upsertPreservingReadState(remoteNotifications)
+                    appNotificationDao.upsertPreservingReadState(remoteNotifications.filter(::isCloudNotification))
                 }
             }
         )
@@ -1782,7 +1792,7 @@ class WorkspaceRepository(
         val prefs = context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE)
         if (prefs.getString("uid", "") != uid) return
         val wsId = prefs.getString("workspaceId", "").orEmpty()
-        if (com.example.BuildConfig.PHYSICAL_TEST && !com.example.data.firebase.FirebaseEnvironment.isStagingWorkspace(wsId)) return
+        if (!com.example.data.firebase.FirebaseEnvironment.permitsWorkspaceDiscovery(wsId, com.example.BuildConfig.PHYSICAL_TEST)) return
         if (wsId.isBlank()) return
         val json = runCatching { org.json.JSONArray(prefs.getString("members", "[]")) }.getOrNull() ?: return
         val members = (0 until json.length()).map { index ->
@@ -3258,20 +3268,84 @@ class WorkspaceRepository(
     fun getSettlementRepaymentsFlow(workspaceId: String): Flow<List<SettlementRepaymentEntity>> =
         authorizedRecords(workspaceId, financial = true, records = stage3Dao.observeSettlementRepayments(workspaceId))
 
+
+    private val _ownerActivityChanges = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 1)
+    internal val ownerActivityChanges: kotlinx.coroutines.flow.SharedFlow<String> = _ownerActivityChanges
+
+    internal fun isCurrentOriginalOwner(key: com.example.data.sync.OwnerVisitKey): Boolean =
+        getEffectiveActorUid() == key.ownerUid && _activeWorkspaceId.value == key.workspaceId &&
+            _verifiedWorkspaceContext.value == (key.ownerUid to key.workspaceId) &&
+            (currentWorkspace.value?.takeIf { it.workspaceId == key.workspaceId }?.let { it.ownerUid == key.ownerUid }
+                ?: (context.getSharedPreferences("owner_activity_visits", Context.MODE_PRIVATE)
+                    .getLong(key.preferenceKey, 0L) > 0L)) &&
+            isOwnerOfWorkspace(key.workspaceId)
+
+    internal suspend fun refreshOwnerVisit(
+        key: com.example.data.sync.OwnerVisitKey,
+        since: Long?,
+        online: () -> Boolean
+    ): com.example.data.firebase.OwnerVisitCloud.Refresh {
+        check(isCurrentOriginalOwner(key) && online())
+        val refresh = com.example.data.firebase.OwnerVisitCloud.refresh(key, since)
+        database.withTransaction {
+            check(isCurrentOriginalOwner(key) && online())
+            val items = refresh.activities.map { (item, _) ->
+                val legacyType = if (item.eventType == com.example.data.sync.OwnerVisitActivity.OLD_ENTRY)
+                    AppNotificationEntity.EVENT_JOB_CREATED else item.eventType
+                val legacyId = item.operationId + "_OWNER_" + legacyType
+                val legacy = appNotificationDao.getById(key.workspaceId, legacyId)
+                if (legacy != null && com.example.data.sync.OwnerVisitActivity.sameOperation(item, legacy))
+                    item.copy(isRead = legacy.isRead, readAt = legacy.readAt)
+                else item
+            }
+            appNotificationDao.upsertPreservingReadState(items)
+        }
+        return refresh
+    }
+
+    private fun signalOwnerActivity(workspaceId: String) {
+        val uid = getEffectiveActorUid().orEmpty()
+        if (uid.isNotBlank() && isCurrentOriginalOwner(com.example.data.sync.OwnerVisitKey(workspaceId, uid))) {
+            _ownerActivityChanges.tryEmit(workspaceId)
+        }
+    }
+
+    private fun isCloudNotification(item: AppNotificationEntity): Boolean =
+        !item.id.startsWith(com.example.data.sync.OwnerVisitActivity.ID_PREFIX) &&
+            item.targetAudience != com.example.data.sync.OwnerVisitActivity.AUDIENCE
+
+    private fun notificationVisible(item: AppNotificationEntity, uid: String, isOwner: Boolean): Boolean {
+        if (item.actorUid == uid || (item.recipientUid.isNotBlank() && item.recipientUid != uid)) return false
+        if (item.targetAudience == com.example.data.sync.OwnerVisitActivity.AUDIENCE)
+            return isOwner && isCurrentOriginalOwner(com.example.data.sync.OwnerVisitKey(item.workspaceId, uid)) &&
+                _activeWorkspaceMembers.value.any {
+                    it.workspaceId == item.workspaceId && it.uid == item.actorUid &&
+                        it.status.equals("ACTIVE", true) && (com.example.data.auth.RoleUtils.normalizeRole(it.role) == com.example.data.auth.RoleUtils.ROLE_PARTNER)
+                }
+        if (!isOwner) return item.targetAudience == AppNotificationEntity.AUDIENCE_PARTNER_TARGETED && item.recipientUid == uid
+        // Older client-created copies lack a commit guarantee. Corroborated copies are
+        // represented by the verified local row, with the old read flag preserved.
+        return item.targetAudience != AppNotificationEntity.AUDIENCE_OWNER_ONLY ||
+            item.eventType !in com.example.data.sync.OwnerVisitActivity.eventTypes
+    }
+
     fun getVisibleNotificationsFlow(workspaceId: String, actorUid: String, isOwner: Boolean): Flow<List<AppNotificationEntity>> =
         authorizedRecords(
             workspaceId,
             financial = true,
             records = if (actorUid.isBlank()) kotlinx.coroutines.flow.flowOf(emptyList())
             else appNotificationDao.observeVisibleNotifications(workspaceId, actorUid, isOwner)
+                .map { items -> items.filter { notificationVisible(it, actorUid, isOwner) } }
         )
 
     suspend fun markNotificationRead(workspaceId: String, notificationId: String) {
         val uid = getEffectiveActorUid().orEmpty()
         if (workspaceId.isBlank() || notificationId.isBlank() || uid.isBlank()) return
         val readAt = System.currentTimeMillis()
+        val item = appNotificationDao.getById(workspaceId, notificationId) ?: return
+        if (_activeWorkspaceId.value != workspaceId || !notificationVisible(item, uid, isOwnerOfWorkspace(workspaceId))) return
         appNotificationDao.markRead(workspaceId, notificationId, readAt)
-        if (isCloudReady()) {
+        if (isCloudReady() && !notificationId.startsWith(com.example.data.sync.OwnerVisitActivity.ID_PREFIX)) {
             try {
                 firestoreRepository.markNotificationReadInCloud(workspaceId, notificationId, readAt)
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -3284,20 +3358,18 @@ class WorkspaceRepository(
 
     suspend fun markAllNotificationsRead(workspaceId: String) {
         val uid = getEffectiveActorUid().orEmpty()
-        if (workspaceId.isBlank() || uid.isBlank()) return
+        if (workspaceId.isBlank() || uid.isBlank() || _activeWorkspaceId.value != workspaceId) return
         val isOwner = isOwnerOfWorkspace(workspaceId)
         val readAt = System.currentTimeMillis()
         val unreadIds = appNotificationDao.getAllOnce(workspaceId)
-            .filter {
-                !it.isRead && it.actorUid != uid && (
-                    if (isOwner) it.targetAudience == AppNotificationEntity.AUDIENCE_OWNER_ONLY || it.recipientUid == uid || it.recipientUid.isBlank()
-                    else it.targetAudience == AppNotificationEntity.AUDIENCE_PARTNER_TARGETED && it.recipientUid == uid
-                )
-            }
+            .filter { !it.isRead && notificationVisible(it, uid, isOwner) }
             .map { it.id }
-        appNotificationDao.markAllRead(workspaceId, uid, isOwner, readAt)
+        database.withTransaction {
+            if (_activeWorkspaceId.value != workspaceId || getEffectiveActorUid() != uid) return@withTransaction
+            unreadIds.forEach { appNotificationDao.markRead(workspaceId, it, readAt) }
+        }
         if (isCloudReady()) {
-            unreadIds.forEach { notifId ->
+            unreadIds.filterNot { it.startsWith(com.example.data.sync.OwnerVisitActivity.ID_PREFIX) }.forEach { notifId ->
                 try {
                     firestoreRepository.markNotificationReadInCloud(workspaceId, notifId, readAt)
                 } catch (e: kotlinx.coroutines.CancellationException) {

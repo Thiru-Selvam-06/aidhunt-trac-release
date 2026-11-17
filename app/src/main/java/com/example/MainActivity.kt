@@ -50,6 +50,16 @@ class MainActivity : ComponentActivity() {
     private var openOwnerActivity by mutableStateOf<OwnerActivityDestination?>(null)
     private var ownerActivityResume by mutableStateOf(0)
 
+    override fun onStart() {
+        super.onStart()
+        viewModel.setOwnerVisitForeground(true)
+    }
+
+    override fun onStop() {
+        if (!isChangingConfigurations) viewModel.setOwnerVisitForeground(false)
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         ownerActivityResume++
@@ -151,6 +161,7 @@ internal fun MainAppContent(
     val settlementRepayments by viewModel.settlementRepayments.collectAsState()
     val borrowingOverview by viewModel.borrowingOverview.collectAsState()
     val notifications by viewModel.notifications.collectAsState()
+    val ownerVisit by viewModel.ownerVisit.collectAsState()
     val unreadNotificationCount by viewModel.unreadNotificationCount.collectAsState()
     var showNotificationsSheet by remember { mutableStateOf(false) }
     val pushContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
@@ -1333,7 +1344,8 @@ internal fun MainAppContent(
             }
             if (showNotificationsSheet) {
                 com.example.ui.components.NotificationPanelSheet(
-                    notifications = notifications,
+                    notifications = notifications.filter { it.workspaceId == activeWorkspaceId },
+                    visit = ownerVisit?.takeIf { it.key.workspaceId == activeWorkspaceId && it.key.ownerUid == viewModel.currentUid },
                     isOwner = isCollaborationOwner,
                     isTamil = isTamil,
                     currency = settings.currency,

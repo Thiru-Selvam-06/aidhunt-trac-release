@@ -45,20 +45,24 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.entity.AppNotificationEntity
+import com.example.data.sync.OwnerVisit
+import com.example.data.sync.OwnerVisitStatus
+import com.example.ui.util.JobAuditPresentation
 import com.example.ui.util.NotificationPresenter
 
 private enum class NotificationFilter { ALL, UNREAD, APPROVALS_AND_SETTLEMENTS }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NotificationPanelSheet(
+internal fun NotificationPanelSheet(
     notifications: List<AppNotificationEntity>,
     isOwner: Boolean,
     isTamil: Boolean,
     currency: String = "₹",
     onMarkRead: (String) -> Unit,
     onMarkAllRead: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    visit: OwnerVisit? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var filter by remember { mutableStateOf(NotificationFilter.ALL) }
@@ -153,7 +157,10 @@ fun NotificationPanelSheet(
 
             Spacer(Modifier.height(10.dp))
 
-            if (visibleItems.isEmpty()) {
+            val recent = if (visit == null) emptyList() else visibleItems.filter { it.id in visit.recentIds }
+            val history = if (visit == null) visibleItems else visibleItems.filterNot { it.id in visit.recentIds }
+            val hasRecent = visit?.recentIds?.any { id -> notifications.any { it.id == id } } == true
+            if (visibleItems.isEmpty() && visit == null) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = Color.White,
@@ -198,84 +205,137 @@ fun NotificationPanelSheet(
                     contentPadding = PaddingValues(bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(visibleItems, key = { it.id }) { item ->
-                        val presented = remember(item, isTamil, currency) {
-                            NotificationPresenter.present(item, isTamil, currency)
+
+                    if (visit != null) {
+                        item(key = "owner-visit-section") { OwnerVisitHeader(visit, hasRecent, isTamil) }
+                        items(recent, key = { it.id }) { item ->
+                            ActivityNotificationRow(item, isTamil, currency, onMarkRead)
                         }
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = if (item.isRead) Color.White else Color(0xFFECFDF5),
-                            border = BorderStroke(
-                                1.dp,
-                                if (item.isRead) Color(0xFFE2E8F0) else Color(0xFFA7F3D0)
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp)
-                                .clickable { if (!item.isRead) onMarkRead(item.id) }
-                                .testTag("notification_item_${item.id}")
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        if (!item.isRead) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(8.dp)
-                                                    .clip(CircleShape)
-                                                    .background(Color(0xFF059669))
-                                            )
-                                        }
-                                        Text(
-                                            text = presented.title,
-                                            fontSize = 13.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF0F172A),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color(0xFFE2E8F0)
-                                    ) {
-                                        Text(
-                                            text = presented.categoryLabel,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFF334155),
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
+                        if (history.isNotEmpty()) {
+                            item(key = "owner-notification-history") {
                                 Text(
-                                    text = presented.body,
-                                    fontSize = 12.5.sp,
-                                    color = Color(0xFF1E293B)
-                                )
-                                Text(
-                                    text = presented.timestampLabel,
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
+                                    if (isTamil) "அறிவிப்பு வரலாறு" else "Notification History",
+                                    fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF334155)
                                 )
                             }
                         }
                     }
+                    items(history, key = { it.id }) { item ->
+                        ActivityNotificationRow(item, isTamil, currency, onMarkRead)
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ActivityNotificationRow(
+    item: AppNotificationEntity,
+    isTamil: Boolean,
+    currency: String,
+    onMarkRead: (String) -> Unit
+) {
+    val presented = remember(item, isTamil, currency) {
+        NotificationPresenter.present(item, isTamil, currency)
+    }
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = if (item.isRead) Color.White else Color(0xFFECFDF5),
+        border = BorderStroke(
+            1.dp,
+            if (item.isRead) Color(0xFFE2E8F0) else Color(0xFFA7F3D0)
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clickable { if (!item.isRead) onMarkRead(item.id) }
+            .testTag("notification_item_${item.id}")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    if (!item.isRead) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF059669))
+                        )
+                    }
+                    Text(
+                        text = presented.title,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A),
+                        maxLines = if (item.targetAudience == com.example.data.sync.OwnerVisitActivity.AUDIENCE) 2 else 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFE2E8F0)
+                ) {
+                    Text(
+                        text = presented.categoryLabel,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF334155),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            Text(
+                text = presented.body,
+                fontSize = 12.5.sp,
+                color = Color(0xFF1E293B)
+            )
+            Text(
+                text = presented.timestampLabel,
+                fontSize = 11.sp,
+                color = Color(0xFF64748B)
+            )
+        }
+    }
+}
+
+@Composable
+internal fun OwnerVisitHeader(visit: OwnerVisit, hasRecent: Boolean, isTamil: Boolean) {
+    val status = when (visit.status) {
+        OwnerVisitStatus.LOADING -> if (isTamil) "செயல்பாடுகள் புதுப்பிக்கப்படுகின்றன…" else "Refreshing Partner activity…"
+        OwnerVisitStatus.OFFLINE -> if (isTamil) "இணையம் இல்லை. சேமித்த அறிவிப்புகள் காட்டப்படுகின்றன."
+            else "Offline · Showing saved notifications"
+        OwnerVisitStatus.FAILED -> if (isTamil) "புதுப்பிக்க முடியவில்லை. சேமித்த அறிவிப்புகள் காட்டப்படுகின்றன."
+            else "Could not refresh · Showing saved notifications"
+        OwnerVisitStatus.READY -> if (hasRecent) {
+            if (isTamil) "புதிய பங்குதாரர் செயல்பாடுகள்" else "New Partner Activity"
+        } else if (visit.firstVisit) {
+            if (isTamil) "இந்த வருகையிலிருந்து புதிய செயல்பாடுகள் காட்டப்படும்."
+            else "New Partner activity will appear from this visit onward."
+        } else if (isTamil) "கடைசி வருகைக்குப் பிறகு புதிய பங்குதாரர் செயல்பாடு இல்லை."
+            else "No new Partner activity since your last visit."
+    }
+    Column(Modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(if (isTamil) "கடைசி வருகைக்குப் பிறகு" else "Since Your Last Visit",
+            fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+        Text(status, fontSize = 12.sp, color = Color(0xFF475569), modifier = Modifier.testTag("owner_visit_status"))
+        visit.lastUpdated?.let { checkpoint ->
+            val label = if (isTamil) "கடைசியாக புதுப்பித்தது" else "Last Updated"
+            Text("$label · " + JobAuditPresentation.instant(checkpoint, isTamil),
+                fontSize = 11.sp, color = Color(0xFF64748B))
         }
     }
 }

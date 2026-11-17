@@ -15,6 +15,8 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   val ownerActivityLiveTest = providers.gradleProperty("ownerActivityLiveTest").orNull == "true"
+  val ownerVisitPilot = providers.gradleProperty("ownerVisitPilot").orNull == "true"
+  check(!ownerVisitPilot || !ownerActivityLiveTest) { "The Owner visit pilot requires native push to be disabled." }
   defaultConfig {
     applicationId = "com.aistudio.aidhunttrac.cedlir"
     minSdk = 24
@@ -25,6 +27,7 @@ android {
     buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", "false")
     buildConfigField("boolean", "DEVICE_TEST", "false")
     buildConfigField("boolean", "LIVE_TEST", "false")
+    buildConfigField("boolean", "OWNER_VISIT_PILOT", "false")
     buildConfigField("boolean", "PHYSICAL_TEST", "false")
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -86,6 +89,7 @@ android {
       versionNameSuffix = "-live-test"
       matchingFallbacks += listOf("debug")
       buildConfigField("boolean", "LIVE_TEST", "true")
+      buildConfigField("boolean", "OWNER_VISIT_PILOT", ownerVisitPilot.toString())
       buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", ownerActivityLiveTest.toString())
     }
     create("physicalTest") {

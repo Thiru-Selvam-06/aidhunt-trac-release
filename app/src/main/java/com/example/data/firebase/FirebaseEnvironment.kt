@@ -24,8 +24,14 @@ object FirebaseEnvironment {
             workspaceId in AUTHORIZED_STAGING_WORKSPACES
 
     /** Build boundary only; callers must first verify UID-scoped active membership. */
-    internal fun permitsWorkspaceDiscovery(workspaceId: String, physicalTest: Boolean): Boolean =
-        workspaceId.isNotBlank() && if (physicalTest) isStagingWorkspace(workspaceId) else !workspaceId.startsWith("ws_cf_staging_")
+    internal fun permitsWorkspaceDiscovery(
+        workspaceId: String?, physicalTest: Boolean, ownerVisitPilot: Boolean = BuildConfig.OWNER_VISIT_PILOT
+    ): Boolean = when {
+        ownerVisitPilot -> workspaceId == "ws_notify_pilot_4a2ff95fafcb8b"
+        workspaceId.isNullOrBlank() -> false
+        physicalTest -> isStagingWorkspace(workspaceId)
+        else -> !workspaceId.startsWith("ws_cf_staging_")
+    }
 
     fun initialize(app: FirebaseApp) {
         if (BuildConfig.PHYSICAL_TEST) {

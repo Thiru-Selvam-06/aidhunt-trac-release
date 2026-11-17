@@ -17,10 +17,10 @@ interface AppNotificationDao {
         WHERE workspaceId = :workspaceId
           AND actorUid != :currentUid
           AND (
-            (:isOwner = 1 AND (targetAudience = 'OWNER_ONLY' OR recipientUid = :currentUid OR recipientUid = ''))
+            (:isOwner = 1 AND (recipientUid = :currentUid OR (targetAudience = 'OWNER_ONLY' AND recipientUid = '')))
             OR (:isOwner = 0 AND targetAudience = 'PARTNER_TARGETED' AND recipientUid = :currentUid)
           )
-        ORDER BY createdAt DESC
+        ORDER BY createdAt DESC, id ASC
         """
     )
     fun observeVisibleNotifications(
@@ -32,7 +32,7 @@ interface AppNotificationDao {
     @Query("SELECT * FROM app_notifications WHERE workspaceId = :workspaceId AND id = :id LIMIT 1")
     suspend fun getById(workspaceId: String, id: String): AppNotificationEntity?
 
-    @Query("SELECT * FROM app_notifications WHERE workspaceId = :workspaceId ORDER BY createdAt DESC")
+    @Query("SELECT * FROM app_notifications WHERE workspaceId = :workspaceId ORDER BY createdAt DESC, id ASC")
     suspend fun getAllOnce(workspaceId: String): List<AppNotificationEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -64,7 +64,7 @@ interface AppNotificationDao {
           AND isRead = 0
           AND actorUid != :currentUid
           AND (
-            (:isOwner = 1 AND (targetAudience = 'OWNER_ONLY' OR recipientUid = :currentUid OR recipientUid = ''))
+            (:isOwner = 1 AND (recipientUid = :currentUid OR (targetAudience = 'OWNER_ONLY' AND recipientUid = '')))
             OR (:isOwner = 0 AND targetAudience = 'PARTNER_TARGETED' AND recipientUid = :currentUid)
           )
         """

@@ -53,7 +53,10 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
@@ -657,6 +660,92 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+
+    private val ownerVisitForeground = MutableStateFlow(false)
+    private val ownerVisitPrefs = application.getSharedPreferences("owner_activity_visits", android.content.Context.MODE_PRIVATE)
+    private val _ownerVisit = MutableStateFlow<com.example.data.sync.OwnerVisit?>(null)
+    internal val ownerVisit = _ownerVisit.asStateFlow()
+
+    internal fun setOwnerVisitForeground(foreground: Boolean) {
+        ownerVisitForeground.value = foreground
+    }
+
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun observeOwnerVisits() {
+        val key = combine(activeWorkspaceId, currentUserRole, authState, currentWorkspace) { ws, role, auth, workspace ->
+            val uid = (auth as? AuthState.Authenticated)?.profile?.uid
+            if (uid.isNullOrBlank() || ws.isNullOrBlank() || role != com.example.data.auth.RoleUtils.ROLE_OWNER ||
+                (workspace?.workspaceId == ws && workspace.ownerUid != uid)) null
+            else com.example.data.sync.OwnerVisitKey(ws, uid).takeIf(workspaceRepository::isCurrentOriginalOwner)
+        }
+        val visits = mutableMapOf<com.example.data.sync.OwnerVisitKey, com.example.data.sync.OwnerVisit>()
+        viewModelScope.launch {
+            combine(key, ownerVisitForeground, isEffectiveOnline) { owner, foreground, online ->
+                Triple(owner, foreground, online)
+            }.collectLatest { (owner, foreground, online) ->
+                if (!foreground) visits.clear()
+                if (!foreground || owner == null || !workspaceRepository.isCurrentOriginalOwner(owner)) {
+                    _ownerVisit.value = null
+                    return@collectLatest
+                }
+                val saved = ownerVisitPrefs.getLong(owner.preferenceKey, 0L).takeIf { it > 0L }
+                var visit = visits[owner] ?: com.example.data.sync.OwnerVisit(owner, saved, saved,
+                    com.example.data.sync.OwnerVisitStatus.LOADING)
+                fun show(status: com.example.data.sync.OwnerVisitStatus) {
+                    visit = visit.copy(status = status)
+                    visits[owner] = visit
+                    _ownerVisit.value = visit
+                }
+                if (!online) {
+                    show(com.example.data.sync.OwnerVisitStatus.OFFLINE)
+                    return@collectLatest
+                }
+                show(com.example.data.sync.OwnerVisitStatus.LOADING)
+
+                // Conflate a burst of authoritative listener changes into one serial refresh.
+                workspaceRepository.ownerActivityChanges
+                    .filter { it == owner.workspaceId }
+                    .debounce(1200L)
+                    .onStart { emit(owner.workspaceId) }
+                    .buffer(kotlinx.coroutines.channels.Channel.CONFLATED)
+                    .collect {
+                        fun canRefresh() = ownerVisitForeground.value && isEffectiveOnline.value &&
+                            workspaceRepository.isCurrentOriginalOwner(owner)
+                        if (!canRefresh()) return@collect
+                        try {
+                            val refresh = workspaceRepository.refreshOwnerVisit(owner, visit.since, ::canRefresh)
+                            if (!canRefresh()) return@collect
+                            val since = visit.since
+                            val recent = if (since == null) emptySet() else refresh.activities
+                                .filter { it.availableAt >= since && it.availableAt > 0L }
+                                .mapTo(mutableSetOf()) { it.item.id }
+                            // The readTime marks the beginning of the verified server read.
+                            // Write only after Room commits and only for this online visit.
+                            val updated = visit.refreshed(refresh.readTime, recent)
+                            val savedCheckpoint = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                if (!canRefresh()) false else ownerVisitPrefs.edit()
+                                    .putLong(owner.preferenceKey, checkNotNull(updated.lastUpdated)).commit()
+                            }
+                            if (!canRefresh()) return@collect
+                            if (!savedCheckpoint) {
+                                show(com.example.data.sync.OwnerVisitStatus.FAILED)
+                            } else {
+                                visit = updated
+                                show(com.example.data.sync.OwnerVisitStatus.READY)
+                            }
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            if (canRefresh()) show(com.example.data.sync.OwnerVisitStatus.FAILED)
+                        }
+                    }
+            }
+        }
+    }
+
+    init {
+        observeOwnerVisits()
+    }
     val unreadNotificationCount: StateFlow<Int> = notifications
         .map { list -> list.count { !it.isRead } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)

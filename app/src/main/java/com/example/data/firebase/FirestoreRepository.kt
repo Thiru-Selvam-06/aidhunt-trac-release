@@ -337,7 +337,8 @@ class FirestoreRepository(
         onSettlementRepaymentsUpdated: (List<com.example.data.entity.SettlementRepaymentEntity>, String) -> Unit = { _, _ -> },
         onFinancialStateUpdated: (Double, Double, Double, String) -> Unit = { _, _, _, _ -> },
         ownerWorkspaceIds: Set<String> = emptySet(),
-        onNotificationsUpdated: (List<com.example.data.entity.AppNotificationEntity>, String) -> Unit = { _, _ -> }
+        onNotificationsUpdated: (List<com.example.data.entity.AppNotificationEntity>, String) -> Unit = { _, _ -> },
+        onOwnerLedgerChanged: (String) -> Unit = {}
     ) {
         val firestore = db ?: return
         val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: ""
@@ -440,6 +441,8 @@ class FirestoreRepository(
                             doc.data?.takeUnless { it["isDeleted"] == true }?.let { jobEntryFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
                         }
                         onJobsUpdated(jobs, workspaceId)
+                        if (workspaceId in ownerWorkspaceIds && snapshot.documentChanges.isNotEmpty())
+                            onOwnerLedgerChanged(workspaceId)
                     }
                 }
             regList.add(regEntries)
@@ -461,6 +464,8 @@ class FirestoreRepository(
                                 doc.data?.takeUnless { it["isDeleted"] == true }?.let { expenseFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
                             }
                             onExpensesUpdated(expenses, workspaceId)
+                            if (workspaceId in ownerWorkspaceIds && snapshot.documentChanges.isNotEmpty())
+                                onOwnerLedgerChanged(workspaceId)
                         }
                     }
                 regList.add(regExpenses)
@@ -559,6 +564,8 @@ class FirestoreRepository(
                                 doc.data?.takeUnless { it["isDeleted"] == true }?.let { withdrawalFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
                             }
                             onWithdrawalsUpdated(withdrawals, workspaceId)
+                            if (workspaceId in ownerWorkspaceIds && snapshot.documentChanges.isNotEmpty())
+                                onOwnerLedgerChanged(workspaceId)
                         }
                     }
                 regList.add(regWithdrawals)
@@ -610,6 +617,8 @@ class FirestoreRepository(
                                 }
                             }
                             onPaymentsUpdated(payments, workspaceId)
+                            if (workspaceId in ownerWorkspaceIds && snapshot.documentChanges.isNotEmpty())
+                                onOwnerLedgerChanged(workspaceId)
                         }
                     }
                 regList.add(regPayments)
@@ -758,6 +767,8 @@ class FirestoreRepository(
                                 doc.data?.let { notificationFromFirestoreMap(it, fallbackId = doc.id, fallbackWorkspaceId = workspaceId) }
                             }
                             onNotificationsUpdated(list, workspaceId)
+                            if (workspaceId in ownerWorkspaceIds && snapshot.documentChanges.isNotEmpty())
+                                onOwnerLedgerChanged(workspaceId)
                         }
                     })
             }
