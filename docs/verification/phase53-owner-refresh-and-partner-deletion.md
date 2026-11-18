@@ -28,7 +28,7 @@ The native path still authenticates the actor, acquires Entry/Customer guards, r
 
 `firestore.phase53.rules` is a separate candidate derived from the freshly exported active policy, release `e7981704-cf72-453b-a867-ad3faa10c75f`. Its only changes remove own-creator, ordinary-only and 24-hour restrictions from Partner **job lock/proof** eligibility. It retains active membership, workspace isolation, reviewed creation provenance, non-future action times, beneficiary checks, receipt accounting, protected financial children, immutable proofs and guards. See `phase53-partner-deletion.rules.diff`. Standard `firestore.rules`, Firebase configuration and deployment targets are untouched. Do not replace live Rules with the unrelated larger development policy.
 
-Candidate SHA-256: `2c4c79364faec2ba644cc0c30624912e228702a007bdffb9612be4d80a58f1b6`.
+Candidate published Git content (LF) SHA-256: `4b0880cb108fe97440cee9a008826e5498807b77243fbc292c47313cd06a5874`. The local Windows CRLF file SHA-256 is `2c4c79364faec2ba644cc0c30624912e228702a007bdffb9612be4d80a58f1b6`; only line endings differ. Compare canonical Git content during deployment preflight.
 
 Activation requires separate approval: re-read/export current live Rules, confirm no intervening change, apply only this reviewed diff, validate/deploy that policy, then build a separately reviewed higher-version APK with the gate enabled. A Rules deployment alone does not activate the gate in this candidate. Rollback disables the gate in a subsequent higher-version build and restores the saved pre-deployment policy after assessing pending guarded deletes. Do not erase pending actions or proofs.
 
@@ -38,7 +38,11 @@ Proposed policy: all 15 Rules Emulator scenarios passed with zero failures/skips
 
 The first targeted Android run executed 293 tests: 289 passed, four failed, none skipped. Failures were an old Operator-allowed expectation, two incomplete synthetic fixtures (an unintentionally paid deletion source and a job create without isDeleted), and a transport timeout in an existing emulator test. Assertions/fixtures were corrected while preserving all financial and authorization protections. A 50-test follow-up passed 49, including the timed-out original test and actual staged guarded deletion/idempotency. The remaining synthetic edit lacked editedByUid/Name/Role, which the unchanged Rules correctly rejected. The fixture now supplies those required editor fields. Original failure evidence is retained outside Git.
 
-The last refresh rerun, signed release build/lint, packaging and exact-source GitHub CI are pending at publication of this development commit. Check this branch's Android CI run and the final delivery evidence before release; source presence or the earlier partial runs do not constitute full acceptance. Production and physical release gates remain closed.
+The final original-shape Owner REST/Rules integration test passed against the exported active policy after supplying valid editor metadata. Across retained targeted runs, 294 unique tests now have passing final outcomes, with zero unresolved failures or skips. Signed normal-package release assembly and release lint passed; lint has zero errors. Local protected release configuration and signing credentials remain outside Git.
+
+First GitHub run [44365486505](https://github.com/Thiru-Selvam-06/aidhunt-trac-release/actions/runs/44365486505), application-source commit `4c4530105b515615611a6f3db4e9b466b415b30c`, passed Rules409/409, backend146/146, unit/Compose/outbox partitions, compilation/lint, Worker build and harness checks. Its database partition ran174 tests with one failure: V16ArchitectureContractTest still expected Operator deletion. The follow-up preserves the ordinary/historical and Operator editing assertions, denies the unsupported Operator deletion and adds a positive eligible Partner deletion assertion. It does not change application code, Rules or financial expectations. This genuine failure is retained and requires a fresh clean final run.
+
+The final follow-up branch-head CI must pass all applicable jobs before handoff. Consult the exact SHA/run in the delivery report and [branch workflow](https://github.com/Thiru-Selvam-06/aidhunt-trac-release/actions/workflows/android-ci.yml?query=branch%3Acodex%2Fphase53-owner-activity-deletion). Final packaging/certificate checks and the actual final CI result are recorded in the local delivery evidence and persistent workspace progress file. Physical release gates remain closed.
 
 ## Physical acceptance checklist — NOT TESTED
 
@@ -77,6 +81,7 @@ Room remains schema 24, with the existing database filename and durable queue. S
 | `app/src/test/java/com/example/OwnerVisitCloudEmulatorTest.kt` | Legacy live-schema reproduction; authorized Partner create/edit and partial-source refresh. |
 | `app/src/test/java/com/example/OwnerVisitComposeTest.kt` | English/Tamil Last Updated and partial diagnostic rendering. |
 | `app/src/test/java/com/example/Phase53DeletionEmulatorTest.kt` | Actual guarded Android HTTP transport, original operation acknowledgement, duplicate replay and totals under the candidate policy. |
+| `app/src/test/java/com/example/V16ArchitectureContractTest.kt` | Keep ordinary/historical invariants and Partner deletion coverage while denying the Operator action already rejected by the guarded backend. |
 | `app/src/test/java/com/example/Phase53DeletionPolicyTest.kt` | Staged/default-off role, age, creator and membership isolation regression cases. |
 | `docs/regression/interaction-inventory.csv` | Regenerated source references after view-model line shifts; no UI coverage claim. |
 | `docs/regression/interaction-inventory.json` | Matching machine-readable interaction inventory. |
