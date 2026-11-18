@@ -9,7 +9,7 @@ internal data class OwnerVisitKey(val workspaceId: String, val ownerUid: String)
     val preferenceKey: String get() = ownerUid.length.toString() + ":" + ownerUid + workspaceId
 }
 
-internal enum class OwnerVisitStatus { LOADING, OFFLINE, READY, FAILED }
+internal enum class OwnerVisitStatus { LOADING, OFFLINE, READY, PARTIAL, FAILED }
 
 internal data class OwnerVisit(
     val key: OwnerVisitKey,
@@ -17,14 +17,16 @@ internal data class OwnerVisit(
     val lastUpdated: Long?,
     val status: OwnerVisitStatus,
     val recentIds: Set<String> = emptySet(),
-    val firstVisit: Boolean = since == null
+    val firstVisit: Boolean = since == null,
+    val diagnostics: Set<String> = emptySet()
 ) {
     // Keep the same boundary throughout the foreground visit, including reconnects.
     fun refreshed(serverTime: Long, recent: Set<String>) = copy(
         since = since ?: serverTime,
         lastUpdated = maxOf(lastUpdated ?: 0L, serverTime),
         status = OwnerVisitStatus.READY,
-        recentIds = recentIds + recent
+        recentIds = recentIds + recent,
+        diagnostics = emptySet()
     )
 }
 

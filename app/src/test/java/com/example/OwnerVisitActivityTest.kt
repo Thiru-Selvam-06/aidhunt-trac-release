@@ -96,6 +96,31 @@ class OwnerVisitActivityTest {
         assertTrue(tamil.timestampLabel.endsWith("IST"))
     }
 
+    @Test fun legacyMemberIdentityComesOnlyFromVerifiedDocumentPath() {
+        val legacy = record("members", 1, "unused", fields = mapOf(
+            "uid" to "original-owner", "role" to "OWNER", "status" to "ACTIVE"
+        ), docId = "original-owner").let { it.copy(data = it.data - "workspaceId") }
+        assertFalse(legacy.data.containsKey("workspaceId"))
+        val owner = com.example.data.firebase.OwnerVisitCloud.verifiedMember(legacy, key.workspaceId)
+        assertEquals(key.ownerUid, owner?.uid)
+        assertEquals(key.workspaceId, owner?.workspaceId)
+        assertNull(com.example.data.firebase.OwnerVisitCloud.verifiedMember(
+            legacy.copy(data = legacy.data + ("workspaceId" to "foreign")), key.workspaceId))
+        assertNull(com.example.data.firebase.OwnerVisitCloud.verifiedMember(
+            legacy.copy(data = legacy.data + ("uid" to "another-person")), key.workspaceId))
+    }
+
+    @Test fun safeRefreshDiagnosticsDoNotIncludeExceptionContent() {
+        val payload = "private customer content or bearer token must stay out of logs"
+        val classified = com.example.data.firebase.OwnerVisitCloud.safeFailure(java.io.IOException(payload))
+        assertEquals("NETWORK/UNAVAILABLE", classified)
+        assertFalse(classified.contains(payload))
+        val visit = OwnerVisit(key, time, time, OwnerVisitStatus.READY)
+        val partial = visit.copy(status = OwnerVisitStatus.PARTIAL, diagnostics = setOf("EXPENSES/PERMISSION"))
+        assertEquals(time, partial.lastUpdated)
+        assertEquals(time, partial.since)
+    }
+
     @Test fun physicalPilotPermitsOnlyDedicatedWorkspace() {
         assertTrue(FirebaseEnvironment.permitsWorkspaceDiscovery("ws_notify_pilot_4a2ff95fafcb8b", false, true))
         assertFalse(FirebaseEnvironment.permitsWorkspaceDiscovery("normal-customer-workspace", false, true))

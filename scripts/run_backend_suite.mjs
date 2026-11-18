@@ -8,7 +8,7 @@ const groups={
  backend:['cloudflare/operations.test.mjs','cloudflare/google-auth.test.mjs','cloudflare/firestore-rest.test.mjs',
  'functions/invitation-policy.test.js','functions/entry-deletion-policy.test.js','functions/device-network-fixture.test.js',
  'functions/entry-deletion-http.test.js','functions/migration/legacy-timestamps.test.js','functions/owner-activity.test.js'],
- rules:['security-tests/architecture.test.cjs','security-tests/atomic-cash-control.test.cjs','security-tests/customer-editing.test.cjs','security-tests/expense-categories.test.cjs','security-tests/operator-customer-profiles.test.cjs','security-tests/listener-queries.test.cjs',
+ rules:['security-tests/phase53-partner-deletion.test.cjs','security-tests/architecture.test.cjs','security-tests/atomic-cash-control.test.cjs','security-tests/customer-editing.test.cjs','security-tests/expense-categories.test.cjs','security-tests/operator-customer-profiles.test.cjs','security-tests/listener-queries.test.cjs',
  'security-tests/phone-onboarding.test.cjs','security-tests/workspace-discovery.test.cjs',
  'security-tests/security-recovery.test.cjs',
  'security-tests/purge-protocol.test.cjs','security-tests/loans-borrowing-settlements.test.cjs','security-tests/notifications-audit.test.cjs','functions/security.integration.test.js',

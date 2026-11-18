@@ -320,6 +320,8 @@ internal fun OwnerVisitHeader(visit: OwnerVisit, hasRecent: Boolean, isTamil: Bo
             else "Offline · Showing saved notifications"
         OwnerVisitStatus.FAILED -> if (isTamil) "புதுப்பிக்க முடியவில்லை. சேமித்த அறிவிப்புகள் காட்டப்படுகின்றன."
             else "Could not refresh · Showing saved notifications"
+        OwnerVisitStatus.PARTIAL -> if (isTamil) "சில செயல்பாடுகளைப் புதுப்பிக்க முடியவில்லை. கிடைக்கும் பதிவுகள் காட்டப்படுகின்றன."
+            else "Some activity could not refresh · Showing available notifications"
         OwnerVisitStatus.READY -> if (hasRecent) {
             if (isTamil) "புதிய பங்குதாரர் செயல்பாடுகள்" else "New Partner Activity"
         } else if (visit.firstVisit) {
@@ -332,6 +334,9 @@ internal fun OwnerVisitHeader(visit: OwnerVisit, hasRecent: Boolean, isTamil: Bo
         Text(if (isTamil) "கடைசி வருகைக்குப் பிறகு" else "Since Your Last Visit",
             fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
         Text(status, fontSize = 12.sp, color = Color(0xFF475569), modifier = Modifier.testTag("owner_visit_status"))
+        if (visit.diagnostics.isNotEmpty()) {
+            Text(visit.diagnostics.sorted().joinToString(" · "), fontSize = 10.sp, color = Color(0xFF64748B))
+        }
         visit.lastUpdated?.let { checkpoint ->
             val label = if (isTamil) "கடைசியாக புதுப்பித்தது" else "Last Updated"
             Text("$label · " + JobAuditPresentation.instant(checkpoint, isTamil),

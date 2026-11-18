@@ -15,7 +15,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -25,7 +25,58 @@ import org.json.JSONObject
 
 /** Read-only REST queries using the same Firebase user, Rules and App Check as the app. */
 internal object OwnerVisitCloud {
-    data class Refresh(val readTime: Long, val activities: List<ConfirmedOwnerActivity>)
+    data class Refresh(
+        val readTime: Long,
+        val activities: List<ConfirmedOwnerActivity>,
+        val incompleteSources: Set<String> = emptySet()
+    ) {
+        val complete: Boolean get() = incompleteSources.isEmpty()
+    }
+
+    internal class ReadFailure(val stage: String, val category: String, val status: Int? = null) :
+        IOException("Owner activity " + stage + " " + category) {
+        val diagnostic: String get() = stage + "/" + category + (status?.let { "/$it" } ?: "")
+    }
+
+    internal fun safeFailure(error: Throwable): String = when (error) {
+        is ReadFailure -> error.diagnostic
+        is WorkspaceSessionChangedException -> "SESSION/ACCOUNT_CHANGED"
+        is WorkspaceAuthenticationRequiredException -> "AUTH/REQUIRED"
+        is SecurityException -> "MEMBERSHIP/DENIED"
+        is IOException -> "NETWORK/UNAVAILABLE"
+        else -> "ACTIVITY/INVALID_RESPONSE"
+    }
+
+    private suspend fun checkedRead(
+        stage: String, request: suspend () -> JSONArray
+    ): JSONArray = try {
+        request()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: ReadFailure) {
+        throw ReadFailure(stage, error.category, error.status)
+    } catch (error: WorkspaceSessionChangedException) {
+        throw error
+    } catch (error: WorkspaceAuthenticationRequiredException) {
+        throw error
+    } catch (_: IOException) {
+        throw ReadFailure(stage, "NETWORK")
+    } catch (_: org.json.JSONException) {
+        throw ReadFailure(stage, "INVALID_RESPONSE")
+    }
+
+    internal fun verifiedMember(record: OwnerActivityEvidence, workspaceId: String): WorkspaceMember? {
+        // The authorized path is the identity for legacy documents. Explicit mismatches
+        // still fail closed, including empty or wrong redundant identity values.
+        if (record.data.containsKey("uid") && record.data["uid"] != record.documentId) return null
+        if (record.data.containsKey("workspaceId") && record.data["workspaceId"] != workspaceId) return null
+        return WorkspaceMember(
+            uid = record.documentId, workspaceId = workspaceId,
+            status = (record.data["status"] as? String).orEmpty(),
+            role = (record.data["role"] as? String).orEmpty(),
+            displayName = record.data["displayName"] as? String
+        )
+    }
 
     private val http = okhttp3.OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).followRedirects(false).build()
     private val pathSegment = Regex("[A-Za-z0-9_-]{1,128}")
@@ -41,7 +92,13 @@ internal object OwnerVisitCloud {
         val app = FirebaseApp.getInstance()
         val auth = FirebaseAuth.getInstance(app)
         val user = auth.currentUser?.takeIf { it.uid == key.ownerUid } ?: throw WorkspaceSessionChangedException()
-        val token = user.getIdToken(false).await().token ?: throw WorkspaceAuthenticationRequiredException()
+        val token = try {
+            user.getIdToken(false).await().token ?: throw WorkspaceAuthenticationRequiredException()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            throw ReadFailure("AUTH", "TOKEN_UNAVAILABLE")
+        }
         val check = try { FirebaseAppCheck.getInstance(app).getAppCheckToken(false).await().token }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { null }
@@ -57,7 +114,16 @@ internal object OwnerVisitCloud {
                     .post(body.toString().toRequestBody("application/json".toMediaType()))
                 if (!check.isNullOrBlank()) request.header("X-Firebase-AppCheck", check)
                 http.newCall(request.build()).execute().use { response ->
-                    if (!response.isSuccessful) throw IOException("Owner activity read failed (" + response.code + ")")
+                    if (!response.isSuccessful) {
+                        val category = when (response.code) {
+                            400 -> "INVALID_QUERY"
+                            401 -> "AUTHENTICATION"
+                            403 -> "PERMISSION_OR_APP_CHECK"
+                            429 -> "QUOTA"
+                            else -> "SERVER"
+                        }
+                        throw ReadFailure("HTTP", category, response.code)
+                    }
                     JSONArray(response.body?.string() ?: throw IOException("Missing owner activity response"))
                 }
             }
@@ -67,16 +133,18 @@ internal object OwnerVisitCloud {
     internal suspend fun load(
         key: OwnerVisitKey, since: Long?, project: String,
         request: suspend (String, JSONObject) -> JSONArray
-    ): Refresh = coroutineScope {
+    ): Refresh = supervisorScope {
         require(pathSegment.matches(project) && pathSegment.matches(key.ownerUid) && pathSegment.matches(key.workspaceId))
         val root = "projects/$project/databases/(default)/documents"
         val workspace = "$root/workspaces/" + key.workspaceId
-        val identity = request("$root:batchGet", JSONObject().put("documents", JSONArray().put(workspace)))
+        val identity = checkedRead("WORKSPACE") {
+            request("$root:batchGet", JSONObject().put("documents", JSONArray().put(workspace)))
+        }
             .getJSONObject(0)
         val found = identity.optJSONObject("found") ?: throw SecurityException("Owner workspace is unavailable")
         val workspaceData = decode(found)
-        require(found.optString("name") == workspace && workspaceData["ownerUid"] == key.ownerUid &&
-            workspaceData["workspaceId"] == key.workspaceId) { "Original workspace Owner required" }
+        if (found.optString("name") != workspace || workspaceData["ownerUid"] != key.ownerUid ||
+            workspaceData["workspaceId"] != key.workspaceId) throw ReadFailure("WORKSPACE", "OWNER_MISMATCH")
         val readTime = FirestoreServerTime.parseReadTime(identity.getString("readTime"))
         // Bound the first history fetch. Later visits read the elapsed interval with one day of
         // overlap for offline operations, preserving old already-saved activity in Room.
@@ -97,7 +165,9 @@ internal object OwnerVisitCloud {
                     .put("field", JSONObject().put("fieldPath", filterField))
                     .put("op", "GREATER_THAN_OR_EQUAL").put("value", value)))
             }
-            val rows = request("$workspace:runQuery", JSONObject().put("structuredQuery", query))
+            val rows = checkedRead(collection.uppercase()) {
+                request("$workspace:runQuery", JSONObject().put("structuredQuery", query))
+            }
             return (0 until rows.length()).mapNotNull { index ->
                 val envelope = rows.getJSONObject(index)
                 if (envelope.has("error")) throw IOException("Owner activity query was incomplete")
@@ -111,19 +181,11 @@ internal object OwnerVisitCloud {
             }
         }
 
-        val members = query("members").map { record ->
-            WorkspaceMember(
-                uid = record.documentId,
-                workspaceId = (record.data["workspaceId"] as? String).orEmpty(),
-                status = (record.data["status"] as? String).orEmpty(),
-                role = (record.data["role"] as? String).orEmpty(),
-                displayName = record.data["displayName"] as? String
-            )
-        }
-        require(members.any {
+        val members = query("members").mapNotNull { verifiedMember(it, key.workspaceId) }
+        if (members.none {
             it.workspaceId == key.workspaceId && it.uid == key.ownerUid &&
                 it.status.equals("ACTIVE", true) && RoleUtils.normalizeRole(it.role) == RoleUtils.ROLE_OWNER
-        }) { "Active Owner membership required" }
+        }) throw ReadFailure("MEMBERS", "ACTIVE_OWNER_REQUIRED")
 
         val sources = mutableMapOf(
             "entries" to listOf("updatedAt", "serverReceivedAt"),
@@ -139,12 +201,25 @@ internal object OwnerVisitCloud {
 
         // Use simple range queries supported by the existing Spark indexes. Deduplicate
         // overlapping results by document, choosing the freshest server version.
-        val evidence = sources.flatMap { (collection, filters) ->
-            filters.map { filter -> async { query(collection, filter) } }
-        }.awaitAll().flatten().groupBy { it.collection to it.documentId }.values.map { versions ->
-            versions.maxBy { it.availableAt }
-        }
-        Refresh(readTime, OwnerVisitActivity.verified(key, members, evidence))
+        val results = sources.flatMap { (collection, filters) ->
+            filters.map { filter ->
+                async {
+                    try {
+                        query(collection, filter) to null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        emptyList<OwnerActivityEvidence>() to (if (error is ReadFailure) error.diagnostic else collection.uppercase() + "/" + safeFailure(error))
+                    }
+                }
+            }
+        }.awaitAll()
+        val failures = results.mapNotNull { it.second }.toSet()
+        val evidence = results.flatMap { it.first }
+            .groupBy { it.collection to it.documentId }.values.map { versions ->
+                versions.maxBy { it.availableAt }
+            }
+        Refresh(readTime, OwnerVisitActivity.verified(key, members, evidence), failures)
     }
 
     private fun decode(document: JSONObject): Map<String, Any?> {

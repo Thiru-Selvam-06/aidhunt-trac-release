@@ -14,7 +14,10 @@ import java.util.concurrent.TimeUnit
 
 /** Firebase-only deletion. Guarded reads and an atomic commit use the signed-in user's access;
  * current membership. No service credential, Cloud Function or third-party endpoint is used. */
-internal class FirebaseLedgerDeletion(private val transport: Transport) {
+internal class FirebaseLedgerDeletion(
+    private val transport: Transport,
+    private val sharedPartnerDeletion: Boolean = com.example.BuildConfig.SHARED_PARTNER_JOB_DELETION
+) {
     interface Transport {
         val documentRoot: String
         suspend fun prepare(op: PendingOperationEntity) {}
@@ -123,7 +126,9 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
                 entry.copy(isSynced = true, updatedAt = 0, jobEditHistoryJson = "[]") == payload.copy(isSynced = true, updatedAt = 0, jobEditHistoryJson = "[]")) {
                 "Entry changed after this deletion was requested; refresh and review it before deleting"
             }
-            require(owner || (entry.createdByUid == op.actorUid && !entry.isHistorical &&
+            val sharedPartner = role == "PARTNER" && sharedPartnerDeletion && entry.createdAt > 0 && op.actionTime >= entry.createdAt &&
+                data(source)["authorizationTimeStatus"] in setOf("CLIENT_ORIGINAL_V2", "VERIFIED")
+            require(owner || sharedPartner || (entry.createdByUid == op.actorUid && !entry.isHistorical &&
                 data(source)["authorizationTimeStatus"] in setOf("CLIENT_ORIGINAL_V2", "VERIFIED") &&
                 com.example.data.auth.AuthorizationManager.within24Hours(entry.createdAt, op.actionTime))) {
                 "Entry deletion is outside your permissions or deadline"

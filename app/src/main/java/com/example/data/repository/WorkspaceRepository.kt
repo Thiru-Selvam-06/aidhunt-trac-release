@@ -2512,7 +2512,7 @@ class WorkspaceRepository(
             requireRecordMembersActive(stored.createdByUid, stored.entryForUid)
             val owner = isOwnerOfWorkspace(wsId)
             require(com.example.data.auth.AuthorizationManager.canDeleteEntry(stored, owner, currentActorName = "", currentUid = actorUid, role = role, currentTimeMillis = operationTime)) {
-                "You cannot delete this Entry: check ownership, role and the 24-hour deadline"
+                "This entry cannot be deleted under the current workspace permissions."
             }
             val payments = paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty()
             val linked = payments.filter { com.example.data.sync.EntryDeletionPolicy.references(it, stored.id) }

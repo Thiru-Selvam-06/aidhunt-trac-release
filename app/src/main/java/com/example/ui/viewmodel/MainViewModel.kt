@@ -721,6 +721,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 .mapTo(mutableSetOf()) { it.item.id }
                             // The readTime marks the beginning of the verified server read.
                             // Write only after Room commits and only for this online visit.
+                            if (!refresh.complete) {
+                                visit = visit.copy(recentIds = visit.recentIds + recent, diagnostics = refresh.incompleteSources)
+                                android.util.Log.w("TRAC_OWNER_VISIT", "stage=REFRESH category=PARTIAL sources=" +
+                                    refresh.incompleteSources.sorted().joinToString(","))
+                                show(com.example.data.sync.OwnerVisitStatus.PARTIAL)
+                                return@collect
+                            }
                             val updated = visit.refreshed(refresh.readTime, recent)
                             val savedCheckpoint = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                 if (!canRefresh()) false else ownerVisitPrefs.edit()
@@ -735,8 +742,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         } catch (cancelled: kotlinx.coroutines.CancellationException) {
                             throw cancelled
-                        } catch (_: Exception) {
-                            if (canRefresh()) show(com.example.data.sync.OwnerVisitStatus.FAILED)
+                        } catch (error: Exception) {
+                            val diagnostic = com.example.data.firebase.OwnerVisitCloud.safeFailure(error)
+                            android.util.Log.w("TRAC_OWNER_VISIT", "refresh=" + diagnostic)
+                            if (canRefresh()) {
+                                visit = visit.copy(diagnostics = setOf(diagnostic))
+                                show(com.example.data.sync.OwnerVisitStatus.FAILED)
+                            }
                         }
                     }
             }
@@ -1146,12 +1158,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteJob(job: JobEntryEntity, onResult: (String) -> Unit = {}) {
-        // Pre-check permissions before calling repository (defense in depth)
-        val isOwner = isCollaborationOwner.value
-        val currentActorName = settings.value.activePartnerName.ifBlank { null } ?: settings.value.ownerName.ifBlank { null } ?: "Partner"
-        val actorUid = currentUid ?: currentUserProfile.value?.uid ?: ""
-
-        if (!com.example.data.auth.AuthorizationManager.canDeleteEntry(job, isOwner, currentActorName, actorUid, role = currentUserRole.value)) {
+        // Use the same membership/workspace check as the visible Delete action.
+        if (!canDeleteEntry(job)) {
             _syncMessage.value = "Unauthorized: You cannot delete this entry"
             onResult(_syncMessage.value)
             return

@@ -33,6 +33,7 @@ class OperationRoleMatrixTest(private val role: String, private val entity: Stri
             expectations.flatMap { (entity, permitted) -> listOf("UPSERT","DELETE").map { mutation ->
                 arrayOf<Any>(role,entity,mutation, role in permitted &&
                     !(entity=="CUSTOMER" && mutation=="DELETE" && role!="OWNER") &&
+                    !(entity=="JOB" && mutation=="DELETE" && role=="OPERATOR") &&
                     !(entity in upsertOnlyEntities && mutation=="DELETE"))
             } }
         }

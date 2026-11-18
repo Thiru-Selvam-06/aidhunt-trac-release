@@ -19,6 +19,17 @@ import org.robolectric.annotation.Config
 class OwnerVisitComposeTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun successfulAndPartialRefreshShowActualCheckpointAndSafeDiagnostic() {
+        val ready = OwnerVisit(OwnerVisitKey("workspace", "owner"), 123, 1794992400000L, OwnerVisitStatus.READY)
+        compose.setContent { Column {
+            OwnerVisitHeader(ready, false, false)
+            OwnerVisitHeader(ready.copy(status = OwnerVisitStatus.PARTIAL, diagnostics = setOf("EXPENSES/PERMISSION_OR_APP_CHECK/403")), false, true)
+        } }
+        compose.onNodeWithText("Last Updated", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("கடைசியாக புதுப்பித்தது", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("EXPENSES/PERMISSION_OR_APP_CHECK/403").assertIsDisplayed()
+    }
+
     @Test fun cachedStateAndDefinitiveEmptyHaveDistinctLocalizedLabels() {
         val visit = OwnerVisit(OwnerVisitKey("workspace", "owner"), 123, null, OwnerVisitStatus.OFFLINE)
         compose.setContent {

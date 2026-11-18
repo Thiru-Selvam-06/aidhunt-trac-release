@@ -1,5 +1,14 @@
 # AIDHUNT TRAC — Development Progress & Final Reconciliation Log
 
+## Phase 5.3 — Owner refresh repair and staged Partner deletion
+
+- Baseline 6afbc862ee939bb188f480563399d35ae3e34cfb, dedicated codex/phase53-owner-activity-deletion branch. Normal product candidate 1.0.14/code15.
+- Confirmed legacy membership-shape mismatch: notification verification required a redundant workspaceId omitted from the live Owner membership, although normal discovery accepted its verified path. Fixed path-derived identity with explicit mismatch rejection. Added safe diagnostics and partial refresh handling that preserves the last successful checkpoint and saved history.
+- Prepared default-off shared Partner job deletion across creators/ages/New/Old Entries. Current financial-child, source-version, membership, outbox and immutable-proof safeguards remain. Operator UI/outbox eligibility now agrees with the already restricted guarded backend.
+- Separate firestore.phase53.rules is derived from the active Rules export; only job lock/proof Partner restrictions change. Standard firestore.rules and live Rules are unchanged. See docs/verification/phase53-owner-refresh-and-partner-deletion.md and the adjacent Rules diff for evidence, rollout boundary and phone checklist.
+- Proposed Rules 15/15 and focused CI/publication harness 17/17 passed; inventory has119 JVM classes/24 backend files without declaration errors. Initial293 Android run had4 failures; follow-up49/50 passed including actual staged native transport and duplicate acknowledgement. Corrected synthetic edit identity metadata; final refresh rerun, build/lint, signing and exact-source CI remain pending at this development commit. Original evidence retained outside Git. No physical verification, production writes/recovery, Rules deployment, native push activation, billing change or merge performed.
+- Exact next action: finish isolated notification/Room/Compose/outbox/deletion tests and candidate Rules tests, build/lint/sign and verify the product APK, publish the dedicated branch, verify exact-source GitHub CI, then stop for separate Rules deployment approval. Broad Partner deletion must stay disabled in the delivered APK until the reviewed policy is deployed and an activation build is approved.
+
 ## Phase 4 original Owner notifications
 
 - Baseline `2a986651bc45c4e854892a7b886ef43a138f5b3e`, published working branch `codex/phase4-owner-notifications` after local validation.

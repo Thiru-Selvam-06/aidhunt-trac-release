@@ -21,13 +21,15 @@ android {
     applicationId = "com.aistudio.aidhunttrac.cedlir"
     minSdk = 24
     targetSdk = 36
-    versionCode = 14
-    versionName = "1.0.13"
+    versionCode = 15
+    versionName = "1.0.14"
 
     buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", "false")
     buildConfigField("boolean", "DEVICE_TEST", "false")
     buildConfigField("boolean", "LIVE_TEST", "false")
     buildConfigField("boolean", "OWNER_VISIT_PILOT", "false")
+    // Staged until the reviewed Partner deletion Rules are separately deployed.
+    buildConfigField("boolean", "SHARED_PARTNER_JOB_DELETION", "false")
     buildConfigField("boolean", "PHYSICAL_TEST", "false")
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

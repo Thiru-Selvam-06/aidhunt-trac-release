@@ -125,6 +125,22 @@ class FirebaseLedgerDeletionTest {
         (0 until rows.length()).mapNotNull { rows.getJSONObject(it).optString("delete").takeIf(String::isNotEmpty) }.toSet()
     }
 
+    @Test fun stagedSharedDeletionPreservesAuditAndPaidSourceStillBlocks() = runBlocking {
+        for (historical in listOf(false, true)) {
+            val source = job().copy(createdByUid = "other", createdAt = now - 365 * 86_400_000L, isHistorical = historical, amountReceived = 0.0, pendingAmount = 100.0)
+            val transport = fixture(source, "PARTNER")
+            transport.put(transport.name("entries", source.id), source.toFirestoreMap() + mapOf("authorizationTimeStatus" to "CLIENT_ORIGINAL_V2"))
+            FirebaseLedgerDeletion(transport, sharedPartnerDeletion = true).execute(operation(source))
+            assertEquals(setOf(transport.name("entries", id)), deleted(transport))
+            assertTrue(transport.commits.single().toString().contains("explicit-delete"))
+            val paid = source.copy(amountReceived = 40.0, pendingAmount = 60.0)
+            val blocked = fixture(paid, "PARTNER")
+            blocked.put(blocked.name("entries", paid.id), paid.toFirestoreMap() + mapOf("authorizationTimeStatus" to "CLIENT_ORIGINAL_V2"))
+            assertTrue(runCatching { FirebaseLedgerDeletion(blocked, sharedPartnerDeletion = true).execute(operation(paid)) }.isFailure)
+            assertTrue(blocked.commits.isEmpty())
+        }
+    }
+
     @Test fun explicitLegacyOwnerDeletionRemovesTheSourceAndUnusedCustomerInOneCommit() = runBlocking {
         val transport = fixture()
         FirebaseLedgerDeletion(transport).execute(operation())

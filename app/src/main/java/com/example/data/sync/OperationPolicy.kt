@@ -11,7 +11,8 @@ import org.json.JSONObject
 class ExpiredOperationException(message: String) : SecurityException(message)
 
 object OperationPolicy {
-    fun requireAuthorized(op: PendingOperationEntity, role: String, members: List<WorkspaceMember>, linkedJob: JobEntryEntity? = null) {
+    fun requireAuthorized(op: PendingOperationEntity, role: String, members: List<WorkspaceMember>, linkedJob: JobEntryEntity? = null,
+        sharedPartnerDeletion: Boolean = com.example.BuildConfig.SHARED_PARTNER_JOB_DELETION) {
         val data = JSONObject(op.payloadJson)
         if (data.optInt("operationProtocolVersion") != 2 || op.operationId.isBlank() || op.actionTime <= 0 || op.actorUid.isBlank()) throw com.example.data.firebase.WorkspaceUpgradeRequiredException()
         val member = members.firstOrNull { it.uid == op.actorUid && it.workspaceId == op.workspaceId && it.status.equals("active", true) }
@@ -48,9 +49,10 @@ object OperationPolicy {
             linkedJob.workspaceId == op.workspaceId && linkedJob.createdByUid == op.actorUid &&
             linkedJob.entryForUid == target && !linkedJob.isHistorical
         val permitted = when (op.entityType) {
-            "JOB" -> owner || (partner && op.mutationType == "UPSERT" &&
+            "JOB" -> owner || (partner && sharedPartnerDeletion && op.mutationType == "DELETE") ||
+                (partner && op.mutationType == "UPSERT" &&
                 ((creator == op.actorUid && timely) || data.optString("expectedBaseJson").let { it.isNotBlank() && it != "null" })) ||
-                (!data.optBoolean("isHistorical") && (partner || operator) && creator == op.actorUid && (partner || target == op.actorUid) && timely)
+                (!data.optBoolean("isHistorical") && (partner || (operator && op.mutationType == "UPSERT")) && creator == op.actorUid && (partner || target == op.actorUid) && timely)
             "EXPENSE" -> owner || (partner && creator == op.actorUid && (target == op.actorUid || matchingOwnJob) && timely)
             "WITHDRAWAL" -> owner || (partner && creator == op.actorUid && target == op.actorUid && timely)
             "TRACTOR", "EXTENSION" -> owner || (partner && creator == op.actorUid)
