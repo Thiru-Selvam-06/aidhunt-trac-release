@@ -1,5 +1,13 @@
 # AIDHUNT TRAC — Development Progress & Final Reconciliation Log
 
+## Phase 5.3 user-approved activation — 19 November 2026
+
+- User approved deployment of the reviewed narrow Firebase Rules change and a higher-version signed testing APK. Baseline42f1ddf620e73d8517d4ebe51e9c2841bac88b2e, isolated branch codex/phase53-partner-deletion-activation. No production merge, real financial test writes or rejected-transaction recovery authorized.
+- Product1.0.15/code16 enables SHARED_PARTNER_JOB_DELETION in release only. Isolated debug/test/pilot variants keep false. Native push stays disabled; Owner in-app fix, finance/Room/outbox/runtime deletion logic unchanged. Added actual build-variant default-policy and isolation tests in Phase53ActivationTest.
+- Fresh preflight confirmed live e7981704-cf72-453b-a867-ad3faa10c75f unchanged from reviewed baseline; candidate canonical SHA2564b0880cb108fe97440cee9a008826e5498807b77243fbc292c47313cd06a5874. Firebase server validation0 errors/2 warnings; all15 exact candidate Rules Emulator cases passed again. Live Rules have not been activated at this publication point.
+- Targeted release-unit verification is running with a local variant-enabling init script and isolated demo Firebase resources; the protected real release resources are restored before packaging. No shipped test dependency or existing CI gate is changed. The first attempt found no release-unit task; the local init exposes it without changing application behavior.
+- Exact next action: finish targeted release tests, normal signed build/lint and exact-source CI; deploy only the approved candidate after rechecking the live baseline; read back the active source/hash; verify final APK certificate/package/config/flags, record deployment and evidence in the delivery report, and hand over the manual two-phone checklist. Do not create/delete live financial test records or auto-retry rejected operations. Physical acceptance remains NOT TESTED until the user runs it.
+
 ## Phase 5.3 — Owner refresh repair and staged Partner deletion
 
 - Baseline 6afbc862ee939bb188f480563399d35ae3e34cfb, dedicated codex/phase53-owner-activity-deletion branch. Normal product candidate 1.0.14/code15.

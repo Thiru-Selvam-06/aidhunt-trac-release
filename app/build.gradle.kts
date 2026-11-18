@@ -21,14 +21,14 @@ android {
     applicationId = "com.aistudio.aidhunttrac.cedlir"
     minSdk = 24
     targetSdk = 36
-    versionCode = 15
-    versionName = "1.0.14"
+    versionCode = 16
+    versionName = "1.0.15"
 
     buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", "false")
     buildConfigField("boolean", "DEVICE_TEST", "false")
     buildConfigField("boolean", "LIVE_TEST", "false")
     buildConfigField("boolean", "OWNER_VISIT_PILOT", "false")
-    // Staged until the reviewed Partner deletion Rules are separately deployed.
+    // Isolated variants retain the gate; the approved product release enables it below.
     buildConfigField("boolean", "SHARED_PARTNER_JOB_DELETION", "false")
     buildConfigField("boolean", "PHYSICAL_TEST", "false")
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -69,6 +69,8 @@ android {
 
   buildTypes {
     release {
+      // Requires the approved, verified Phase 5.3 Firebase Rules rollout.
+      buildConfigField("boolean", "SHARED_PARTNER_JOB_DELETION", "true")
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
