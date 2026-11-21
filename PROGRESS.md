@@ -1,5 +1,12 @@
 # AIDHUNT TRAC — Development Progress & Final Reconciliation Log
 
+## 1.0.16 controlled APK testing checkpoint
+
+- User requested signed APK for personal testing and advice on the unresolved amount. New branch codex/customer-controls-test-apk from e10c96f; only version metadata changed to1.0.16/code17, plus verification/progress documentation. No production activation or financial correction authorized.
+- Original-key signed APK prepared locally; package/version/non-debuggable/real Firebase resources/new DEX classes and certificate match verified.4 actual release checks, signed assembly and release lint passed (0 errors/114 warnings). Prior78 implementation checks retained; no broad regression rerun. Artifact/evidence in host outputs/customer-controls-1016. Existing product1.0.15 unchanged.
+- New shared display save/history and Partner unused-profile deletion remain pending their separate backend permissions/activation. Existing Partner job deletion gate remains ON. Native push/test/pilot flags remain OFF. No agent phone installation; physical testing NOT TESTED; GitHub full release gate NOT RUN.
+- Exact next action: deliver the test APK with activation limits; Owner verifies legacy method/date evidence privately before any separately approved correction. Do not create duplicate receipts, deploy Rules/backend, enable billing, flip capabilities, modify financial records or merge/release automatically. See docs/verification/customer-controls-1016-test-apk.md.
+
 ## Display balance history and unused customer controls — 21 November 2026
 
 - Development branch codex/customer-balance-controls starts from TRAC1.0.15 product6aba5b95d5e13f23d6406e75afc4cb11ad96f2ae. User chose DISPLAY ONLY, with required reason, actual editor, date/time and old/new/difference history. No real financial adjustment, method/date correction, ledger change, migration or production activation authorized.
