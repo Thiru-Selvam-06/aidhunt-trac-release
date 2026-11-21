@@ -125,6 +125,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun retryCloudListeners() = workspaceRepository.retryCloudListeners()
 
+    private val balanceDisplayRepository by lazy { com.example.data.firebase.BalanceDisplayRepository(FirebaseFirestore.getInstance(), FirebaseAuth.getInstance()) }
+    val balanceDisplay by lazy {
+        combine(authorizedWorkspaceId, currentUserProfile, workspaceRepository.verifiedWorkspaceContext, currentUserRole) { ws, profile, verified, role ->
+            if (!ws.isNullOrBlank() && profile != null && profile.uid == currentUid && verified == (profile.uid to ws) && com.example.data.firebase.BalanceDisplayPolicy.canEdit(role)) ws to profile.uid else null
+        }.flatMapLatest { identity ->
+            if (identity == null) flowOf(com.example.data.firebase.BalanceDisplayState())
+            else balanceDisplayRepository.observe(identity.first, identity.second)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.data.firebase.BalanceDisplayState())
+    }
+
+    fun saveBalanceDisplay(amount: Long?, calculated: Long, revision: Long, reason: String, operationId: String, onResult: (String?) -> Unit) {
+        val ws = activeWorkspaceId.value.orEmpty()
+        val actor = currentUid.orEmpty()
+        viewModelScope.launch {
+            val result = runCatching {
+                require(isOnline.value) { "Connect to the internet before editing the display balance" }
+                require(workspaceRepository.verifiedWorkspaceContext.value == (actor to ws)) { "Verify workspace access first" }
+                balanceDisplayRepository.save(ws, actor, operationId, revision, amount, calculated, reason)
+            }
+            onResult(result.exceptionOrNull()?.message)
+        }
+    }
+
     // Sync State
     private val _isSyncing = MutableStateFlow(false)
     private val backgroundSync = runCatching {
@@ -295,7 +318,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun canDeleteCustomer(): Boolean = com.example.data.auth.AuthorizationManager.canDeleteCustomer(isCollaborationOwner.value)
+    fun canDeleteCustomer(): Boolean = com.example.data.auth.AuthorizationManager.canDeleteCustomer(isCollaborationOwner.value, currentUserRole.value)
 
     fun canCollectPayment(): Boolean = com.example.data.auth.AuthorizationManager.canCollectPayment(isCollaborationOwner.value, currentUserRole.value)
 

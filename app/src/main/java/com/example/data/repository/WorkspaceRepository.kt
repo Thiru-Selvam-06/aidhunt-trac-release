@@ -2958,11 +2958,16 @@ class WorkspaceRepository(
         database.withTransaction {
             val wsId = _activeWorkspaceId.value.orEmpty()
             val role = requireWorkspaceActor(wsId)
-            if (role != com.example.data.auth.RoleUtils.ROLE_OWNER) throw SecurityException("Only Owner can delete customers")
+            require(com.example.data.auth.AuthorizationManager.canDeleteCustomer(isOwnerOfWorkspace(wsId), role)) { "Only active Owners or Partners can delete unused customers" }
+            if (role == com.example.data.auth.RoleUtils.ROLE_PARTNER && !currentCapabilities(wsId).trustedEmptyCustomerDeletionV1)
+                throw IllegalStateException("Partner customer deletion is awaiting secure backend activation; no customer was removed")
             val stored = customerDao.getCustomerById(_activeWorkspaceId.value.orEmpty(), customer.id) ?: throw SecurityException("Customer no longer exists")
             if (stored.workspaceId != wsId) throw SecurityException("Customer workspace mismatch")
             require(jobEntryDao.getJobsForWorkspaceOnce(wsId).none { it.customerId == stored.id } &&
                 paymentDao.getPaymentsForCustomer(_activeWorkspaceId.value.orEmpty(), stored.id).none { it.workspaceId == wsId }) { "Customer is referenced by retained financial history" }
+            require(operations.outstandingOperations(wsId).none {
+                com.example.data.sync.OperationDependencies.references(it).contains("CUSTOMER" to stored.id)
+            }) { "Customer is referenced by retained local actions; resolve those actions first" }
             customerDao.deleteCustomer(stored)
             enqueue("CUSTOMER", stored.id, stored.toFirestoreMap(), "DELETE", expectedActorUid = operationActorUid, actionTime = operationTime)
         }

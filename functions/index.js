@@ -157,7 +157,6 @@ exports.deleteWorkspaceCustomer = onCall(async request => {
   const wsId = requiredString(request.data, "workspaceId");
   const id = requiredString(request.data, "customerId");
   if (!/^[0-9]{1,19}$/.test(id) || BigInt(id) > 9223372036854775807n) throw new HttpsError("invalid-argument", "Invalid Customer identity");
-  await requireOwner(request.auth?.uid, wsId);
   const operationId = requiredString(request.data, "operationId");
   const actionTime = request.data.actionTime;
   const acknowledgement = { deleted: true, workspaceId: wsId, customerId: id, operationId, actionTime };
@@ -166,12 +165,16 @@ exports.deleteWorkspaceCustomer = onCall(async request => {
     const ref = ws.collection("customers").doc(id);
     const receipt = ws.collection("customerDeleteReceipts").doc(operationId);
     const directoryRef = ws.collection("customerDirectory").doc(id);
-    const [owner, customer, prior, entries, collections, directory] = await Promise.all([
+    const [member, customer, prior, entries, collections, directory, workspace] = await Promise.all([
       tx.get(ws.collection("members").doc(request.auth.uid)), tx.get(ref), tx.get(receipt),
       tx.get(ws.collection("entries").where("customerId", "==", BigInt(id))),
-      tx.get(ws.collection("collections").where("customerId", "==", BigInt(id))), tx.get(directoryRef)
+      tx.get(ws.collection("collections").where("customerId", "==", BigInt(id))), tx.get(directoryRef), tx.get(ws)
     ]);
-    if (String(owner.get("role")).toUpperCase() !== "OWNER" || String(owner.get("status")).toUpperCase() !== "ACTIVE") throw new HttpsError("permission-denied", "Owner access changed");
+    const role = String(member.get("role")).toUpperCase();
+    const owner = role === "OWNER" && workspace.get("ownerUid") === uid;
+    const partner = role === "PARTNER" && workspace.get("syncCapabilities")?.trustedEmptyCustomerDeletionV1 === true;
+    if (!member.exists || !workspace.exists || String(member.get("status")).toUpperCase() !== "ACTIVE" || (!owner && !partner))
+      throw new HttpsError("permission-denied", "Active Owner or enabled Partner access required");
     if (prior.exists) {
       if (prior.get("actorUid") !== uid || prior.get("customerId") !== id ||
           prior.get("workspaceId") !== wsId || Number(prior.get("actionTime")) !== actionTime)

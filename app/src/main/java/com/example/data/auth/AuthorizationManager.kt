@@ -93,12 +93,12 @@ object AuthorizationManager {
     /**
      * CUSTOMER DELETE RULES:
      * - Requires account to be ACTIVE.
-     * - Full privilege for Owner only. Partner/Operator have NO privilege to delete a customer.
+     * - Owners and Partners may request deletion of an unused profile.
+     * - Retained financial references are checked locally and by the trusted server.
      */
-    fun canDeleteCustomer(
-        isOwner: Boolean
-    ): Boolean {
-        return isOwner
+    fun canDeleteCustomer(isOwner: Boolean, role: String = ""): Boolean {
+        val normalized = RoleUtils.normalizeRole(role)
+        return (isOwner && (role.isBlank() || normalized == RoleUtils.ROLE_OWNER)) || normalized == RoleUtils.ROLE_PARTNER
     }
 
     /**

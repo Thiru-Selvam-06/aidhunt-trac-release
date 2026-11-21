@@ -104,6 +104,8 @@ fun ReportScreen(
     totalExpenses: Double,
     netBalance: Double,
     availableAmount: Double,
+    displayedBalance: Double? = null,
+    balanceDisplayControls: @Composable () -> Unit = {},
     totalWithdrawn: Double,
     onAddExpense: (ExpenseEntity) -> Unit,
     onUpdateExpense: (ExpenseEntity) -> Unit,
@@ -231,6 +233,8 @@ fun ReportScreen(
             }
             ReportSubPage.BUSINESS_OVERVIEW -> {
                 BusinessOverviewScreen(
+                    displayedBalance = displayedBalance,
+                    balanceDisplayControls = balanceDisplayControls,
                     settings = settings,
                     jobs = jobs,
                     expenses = expenses,
@@ -288,6 +292,8 @@ fun ReportScreen(
             }
             ReportSubPage.CUSTOMER_CREDIT_DUE -> {
                 CustomerCreditDueTab(
+                    payments = payments,
+                    retainedOperations = pendingActions,
                     settings = settings,
                     customers = customers,
                     jobs = jobs,

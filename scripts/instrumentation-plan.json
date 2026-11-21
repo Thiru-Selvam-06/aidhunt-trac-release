@@ -6,7 +6,8 @@
     "com.example.DatabaseWorkspaceDeviceTest",
     "com.example.CollectionFormDeviceTest",
     "com.example.ExampleInstrumentedTest",
-    "com.example.TamilLocalizationDeviceTest"
+    "com.example.TamilLocalizationDeviceTest",
+    "com.example.BalanceDisplayDeviceTest"
   ],
   "blocked": {
     "com.example.PhoneRegistrationDeviceTest": "Requires a fresh phone-auth emulator session; representative journeys use email fixtures and do not prove phone OTP.",

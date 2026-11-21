@@ -214,7 +214,9 @@ fun CustomerCreditDueTab(
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     partners: List<com.example.data.entity.PartnerEntity> = emptyList(),
     expenses: List<com.example.data.entity.ExpenseEntity> = emptyList(),
-    onEditCustomerProfile: ((CustomerEntity, CustomerEntity, () -> Unit) -> Unit)? = null
+    onEditCustomerProfile: ((CustomerEntity, CustomerEntity, () -> Unit) -> Unit)? = null,
+    payments: List<com.example.data.entity.PaymentEntity> = emptyList(),
+    retainedOperations: List<com.example.data.entity.PendingOperationEntity> = emptyList()
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -243,6 +245,15 @@ fun CustomerCreditDueTab(
         mutableLongStateOf(Calendar.getInstance().timeInMillis)
     }
     var selectedCustomer by remember { mutableStateOf<CustomerEntity?>(null) }
+    var showUnusedCustomers by remember(settings.workspaceId, actorUid) { mutableStateOf(false) }
+    val unusedCustomers = remember(settings.workspaceId, customers, jobs, payments, retainedOperations) {
+        com.example.ui.components.UnusedCustomerPolicy.candidates(settings.workspaceId, customers, jobs, payments, retainedOperations)
+    }
+    val mayDeleteUnused = isOwner || workspaceMembers.any { it.workspaceId == settings.workspaceId &&
+        it.uid == actorUid && actorUid.isNotBlank() && it.status.equals("ACTIVE", true) && it.role.equals("PARTNER", true) }
+    if (showUnusedCustomers && mayDeleteUnused && onDeleteCustomer != null) {
+        com.example.ui.components.UnusedCustomersDialog(unusedCustomers, isTamil, { showUnusedCustomers = false }, onDeleteCustomer)
+    }
     var customerToEditPhone by remember { mutableStateOf<CustomerEntity?>(null) }
     var customerForPayment by remember { mutableStateOf<CustomerEntity?>(null) }
     var showBulkPdfOptionsDialog by remember { mutableStateOf(false) }
@@ -441,6 +452,11 @@ fun CustomerCreditDueTab(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(if (isTamil) "PDF அறிக்கை" else "Bulk Export", color = ForestGreenHeader)
                 }
+            }
+        }
+        if (mayDeleteUnused && onDeleteCustomer != null) item {
+            OutlinedButton(onClick = { showUnusedCustomers = true }, modifier = Modifier.fillMaxWidth().testTag("unused_customer_profiles")) {
+                Text((if (isTamil) "பதிவுகள் இல்லாத வாடிக்கையாளர்கள்" else "Customers without records") + " (${unusedCustomers.size})")
             }
         }
         // 2. Search Field
@@ -854,6 +870,8 @@ fun CustomerCreditDueTab(
         CustomerDetailSheet(
             customer = currentCustomer,
             jobs = customerJobs,
+            hasRetainedRecords = jobs.any { it.workspaceId == currentCustomer.workspaceId && it.customerId == currentCustomer.id } ||
+                payments.any { it.workspaceId == currentCustomer.workspaceId && it.customerId == currentCustomer.id },
             settings = settings,
             workspaceMembers = workspaceMembers,
             partners = partners,
@@ -1410,7 +1428,8 @@ fun CustomerDetailSheet(
     actorUid: String = "",
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     partners: List<com.example.data.entity.PartnerEntity> = emptyList(),
-    expenses: List<com.example.data.entity.ExpenseEntity> = emptyList()
+    expenses: List<com.example.data.entity.ExpenseEntity> = emptyList(),
+    hasRetainedRecords: Boolean = jobs.isNotEmpty()
 ) {
     val context = LocalContext.current
     val isTamil = settings.language == "TA"
@@ -1759,7 +1778,7 @@ fun CustomerDetailSheet(
                     }
                 }
             }
-            if (isOwner) {
+            if (canOfferEdit && !hasRetainedRecords && onDeleteCustomer != null) {
                 item {
                     Spacer(modifier = Modifier.height(10.dp))
                     OutlinedButton(

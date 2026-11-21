@@ -41,6 +41,16 @@ class WorkspaceSyncCapabilitiesTest {
         cache.record("actor", "workspace", WorkspaceSyncCapabilities())
         assertEquals(WorkspaceSyncCapabilities(), VerifiedWorkspaceCapabilityCache(context).restore("actor", "workspace"))
     }
+    @Test fun trustedUnusedCustomerDeletionNeedsAnExplicitBooleanAndRetainsActorIsolation() {
+        assertFalse(WorkspaceSyncCapabilities.fromWorkspace(mapOf("syncCapabilities" to
+            mapOf("trustedEmptyCustomerDeletionV1" to "true"))).trustedEmptyCustomerDeletionV1)
+        val enabled=WorkspaceSyncCapabilities.fromWorkspace(mapOf("syncCapabilities" to
+            mapOf("trustedEmptyCustomerDeletionV1" to true)))
+        assertTrue(enabled.trustedEmptyCustomerDeletionV1)
+        VerifiedWorkspaceCapabilityCache(context).record("partner", "ws-test", enabled)
+        assertTrue(VerifiedWorkspaceCapabilityCache(context).restore("partner", "ws-test").trustedEmptyCustomerDeletionV1)
+        assertFalse(VerifiedWorkspaceCapabilityCache(context).restore("other", "ws-test").trustedEmptyCustomerDeletionV1)
+    }
     @Test fun disabledProtocolWaitIsTransientAndPreservesExactOriginalAction() {
         val basic = PendingOperationEntity("original-op", "workspace", "operator", "CUSTOMER", 9007199254740995L,
             "UPSERT", 1, 123456789, """{"basicProfileCreate":true,"name":"Raw தமிழ் ?","totalPaid":0}""")

@@ -24,6 +24,42 @@ service cloud.firestore {
     function partner(ws) { return role(ws, ['PARTNER', 'Partner', 'partner']); }
     function operator(ws) { return role(ws, ['OPERATOR', 'Operator', 'operator']); }
     function finance(ws) { return owner(ws) || partner(ws); }
+    // Display preferences only; never financialState, cashOperations or ledger entries.
+    function displayCurrentPath(ws) { return /databases/$(database)/documents/workspaces/$(ws)/balanceDisplay/current; }
+    function displayEditPath(ws, id) { return /databases/$(database)/documents/workspaces/$(ws)/balanceDisplayEdits/$(id); }
+    function displayPaise(value) { return value is int && value >= -1000000000000 && value <= 1000000000000; }
+    function validDisplayBase(ws, data) {
+      return finance(ws) && data.workspaceId == ws && data.editedByUid == request.auth.uid &&
+        data.editedByName == get(memberPath(ws, request.auth.uid)).data.get('displayName', '') &&
+        data.operationId is string && data.operationId.matches('^[A-Za-z0-9-]{1,128}$') &&
+        data.reason is string && data.reason.size() <= 500 && data.reason.matches('[\\s\\S]*[^\\s][\\s\\S]*') &&
+        data.editedAt == request.time && data.revision is int && data.revision > 0 &&
+        (data.amountPaise == null || displayPaise(data.amountPaise));
+    }
+    function validDisplayCurrent(ws) {
+      let data = request.resource.data;
+      let previous = exists(displayCurrentPath(ws)) ? get(displayCurrentPath(ws)).data : {};
+      return validDisplayBase(ws, data) && data.revision == previous.get('revision', 0) + 1 &&
+        data.keys().hasOnly(['workspaceId','amountPaise','revision','operationId','reason','editedByUid','editedByName','editedAt']) &&
+        !exists(displayEditPath(ws, data.operationId)) &&
+        getAfter(displayEditPath(ws, data.operationId)).data.operationId == data.operationId &&
+        getAfter(displayEditPath(ws, data.operationId)).data.revision == data.revision;
+    }
+    function validDisplayEdit(ws, id) {
+      let data = request.resource.data;
+      let previous = exists(displayCurrentPath(ws)) ? get(displayCurrentPath(ws)).data : {};
+      let current = getAfter(displayCurrentPath(ws)).data;
+      return validDisplayBase(ws, data) && data.operationId == id && data.revision == previous.get('revision', 0) + 1 &&
+        current.operationId == id &&
+        data.keys().hasOnly(['workspaceId','amountPaise','revision','operationId','reason','editedByUid','editedByName','editedAt',
+          'previousOverridePaise','beforeDisplayedPaise','afterDisplayedPaise','calculatedPaiseAtEdit','differencePaise']) &&
+        data.diff(current).affectedKeys().hasOnly(['previousOverridePaise','beforeDisplayedPaise','afterDisplayedPaise','calculatedPaiseAtEdit','differencePaise']) &&
+        data.previousOverridePaise == previous.get('amountPaise', null) && displayPaise(data.calculatedPaiseAtEdit) &&
+        data.beforeDisplayedPaise == (previous.get('amountPaise', null) == null ? data.calculatedPaiseAtEdit : previous.amountPaise) &&
+        data.afterDisplayedPaise == (data.amountPaise == null ? data.calculatedPaiseAtEdit : data.amountPaise) &&
+        data.differencePaise == data.afterDisplayedPaise - data.beforeDisplayedPaise;
+    }
+
     // Partner companion expenses follow the selected beneficiary of their own job.
     function linkedExpenseTarget(ws, data) {
       let job = getAfter(/databases/$(database)/documents/workspaces/$(ws)/entries/$(string(data.get('relatedJobId', 0))));
@@ -608,6 +644,16 @@ service cloud.firestore {
             request.resource.data.backupSha256 is string && request.resource.data.purgeManifest is list) ||
            (resource.data.purgeState == 'PURGE_PENDING' && request.resource.data.purgeState in ['PURGE_PENDING', 'PURGED']));
         allow delete: if false;
+      }
+      match /balanceDisplay/{id} {
+        allow read: if finance(ws);
+        allow create, update: if id == 'current' && validDisplayCurrent(ws);
+        allow delete: if false;
+      }
+      match /balanceDisplayEdits/{id} {
+        allow read: if finance(ws);
+        allow create: if validDisplayEdit(ws, id);
+        allow update, delete: if false;
       }
       match /settings/{id} { allow read: if member(ws); allow create, update: if owner(ws); allow delete: if false; }
       match /profitShareAllocations/{id} { allow read: if finance(ws); allow write: if owner(ws); }

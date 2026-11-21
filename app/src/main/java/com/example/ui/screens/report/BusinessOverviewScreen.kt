@@ -85,7 +85,9 @@ fun BusinessOverviewScreen(
     onEditJob: ((JobEntryEntity) -> Unit)? = null,
     onDeleteJob: ((JobEntryEntity) -> Unit)? = null,
     isOwner: Boolean = false,
-    currentUid: String = ""
+    currentUid: String = "",
+    displayedBalance: Double? = null,
+    balanceDisplayControls: @Composable () -> Unit = {}
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     val hasPartnership = rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
@@ -395,8 +397,8 @@ fun BusinessOverviewScreen(
                         // Card 4: Available Business Balance — from FinancialCalculationEngine (received - expenses - withdrawals)
                         OverviewSummaryCard(
                             title = if (isTamil) "கிடைக்கும் இருப்பு" else "Available Business\nBalance",
-                            amount = formatInr(summary.availableBalance, settings.currency),
-                            subtitle = null,
+                            amount = formatInr(displayedBalance?.takeIf { selectedMode == FinancialScopeMode.OVERALL } ?: summary.availableBalance, settings.currency),
+                            subtitle = if (displayedBalance != null && selectedMode == FinancialScopeMode.OVERALL) (if (isTamil) "திருத்தப்பட்ட காட்சி மட்டும்" else "Edited display only") else null,
                             icon = Icons.Default.AccountBalanceWallet,
                             iconBgColor = Color(0xFF9333EA),
                             cardBgColor = Color(0xFFFAF5FF),
@@ -404,6 +406,8 @@ fun BusinessOverviewScreen(
                             modifier = Modifier.weight(1f)
                         )
                     }
+
+                    if (selectedMode == FinancialScopeMode.OVERALL) balanceDisplayControls()
 
                     // Row 3: Expenses & Partner Withdrawals — clickable action cards
                     Row(

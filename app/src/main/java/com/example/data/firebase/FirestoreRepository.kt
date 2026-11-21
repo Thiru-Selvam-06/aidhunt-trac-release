@@ -1170,7 +1170,15 @@ class FirestoreRepository(
                 return
             }
             if (op.entityType == "CUSTOMER") {
-                FirebaseLedgerDeletion.delete(op)
+                val role = resolveAuthoritativeRole(op.actorUid, op.workspaceId)
+                if (role == com.example.data.auth.RoleUtils.ROLE_PARTNER) {
+                    if (!capabilities.trustedEmptyCustomerDeletionV1) throw WorkspaceCapabilityPendingException()
+                    WorkspaceCommandService.deleteCustomer(op.workspaceId, op.entityId.toString(), op.actorUid,
+                        op.operationId, op.actionTime, dependencies)
+                } else {
+                    require(role == com.example.data.auth.RoleUtils.ROLE_OWNER) { "Customer deletion requires Owner or Partner access" }
+                    FirebaseLedgerDeletion.delete(op)
+                }
                 return
             }
             val existing = ref.get(com.google.firebase.firestore.Source.SERVER).await()

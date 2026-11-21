@@ -10,7 +10,8 @@ import org.json.JSONObject
 data class WorkspaceSyncCapabilities(
     val expenseCategoriesV1: Boolean = false,
     val basicCustomerProfilesV1: Boolean = false,
-    val atomicCashControlV1: Boolean = false
+    val atomicCashControlV1: Boolean = false,
+    val trustedEmptyCustomerDeletionV1: Boolean = false
 ) {
     fun requireSupported(operation: PendingOperationEntity) {
         if ((operation.entityType == "EXPENSE_CATEGORY" && !expenseCategoriesV1) ||
@@ -25,7 +26,8 @@ data class WorkspaceSyncCapabilities(
             return WorkspaceSyncCapabilities(
                 expenseCategoriesV1 = flags["expenseCategoriesV1"] == true,
                 basicCustomerProfilesV1 = flags["basicCustomerProfilesV1"] == true,
-                atomicCashControlV1 = flags["atomicCashControlV1"] == true
+                atomicCashControlV1 = flags["atomicCashControlV1"] == true,
+                trustedEmptyCustomerDeletionV1 = flags["trustedEmptyCustomerDeletionV1"] == true
             )
         }
     }
@@ -51,7 +53,8 @@ class VerifiedWorkspaceCapabilityCache(context: Context) {
             WorkspaceSyncCapabilities(
                 expenseCategoriesV1 = data.opt("expenseCategoriesV1") == true,
                 basicCustomerProfilesV1 = data.opt("basicCustomerProfilesV1") == true,
-                atomicCashControlV1 = data.opt("atomicCashControlV1") == true
+                atomicCashControlV1 = data.opt("atomicCashControlV1") == true,
+                trustedEmptyCustomerDeletionV1 = data.opt("trustedEmptyCustomerDeletionV1") == true
             )
         else WorkspaceSyncCapabilities()
         mutable.value = mutable.value + ((uid to workspace) to value)
@@ -65,6 +68,7 @@ class VerifiedWorkspaceCapabilityCache(context: Context) {
             .put("expenseCategoriesV1", value.expenseCategoriesV1)
             .put("basicCustomerProfilesV1", value.basicCustomerProfilesV1)
             .put("atomicCashControlV1", value.atomicCashControlV1)
+            .put("trustedEmptyCustomerDeletionV1", value.trustedEmptyCustomerDeletionV1)
         check(prefs.edit().putString(key(uid, workspace), data.toString()).commit()) { "Cannot persist workspace compatibility state" }
         mutable.value = mutable.value + ((uid to workspace) to value)
     }

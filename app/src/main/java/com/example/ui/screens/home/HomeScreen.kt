@@ -137,6 +137,8 @@ fun HomeScreen(
     totalCustomerDue: Double = 0.0,
     totalExpenses: Double = 0.0,
     availableBalance: Double = 0.0,
+    displayedBalance: Double? = null,
+    balanceDisplayControls: @Composable () -> Unit = {},
     recentJobs: List<JobEntryEntity>,
     recordedJobCount: Int = recentJobs.size,
     recordedCustomerCount: Int = 0,
@@ -386,7 +388,7 @@ fun HomeScreen(
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                             Text(
-                                text = if (isTamil) "கையில் ரொக்கம்" else "Cash in hand",
+                                text = if (displayedBalance != null) (if (isTamil) "திருத்தப்பட்ட காட்சி மட்டும்" else "Edited display only") else (if (isTamil) "கையில் ரொக்கம்" else "Cash in hand"),
                                 fontSize = if (responsive.isSmallPhone) 10.5.sp else 11.sp,
                                 color = AppTheme.colors.textMuted,
                                 maxLines = 1,
@@ -396,13 +398,14 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = formatInr(availableBalance, settings.currency),
+                                text = formatInr(displayedBalance ?: availableBalance, settings.currency),
                                 fontSize = if (responsive.isSmallPhone) 16.sp else if (responsive.isLargePhone) 20.sp else 18.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (availableBalance < 0) AlertDueRed else DeepSageGreen,
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
+                            balanceDisplayControls()
                             if (availableBalance < 0) {
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
