@@ -33,7 +33,7 @@ The shipped 1.0.16 editor used separate display metadata; the financial engine a
 - Initial lint hit the actual ExperimentalDetector/FIR class-cast tool failure. Explicit state type/opt-in and a single-worker retry passed. A new isolation regression initially ran against a class built39 seconds before its guard was added; the fresh build passed. A mixed device/debug-unit task invocation failed before executing tests; correct build configurations are used. These failed attempts are retained.
 - Uploaded image SHA was verified inside the installed synthetic APK. The actual Android launcher render was extracted and visually inspected: tractor, PMS, TRACTOR and By Aidhunt remain visible inside the circular mask. Native/test APK hashes are saved in the local evidence.
 - Python localization/inventory tests:8 passed; suite inventory123 host classes/26 backend files/9 runnable Android classes/3 existing explicitly blocked; no inventory errors. Interaction inventory1103 candidates; this is a source inventory, not a claim of1103 runtime tests. Publication scan found no credentials in the staged index.
-- Automated physical-phone, manual two-phone, real OTP, production activation and full GitHub release regression: **NOT TESTED / NOT RUN** for this revision. A separately signed owner-test package is being prepared; no final customer release is claimed.
+- Automated physical-phone, manual two-phone, real OTP, production activation and full GitHub release regression: **NOT TESTED / NOT RUN** for this revision. The separately signed1.0.17 owner-test package passed the checks below; no final customer release is claimed.
 
 ## Production boundary and remaining limitations
 
@@ -44,3 +44,68 @@ The current compatibility policy still has its original withdrawal authorization
 Before activation: finish exact-source testing; review the compatibility Rules diff; inventory and update all authorized partner clients; re-read the active Rules to detect intervening changes; obtain explicit approval for the minimal Rules deployment and the single workspace capability. Do not deploy the broader development policy as a shortcut. Physical two-phone cash consistency, restart/offline behavior and withdrawal limits remain a separate acceptance gate.
 
 Rollback before any correction can leave the feature disabled and restore the saved Rules. After any confirmed correction, do not downgrade to clients that ignore it or delete history. Preserve cash-aware reads, use a forward repair, and reverse a mistaken adjustment only by a separately authorized new audited adjustment. A cash correction is not proof of a historical receipt or payment method.
+
+## Exact changed-file inventory
+
+Functional checkpoint: `6850bc91f1793b66b153cf30b800f9667200128b`. The implementation groups and reasons are explained above. This is the complete tracked inventory for that checkpoint; private evidence, credentials and APK binaries are excluded.
+
+- `PROGRESS.md`
+- `app/src/androidTest/java/com/example/CashBalanceCloudDeviceTest.kt`
+- `app/src/androidTest/java/com/example/CashBalanceDeviceTest.kt`
+- `app/src/deviceTest/AndroidManifest.xml`
+- `app/src/deviceTest/java/com/example/CashCachePeerService.kt`
+- `app/src/deviceTest/java/com/example/CashTestApplication.kt`
+- `app/src/main/AndroidManifest.xml`
+- `app/src/main/java/com/example/MainActivity.kt`
+- `app/src/main/java/com/example/data/firebase/CashBalanceAdjustmentRepository.kt`
+- `app/src/main/java/com/example/data/firebase/WorkspaceSyncCapabilities.kt`
+- `app/src/main/java/com/example/data/repository/WorkspaceRepository.kt`
+- `app/src/main/java/com/example/ui/components/CashBalanceEditor.kt`
+- `app/src/main/java/com/example/ui/screens/home/HomeScreen.kt`
+- `app/src/main/java/com/example/ui/screens/report/BusinessOverviewScreen.kt`
+- `app/src/main/java/com/example/ui/screens/report/ReportScreen.kt`
+- `app/src/main/java/com/example/ui/util/FinancialCalculationEngine.kt`
+- `app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt`
+- `app/src/main/res/drawable-nodpi/pms_app_icon.jpg`
+- `app/src/main/res/drawable/pms_launcher_background.xml`
+- `app/src/main/res/drawable/pms_launcher_foreground.xml`
+- `app/src/main/res/mipmap-anydpi-v26/pms_launcher.xml`
+- `app/src/main/res/mipmap-anydpi/pms_launcher.xml`
+- `app/src/test/java/com/example/CashBalanceAdjustmentTest.kt`
+- `app/src/test/java/com/example/WorkspaceSyncCapabilitiesTest.kt`
+- `docs/regression/asset-inventory.json`
+- `docs/regression/interaction-inventory.csv`
+- `docs/regression/interaction-inventory.json`
+- `docs/verification/available-cash-adjustments.md`
+- `firestore.phase53.rules`
+- `firestore.rules`
+- `scripts/instrumentation-plan.json`
+- `scripts/run_backend_suite.mjs`
+- `security-tests/balance-display.test.cjs`
+- `security-tests/cash-balance-adjustment.test.cjs`
+
+## Separate physical acceptance — NOT TESTED
+
+Automated physical-device testing: NOT TESTED. Manual physical-device testing: NOT TESTED. API36 instrumentation results are emulator evidence only. No USB connection is required for the following manual procedure.
+
+1. Preserve the current production application/data and install the matching-key higher-version candidate as an update. If Android rejects the update, do not uninstall or clear storage; retain the error for diagnosis. Verify version1.0.17 and PMS launcher artwork.
+2. With the cash capability still off, sign into the existing authorized workspace on each Owner/Partner phone. Verify the existing records and notification/history behavior. The cash editor must explain activation is pending and refuse to save. Operators must not be able to correct cash.
+3. After every relevant partner device is upgraded and separate rollout approval is granted, recheck the active policy against the reviewed candidate, deploy only the minimal compatibility policy, and activate only the authorized workspace. No financial test record is created by deployment.
+4. Before any live write testing, obtain approval for the exact cash target/reason. Prefer an isolated authorized synthetic workspace with the same reviewed policy. Record the server-confirmed starting cash, partner entitlement/withdrawal limit and each device's version/actor/workspace.
+5. Save one approved correction on one device. Verify exactly one operation ID, before/after/delta, mandatory reason, authenticated editor and server time. Check Home, overall cash reports, existing withdrawal cash checks and PDF cash input; customer paid/due, profit, investments and historical receipts must remain unchanged. Confirm identical server state/history on the other device.
+6. Open stale correction forms on both devices. Save an authorized adjustment on one; the other's stale form must require refresh and must not overwrite it. Any retry with the same logical operation must produce one history receipt. Do not use unrelated live funds as test transactions.
+7. Restart, disconnect and reconnect each phone. Confirm cached approved cash/history remain visible offline, saving remains unavailable offline and Synced is not shown while verification is incomplete. Switch accounts/workspaces and check that old private data cannot be saved or displayed under the new context. Do not clear retained pending operations.
+8. Record screenshots with sensitive customer fields masked, exact cash-history paths/operation IDs and server values, app versions, membership roles, observed withdrawal validation and timestamps. Mark individual results PASS/FAIL only after execution. Do not claim notification push delivery, full atomic withdrawal serialization or real-device acceptance from emulator results.
+
+## Signed controlled-test package — completed22 November2026
+
+Functional source is committed as `6850bc91f1793b66b153cf30b800f9667200128b`. The only later application change is version1.0.17/code18 in `app/build.gradle.kts`; this report and `PROGRESS.md` record the evidence. Branch remains `codex/available-cash-adjustments`; no push or production merge has been performed.
+
+- Original-key signed `AIDHUNT-TRAC-1.0.17-Test-Candidate.apk`, 23966762 bytes; SHA-256 `87cbf661bdfc7c3291944c077af2c2bdfd3f1eab290e0b81c9a2f4d0b2da0985`. The package is `com.aistudio.aidhunttrac.cedlir`, non-debuggable, with a verified APK v2 signature matching the previous1.0.15 product certificate. Existing higher-version update behavior is intended; installed-device compatibility remains NOT TESTED.
+- Actual protected release Firebase project/app/API resources match the original configuration. Test/pilot/native-push flags are false; existing shared Partner job-deletion flag remains true. New cash editor/repository and unused-customer dialog are present in DEX; test-only CashTestApplication/CashCachePeerService are absent from customer DEX and manifest. The manifest's ordinary/round launcher resources resolve to the PMS icon. Release optimization shortens the JPEG path, but the resolved resource retains the original image SHA exactly.
+- Relevant release unit tests:34 passed,0 failures/errors/skips (activation2/correction9/reconciliation11/withdrawal6/capability6). Signed release assembly and release lint passed in15m12s,0 errors/120 warnings. The same32 functional host cases also passed in Debug; they are repeated variant checks, not66 distinct scenarios. No broad regression rerun was represented as complete.
+- Local artifact evidence: `outputs/cash-controls-1017/apk-verification.json`, `outputs/cash-controls-1017-release.log`, checksum file and owner testing notes. The final changed-file publication scan has0 findings across35 changed files; protected financial snapshot hash remains unchanged. Private source evidence, release credentials, Firebase config and APK binaries are not committed.
+- Cash adjustment live activation remains OFF. This package alone does not grant Firestore permissions. The live denial was caused by the deployed policy lacking the editor paths; the tested minimal compatibility candidate is prepared, not deployed. All relevant clients must be upgraded before the authorized workspace capability is enabled. No old disputed amount is added or classified automatically.
+- Existing Partner unused-customer deletion remains a separate inactive trusted-backend gate. Physical-device automated/manual tests and full GitHub release regression remain NOT TESTED / NOT RUN. No production financial writes, pending-operation recovery, Rules/flag/backend/billing deployment or production merge.
+
+Exact next action: deliver the controlled test artifact and private financial verification references; obtain explicit approval for the minimal Rules update while keeping cash activation off until all partner devices are upgraded. Re-read the active Rules immediately before any approved rollout and stop if its baseline differs. Do not install, activate or recover live operations automatically.

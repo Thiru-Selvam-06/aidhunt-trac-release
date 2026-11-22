@@ -21,8 +21,8 @@ android {
     applicationId = "com.aistudio.aidhunttrac.cedlir"
     minSdk = 24
     targetSdk = 36
-    versionCode = 17
-    versionName = "1.0.16"
+    versionCode = 18
+    versionName = "1.0.17"
 
     buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", "false")
     buildConfigField("boolean", "DEVICE_TEST", "false")
