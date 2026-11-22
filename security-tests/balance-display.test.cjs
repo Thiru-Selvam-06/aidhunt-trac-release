@@ -6,7 +6,9 @@ if(process.env.GCLOUD_PROJECT!=='demo-aidhunt-v16'||process.env.FIRESTORE_EMULAT
 let env; const ws='ws_display', p=(c,id='current',w=ws)=>`workspaces/${w}/${c}/${id}`;
 const db=uid=>env.authenticatedContext(uid).firestore();
 test.before(async()=>{env=await initializeTestEnvironment({projectId:'demo-aidhunt-v16',firestore:{host:'127.0.0.1',port:18180,
- rules:fs.readFileSync(path.join(__dirname,'..',process.env.BALANCE_RULES||'firestore.phase53.rules'),'utf8')}})});
+ // Retain all legacy prototype assertions against the development policy. The live
+ // compatibility candidate intentionally does not enable the superseded display-only API.
+ rules:fs.readFileSync(path.join(__dirname,'..',process.env.BALANCE_RULES||'firestore.rules'),'utf8')}})});
 test.after(()=>env.cleanup());
 test.beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRulesDisabled(async c=>{
  const d=c.firestore();await setDoc(doc(d,`workspaces/${ws}`),{workspaceId:ws,ownerUid:'owner'});

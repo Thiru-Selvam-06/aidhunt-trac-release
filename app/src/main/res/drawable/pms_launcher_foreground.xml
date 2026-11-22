@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Keep the supplied artwork inside the existing Android icon safe area. -->
+    <item android:width="66dp" android:height="66dp"
+        android:drawable="@drawable/pms_app_icon" android:gravity="center" />
+</layer-list>

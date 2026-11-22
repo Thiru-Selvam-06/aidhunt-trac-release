@@ -24,41 +24,56 @@ service cloud.firestore {
     function partner(ws) { return role(ws, ['PARTNER', 'Partner', 'partner']); }
     function operator(ws) { return role(ws, ['OPERATOR', 'Operator', 'operator']); }
     function finance(ws) { return owner(ws) || partner(ws); }
-    // Display preferences only; never financialState, cashOperations or ledger entries.
-    function displayCurrentPath(ws) { return /databases/$(database)/documents/workspaces/$(ws)/balanceDisplay/current; }
-    function displayEditPath(ws, id) { return /databases/$(database)/documents/workspaces/$(ws)/balanceDisplayEdits/$(id); }
-    function displayPaise(value) { return value is int && value >= -1000000000000 && value <= 1000000000000; }
-    function validDisplayBase(ws, data) {
-      return finance(ws) && data.workspaceId == ws && data.editedByUid == request.auth.uid &&
-        data.editedByName == get(memberPath(ws, request.auth.uid)).data.get('displayName', '') &&
+    function cashAdjustmentPaise(value) { return value is int && value >= -1000000000000 && value <= 1000000000000; }
+    // Explicit, audited cash corrections. No customer payment or profit is created.
+    function cashAdjustmentEnabled(ws) {
+      return get(/databases/$(database)/documents/workspaces/$(ws)).data.get('syncCapabilities', {}).get('cashBalanceAdjustmentsV1', false) == true;
+    }
+    function adjustmentStatePath(ws) { return /databases/$(database)/documents/workspaces/$(ws)/cashBalanceState/current; }
+    function adjustmentPath(ws, id) { return /databases/$(database)/documents/workspaces/$(ws)/cashBalanceAdjustments/$(id); }
+    function validAdjustmentIdentity(ws, data) {
+      return finance(ws) && cashAdjustmentEnabled(ws) && data.workspaceId == ws && data.actorUid == request.auth.uid &&
         data.operationId is string && data.operationId.matches('^[A-Za-z0-9-]{1,128}$') &&
+        data.confirmedAt == request.time && data.revision is int && data.revision > 0 &&
+        cashAdjustmentPaise(data.totalAdjustmentPaise);
+    }
+    function validAdjustmentState(ws) {
+      let data = request.resource.data;
+      let before = exists(adjustmentStatePath(ws)) ? get(adjustmentStatePath(ws)).data : {};
+      let edit = getAfter(adjustmentPath(ws, data.operationId)).data;
+      return validAdjustmentIdentity(ws, data) &&
+        data.keys().hasOnly(['workspaceId','revision','totalAdjustmentPaise','operationId','actorUid','confirmedAt']) &&
+        data.revision == before.get('revision', 0) + 1 && !exists(adjustmentPath(ws, data.operationId)) &&
+        edit.operationId == data.operationId && edit.revision == data.revision &&
+        edit.totalAdjustmentPaise == data.totalAdjustmentPaise && edit.actorUid == data.actorUid && edit.confirmedAt == data.confirmedAt;
+    }
+    function validAdjustment(ws, id) {
+      let data = request.resource.data;
+      let before = exists(adjustmentStatePath(ws)) ? get(adjustmentStatePath(ws)).data : {};
+      let after = getAfter(adjustmentStatePath(ws)).data;
+      return validAdjustmentIdentity(ws, data) && data.operationId == id &&
+        data.keys().hasOnly(['workspaceId','revision','operationId','previousTotalPaise','totalAdjustmentPaise',
+          'basePaise','beforePaise','afterPaise','deltaPaise','reason','actorUid','actorName','actionTime','confirmedAt']) &&
+        data.revision == before.get('revision', 0) + 1 && after.operationId == id &&
+        after.revision == data.revision && after.totalAdjustmentPaise == data.totalAdjustmentPaise &&
+        after.actorUid == data.actorUid && after.confirmedAt == data.confirmedAt &&
+        data.previousTotalPaise == before.get('totalAdjustmentPaise', 0) &&
+        cashAdjustmentPaise(data.basePaise) && cashAdjustmentPaise(data.beforePaise) && cashAdjustmentPaise(data.afterPaise) &&
+        cashAdjustmentPaise(data.deltaPaise) && data.deltaPaise != 0 &&
+        data.beforePaise == data.basePaise + data.previousTotalPaise &&
+        data.afterPaise == data.basePaise + data.totalAdjustmentPaise &&
+        data.deltaPaise == data.totalAdjustmentPaise - data.previousTotalPaise &&
         data.reason is string && data.reason.size() <= 500 && data.reason.matches('[\\s\\S]*[^\\s][\\s\\S]*') &&
-        data.editedAt == request.time && data.revision is int && data.revision > 0 &&
-        (data.amountPaise == null || displayPaise(data.amountPaise));
+        data.actorName == get(memberPath(ws, request.auth.uid)).data.get('displayName', '') &&
+        data.actionTime is int && data.actionTime > 0 && data.actionTime <= request.time.toMillis() &&
+        validAdjustmentAtomic(ws, id, data);
     }
-    function validDisplayCurrent(ws) {
-      let data = request.resource.data;
-      let previous = exists(displayCurrentPath(ws)) ? get(displayCurrentPath(ws)).data : {};
-      return validDisplayBase(ws, data) && data.revision == previous.get('revision', 0) + 1 &&
-        data.keys().hasOnly(['workspaceId','amountPaise','revision','operationId','reason','editedByUid','editedByName','editedAt']) &&
-        !exists(displayEditPath(ws, data.operationId)) &&
-        getAfter(displayEditPath(ws, data.operationId)).data.operationId == data.operationId &&
-        getAfter(displayEditPath(ws, data.operationId)).data.revision == data.revision;
+    function validAdjustmentAtomic(ws, id, data) {
+      // This compatibility policy cannot service the full atomic-cash protocol.
+      return !exists(/databases/$(database)/documents/workspaces/$(ws)/financialState/current) &&
+        get(/databases/$(database)/documents/workspaces/$(ws)).data.get('syncCapabilities', {}).get('atomicCashControlV1', false) != true;
     }
-    function validDisplayEdit(ws, id) {
-      let data = request.resource.data;
-      let previous = exists(displayCurrentPath(ws)) ? get(displayCurrentPath(ws)).data : {};
-      let current = getAfter(displayCurrentPath(ws)).data;
-      return validDisplayBase(ws, data) && data.operationId == id && data.revision == previous.get('revision', 0) + 1 &&
-        current.operationId == id &&
-        data.keys().hasOnly(['workspaceId','amountPaise','revision','operationId','reason','editedByUid','editedByName','editedAt',
-          'previousOverridePaise','beforeDisplayedPaise','afterDisplayedPaise','calculatedPaiseAtEdit','differencePaise']) &&
-        data.diff(current).affectedKeys().hasOnly(['previousOverridePaise','beforeDisplayedPaise','afterDisplayedPaise','calculatedPaiseAtEdit','differencePaise']) &&
-        data.previousOverridePaise == previous.get('amountPaise', null) && displayPaise(data.calculatedPaiseAtEdit) &&
-        data.beforeDisplayedPaise == (previous.get('amountPaise', null) == null ? data.calculatedPaiseAtEdit : previous.amountPaise) &&
-        data.afterDisplayedPaise == (data.amountPaise == null ? data.calculatedPaiseAtEdit : data.amountPaise) &&
-        data.differencePaise == data.afterDisplayedPaise - data.beforeDisplayedPaise;
-    }
+
 
     // Partner companion expenses follow the selected beneficiary of their own job.
     function linkedExpenseTarget(ws, data) {
@@ -645,14 +660,14 @@ service cloud.firestore {
            (resource.data.purgeState == 'PURGE_PENDING' && request.resource.data.purgeState in ['PURGE_PENDING', 'PURGED']));
         allow delete: if false;
       }
-      match /balanceDisplay/{id} {
-        allow read: if finance(ws);
-        allow create, update: if id == 'current' && validDisplayCurrent(ws);
+      match /cashBalanceState/{id} {
+        allow read: if finance(ws) && cashAdjustmentEnabled(ws);
+        allow create, update: if id == 'current' && validAdjustmentState(ws);
         allow delete: if false;
       }
-      match /balanceDisplayEdits/{id} {
-        allow read: if finance(ws);
-        allow create: if validDisplayEdit(ws, id);
+      match /cashBalanceAdjustments/{id} {
+        allow read: if finance(ws) && cashAdjustmentEnabled(ws);
+        allow create: if validAdjustment(ws, id);
         allow update, delete: if false;
       }
       match /settings/{id} { allow read: if member(ws); allow create, update: if owner(ws); allow delete: if false; }

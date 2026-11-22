@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
-    <application android:label="AIDHUNT Trac Emulator" android:networkSecurityConfig="@xml/device_test_network" tools:replace="android:label">
+    <application android:name="com.example.CashTestApplication" android:label="AIDHUNT Trac Emulator" android:networkSecurityConfig="@xml/device_test_network" tools:replace="android:label,android:name">
         <!-- Compose instrumentation host exists only in the isolated demo variant. -->
         <activity android:name="androidx.activity.ComponentActivity" android:exported="true" />
+        <service android:name="com.example.CashCachePeerService" android:exported="false" android:process=":cash_test_peer" />
     </application>
 </manifest>

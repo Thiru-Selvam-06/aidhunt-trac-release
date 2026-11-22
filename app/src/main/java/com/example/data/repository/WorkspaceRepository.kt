@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 
 /** A successful membership discovery found no authorized workspace. */
@@ -221,6 +222,39 @@ class WorkspaceRepository(
     // can never contribute participants to the current report.
     private val _activeWorkspaceMembers = MutableStateFlow<List<WorkspaceMember>>(emptyList())
     val activeWorkspaceMembers: StateFlow<List<WorkspaceMember>> = _activeWorkspaceMembers.asStateFlow()
+
+    private val cashAdjustmentRepository by lazy { com.example.data.firebase.CashBalanceAdjustmentRepository(
+        com.google.firebase.firestore.FirebaseFirestore.getInstance(), com.google.firebase.auth.FirebaseAuth.getInstance()) }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val cashBalanceAdjustments: StateFlow<com.example.data.firebase.CashBalanceState> by lazy {
+        combine(verifiedWorkspaceContext, activeWorkspaceMembers, syncCapabilities) { identity, members, flags ->
+            val member = members.firstOrNull { identity != null && it.uid == identity.first && it.workspaceId == identity.second &&
+                it.status.equals("ACTIVE", true) && com.example.data.firebase.BalanceDisplayPolicy.canEdit(it.role) }
+            Triple(identity, member != null, flags.cashBalanceAdjustmentsV1)
+        }.flatMapLatest { (identity, authorized, enabled) ->
+            if (identity == null || !authorized) kotlinx.coroutines.flow.flowOf(com.example.data.firebase.CashBalanceState())
+            else if (!enabled) kotlinx.coroutines.flow.flowOf(com.example.data.firebase.CashBalanceState(identity.second, loaded = true))
+            else cashAdjustmentRepository.observe(identity.second, identity.first)
+        }.stateIn(scope, SharingStarted.Eagerly, com.example.data.firebase.CashBalanceState())
+    }
+
+    suspend fun saveCashBalanceAdjustment(ws: String, actor: String, target: Long, base: Long, revision: Long, reason: String, operationId: String) {
+        fun requireOriginalContext() = com.example.data.firebase.CashBalanceAdjustmentPolicy.requireContext(
+            ws, actor, _activeWorkspaceId.value, getEffectiveActorUid(), _verifiedWorkspaceContext.value)
+        requireOriginalContext()
+        requireWorkspaceActor(ws)
+        check(currentCapabilities(ws).cashBalanceAdjustmentsV1) { "Shared cash adjustments have not been activated" }
+        check(database.pendingOperationDao().outstandingOperations(ws).none {
+            it.entityType in setOf("JOB", "PAYMENT", "EXPENSE", "WITHDRAWAL", "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT", "BORROWING_REQUEST", "SETTLEMENT_REPAYMENT")
+        }) { "Resolve retained financial operations before adjusting cash; no original operation has been changed" }
+        requireOriginalContext()
+        val latestBase = com.example.data.firebase.BalanceDisplayPolicy.parsePaise(
+            java.math.BigDecimal.valueOf(getAvailableBalance(includeAdjustments = false, subtractReservations = false)).setScale(2).toPlainString())
+        check(latestBase == base) { "The balance changed. Refresh before saving." }
+        requireOriginalContext()
+        cashAdjustmentRepository.save(ws, actor, operationId, revision, target, base, reason)
+        requireOriginalContext()
+    }
 
     // SAFE DEFAULT: non-owner. Owner is only ever granted from an explicit resolved
     // membership role, never from a default, a fallback, or workspace ownership.
@@ -2813,7 +2847,7 @@ class WorkspaceRepository(
      * NOTE: This is a cash-basis calculation. If accrual-basis balance is needed
      * (including pending receivables), a separate method should be implemented.
      */
-    suspend fun getAvailableBalance(): Double {
+    suspend fun getAvailableBalance(includeAdjustments: Boolean = true, subtractReservations: Boolean = true): Double {
         val wsId = getOrResolveWorkspaceId() ?: return 0.0
         val cash = com.example.ui.util.FinancialCalculationEngine.cashAvailableWithStage3(
             payments = paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty(),
@@ -2828,10 +2862,15 @@ class WorkspaceRepository(
         val localReserved = stage3Dao.getBorrowingRequestsOnce(wsId)
             .filter { it.status == "APPROVED_RESERVED" }
             .sumOf { it.reservedAmount }
+        val adjustment = if (includeAdjustments) currentCashAdjustment(wsId) else 0.0
         return com.example.ui.util.FinancialCalculationEngine.roundMoney(
-            cash - maxOf(_reservedCash.value, localReserved)
+            cash + adjustment - (if (subtractReservations) maxOf(_reservedCash.value, localReserved) else 0.0)
         )
     }
+
+    private suspend fun currentCashAdjustment(wsId: String): Double =
+        if (currentCapabilities(wsId).cashBalanceAdjustmentsV1)
+            cashAdjustmentRepository.readTotal(wsId, getEffectiveActorUid().orEmpty()) / 100.0 else 0.0
 
     suspend fun addWithdrawal(withdrawal: WithdrawalEntity): Long {
         val operationActorUid = getEffectiveActorUid().orEmpty()
@@ -3555,7 +3594,7 @@ class WorkspaceRepository(
                         payments = payments, expenses = expenses, withdrawals = withdrawals,
                         externalLoans = loans, externalLoanRepayments = loanReps, settlementRepayments = setReps,
                         scope = com.example.ui.util.FinancialScope(workspaceId = wsId), jobs = jobs
-                    )
+                    ) + currentCashAdjustment(wsId)
                 }
                 val overview = com.example.ui.util.PartnerBorrowingCalculator.calculate(
                     confirmedCash = cashAvailable,
@@ -3703,7 +3742,7 @@ class WorkspaceRepository(
                     payments = payments, expenses = expenses, withdrawals = withdrawals,
                     externalLoans = loans, externalLoanRepayments = loanReps, settlementRepayments = setReps,
                     scope = com.example.ui.util.FinancialScope(workspaceId = wsId), jobs = jobs
-                )
+                ) + currentCashAdjustment(wsId)
             }
             val overview = com.example.ui.util.PartnerBorrowingCalculator.calculate(
                 confirmedCash = cashAvailable,

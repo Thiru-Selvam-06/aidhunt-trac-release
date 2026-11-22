@@ -118,31 +118,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val phoneVerificationId: StateFlow<String?> = _phoneVerificationId.asStateFlow()
 
     val cloudConnectionState by lazy {
-        combine(workspaceRepository.cloudConnectionState, localSyncStatus) { cloud, local ->
-            if (cloud == com.example.data.firebase.CloudConnectionState.CONNECTED && !local.loaded)
-                com.example.data.firebase.CloudConnectionState.CONNECTING else cloud
+        combine(workspaceRepository.cloudConnectionState, localSyncStatus, cashBalanceAdjustments) { cloud, local, cash ->
+            com.example.data.firebase.CashBalanceAdjustmentPolicy.connection(cloud, local.loaded, cash)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.data.firebase.CloudConnectionState.CONNECTING)
     }
     fun retryCloudListeners() = workspaceRepository.retryCloudListeners()
 
-    private val balanceDisplayRepository by lazy { com.example.data.firebase.BalanceDisplayRepository(FirebaseFirestore.getInstance(), FirebaseAuth.getInstance()) }
-    val balanceDisplay by lazy {
-        combine(authorizedWorkspaceId, currentUserProfile, workspaceRepository.verifiedWorkspaceContext, currentUserRole) { ws, profile, verified, role ->
-            if (!ws.isNullOrBlank() && profile != null && profile.uid == currentUid && verified == (profile.uid to ws) && com.example.data.firebase.BalanceDisplayPolicy.canEdit(role)) ws to profile.uid else null
-        }.flatMapLatest { identity ->
-            if (identity == null) flowOf(com.example.data.firebase.BalanceDisplayState())
-            else balanceDisplayRepository.observe(identity.first, identity.second)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.data.firebase.BalanceDisplayState())
-    }
+    val cashBalanceAdjustments get() = workspaceRepository.cashBalanceAdjustments
 
-    fun saveBalanceDisplay(amount: Long?, calculated: Long, revision: Long, reason: String, operationId: String, onResult: (String?) -> Unit) {
+    fun saveCashBalanceAdjustment(amount: Long, calculated: Long, revision: Long, reason: String, operationId: String, onResult: (String?) -> Unit) {
         val ws = activeWorkspaceId.value.orEmpty()
         val actor = currentUid.orEmpty()
         viewModelScope.launch {
             val result = runCatching {
-                require(isOnline.value) { "Connect to the internet before editing the display balance" }
+                require(isOnline.value) { "Connect to the internet before adjusting shared cash" }
                 require(workspaceRepository.verifiedWorkspaceContext.value == (actor to ws)) { "Verify workspace access first" }
-                balanceDisplayRepository.save(ws, actor, operationId, revision, amount, calculated, reason)
+                require(cloudConnectionState.value == com.example.data.firebase.CloudConnectionState.CONNECTED) { "Wait for cloud records to finish synchronizing" }
+                workspaceRepository.saveCashBalanceAdjustment(ws, actor, amount, calculated, revision, reason, operationId)
             }
             onResult(result.exceptionOrNull()?.message)
         }
@@ -794,7 +786,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Cash Collections are the receipt source. Entry amountReceived includes non-cash methods.
-    val availableAmount: StateFlow<Double> = combine(
+    val calculatedAvailableAmount: StateFlow<Double> = combine(
         combine(cashPayments, expenses, withdrawals, activeWorkspaceId, jobs) { payments, expenseRows, withdrawalRows, wsId, jobRows ->
             arrayOf<Any?>(payments, expenseRows, withdrawalRows, wsId, jobRows)
         },
@@ -819,6 +811,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             externalLoanRepayments = loanReps,
             settlementRepayments = setReps
         )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val availableAmount: StateFlow<Double> = combine(calculatedAvailableAmount, cashBalanceAdjustments, activeWorkspaceId) { cash, correction, ws ->
+        if (correction.workspaceId == ws && correction.enabled && !correction.loaded) 0.0 else
+        com.example.ui.util.FinancialCalculationEngine.roundMoney(cash +
+            if (correction.workspaceId == ws && correction.loaded) correction.totalAdjustmentPaise / 100.0 else 0.0)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     val borrowingOverview: StateFlow<com.example.ui.util.WorkspaceBorrowingOverview> = combine(
@@ -932,13 +930,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val balanceSheetSummary: StateFlow<com.example.ui.util.FinancialSummary> = combine(
-        jobs,
-        expenses,
-        withdrawals,
-        cashPayments,
-        balanceSheetScope
-    ) { jList, eList, wList, pList, sc ->
-        com.example.ui.util.FinancialCalculationEngine.calculateSummary(jList, eList, wList, sc, pList)
+        combine(
+            jobs,
+            expenses,
+            withdrawals,
+            cashPayments,
+            balanceSheetScope
+        ) { jList, eList, wList, pList, sc ->
+            val ledgerScope = sc.copy(workspaceId = sc.workspaceId.ifBlank {
+                (jList.map { it.workspaceId } + eList.map { it.workspaceId } + wList.map { it.workspaceId } +
+                    pList.map { it.workspaceId }).filter { it.isNotBlank() }.distinct().singleOrNull().orEmpty()
+            })
+            ledgerScope to com.example.ui.util.FinancialCalculationEngine.calculateSummary(jList, eList, wList, ledgerScope, pList)
+        }, cashBalanceAdjustments
+    ) { (sc, summary), correction ->
+        summary.copy(availableBalance = com.example.ui.util.FinancialCalculationEngine.roundMoney(summary.availableBalance +
+            com.example.ui.util.FinancialCalculationEngine.cashAdjustmentDelta(correction.edits, sc)))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.ui.util.FinancialSummary())
 
     private var draftActorUid: String? = null

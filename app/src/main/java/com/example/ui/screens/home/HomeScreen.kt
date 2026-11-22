@@ -137,6 +137,7 @@ fun HomeScreen(
     totalCustomerDue: Double = 0.0,
     totalExpenses: Double = 0.0,
     availableBalance: Double = 0.0,
+    cashBalanceVerifying: Boolean = false,
     displayedBalance: Double? = null,
     balanceDisplayControls: @Composable () -> Unit = {},
     recentJobs: List<JobEntryEntity>,
@@ -398,7 +399,7 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = formatInr(displayedBalance ?: availableBalance, settings.currency),
+                                text = if (cashBalanceVerifying) (if (isTamil) "சரிபார்க்கிறது…" else "Verifying…") else formatInr(displayedBalance ?: availableBalance, settings.currency),
                                 fontSize = if (responsive.isSmallPhone) 16.sp else if (responsive.isLargePhone) 20.sp else 18.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (availableBalance < 0) AlertDueRed else DeepSageGreen,

@@ -74,6 +74,15 @@ data class PartnerShareInvestmentStatus(
 
 object FinancialCalculationEngine {
 
+    /** Apply confirmed cash corrections in their own period, never to sales/profit/dues. */
+    fun cashAdjustmentDelta(edits: List<com.example.data.firebase.CashBalanceEdit>, scope: FinancialScope): Double {
+        require(scope.workspaceId.isNotBlank() || edits.map { it.workspaceId }.distinct().size <= 1) {
+            "Cash adjustments require one authorized workspace"
+        }
+        return roundMoney(edits.filter { (scope.workspaceId.isBlank() || it.workspaceId == scope.workspaceId) &&
+            it.confirmedAt > 0L && isTimestampInScope(it.confirmedAt, scope) }.sumOf { it.deltaPaise } / 100.0)
+    }
+
     fun calculatePartnerShareAndInvestment(
         jobs: List<JobEntryEntity>,
         expenses: List<ExpenseEntity>,
@@ -433,9 +442,11 @@ object FinancialCalculationEngine {
         expenses: List<ExpenseEntity>,
         withdrawals: List<WithdrawalEntity>,
         scope: FinancialScope,
-        payments: List<PaymentEntity>? = null
+        payments: List<PaymentEntity>? = null,
+        cashAdjustments: List<com.example.data.firebase.CashBalanceEdit> = emptyList()
     ): FinancialSummary {
-        val workspaceIds = (jobs.map { it.workspaceId } + expenses.map { it.workspaceId } + withdrawals.map { it.workspaceId }).filter { it.isNotBlank() }.distinct()
+        val workspaceIds = (jobs.map { it.workspaceId } + expenses.map { it.workspaceId } + withdrawals.map { it.workspaceId } +
+            payments.orEmpty().map { it.workspaceId } + cashAdjustments.map { it.workspaceId }).filter { it.isNotBlank() }.distinct()
         if (scope.workspaceId.isBlank() && workspaceIds.size > 1) throw SecurityException("Financial calculations require one authorized workspace")
         val authorizedWorkspace = scope.workspaceId.ifBlank { workspaceIds.singleOrNull().orEmpty() }
         val scopedJobs = jobs.filter { job ->
@@ -476,7 +487,7 @@ object FinancialCalculationEngine {
             totalDue = totalDue,
             totalExpenses = totalExpenses,
             totalWithdrawals = totalWithdrawals,
-            availableBalance = availableBalance,
+            availableBalance = roundMoney(availableBalance + cashAdjustmentDelta(cashAdjustments, scope.copy(workspaceId = authorizedWorkspace))),
             jobCount = jobCount,
             expenseCount = scopedExpenses.size,
             withdrawalCount = scopedWithdrawals.size

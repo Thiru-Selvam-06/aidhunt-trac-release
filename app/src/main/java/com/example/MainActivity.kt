@@ -152,15 +152,16 @@ internal fun MainAppContent(
     val authenticatedUserName by viewModel.authenticatedUserName.collectAsState()
     val authenticatedUserRole by viewModel.authenticatedUserRole.collectAsState()
     val currentUserRole by viewModel.currentUserRole.collectAsState()
-    val displayStateRaw by viewModel.balanceDisplay.collectAsState()
+    val calculatedAvailableAmount by viewModel.calculatedAvailableAmount.collectAsState()
+    val displayStateRaw by viewModel.cashBalanceAdjustments.collectAsState()
     val displayState = displayStateRaw.takeIf { it.workspaceId == activeWorkspaceId && com.example.data.firebase.BalanceDisplayPolicy.canEdit(currentUserRole) }
-        ?: com.example.data.firebase.BalanceDisplayState()
+        ?: com.example.data.firebase.CashBalanceState()
     val displayActor = viewModel.currentUid.orEmpty()
     var showBalanceDisplayEditor by remember(activeWorkspaceId, displayActor) { mutableStateOf(false) }
     val mayEditBalanceDisplay = com.example.data.firebase.BalanceDisplayPolicy.canEdit(currentUserRole)
     val displayControls: @Composable () -> Unit = {
         if (mayEditBalanceDisplay) androidx.compose.material3.TextButton(onClick = { showBalanceDisplayEditor = true }) {
-            androidx.compose.material3.Text(if (settings.language.equals("TA", true)) "காட்சி திருத்தம் / வரலாறு" else "Edit display / history")
+            androidx.compose.material3.Text(if (settings.language.equals("TA", true)) "இருப்புத் திருத்தம் / வரலாறு" else "Adjust cash / history")
         }
     }
     val profitShareAllocations by viewModel.profitShareAllocations.collectAsState()
@@ -394,8 +395,8 @@ internal fun MainAppContent(
         )
     }
     if (showBalanceDisplayEditor && mayEditBalanceDisplay && authState is com.example.data.firebase.AuthState.Authenticated) {
-        com.example.ui.components.BalanceDisplayEditor(displayState, availableAmount, isTamil, isOnline, mayEditBalanceDisplay,
-            onDismiss = { showBalanceDisplayEditor = false }, onSave = viewModel::saveBalanceDisplay)
+        com.example.ui.components.CashBalanceEditor(displayState, calculatedAvailableAmount, isTamil, isOnline, mayEditBalanceDisplay,
+            onDismiss = { showBalanceDisplayEditor = false }, onSave = viewModel::saveCashBalanceAdjustment)
     }
     var pendingGoogleProfile by remember { mutableStateOf<com.example.data.firebase.UserProfile?>(null) }
 
@@ -697,7 +698,7 @@ internal fun MainAppContent(
                                     totalCustomerDue = homeSummary.due,
                                     totalExpenses = totalExpenses,
                                     availableBalance = availableAmount,
-                                    displayedBalance = displayState.overridePaise?.div(100.0),
+                                    cashBalanceVerifying = displayState.enabled && !displayState.loaded,
                                     balanceDisplayControls = displayControls,
                                     recentJobs = todayJobs.take(20),
                                     recordedJobCount = homeSummary.count,
@@ -753,7 +754,8 @@ internal fun MainAppContent(
 
                             BottomTab.REPORT -> {
                                 ReportScreen(
-                                    displayedBalance = displayState.overridePaise?.div(100.0),
+                                    cashAdjustments = displayState.edits,
+                                    cashBalanceVerifying = displayState.enabled && !displayState.loaded,
                                     balanceDisplayControls = displayControls,
                                     pendingActions = retainedHomeActions,
                                     customExpenseCategories = expenseCategories.map { it.name },

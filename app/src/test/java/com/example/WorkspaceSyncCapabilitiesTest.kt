@@ -15,6 +15,13 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], application = android.app.Application::class)
 class WorkspaceSyncCapabilitiesTest {
+    @Test fun cashCorrectionActivationSurvivesRestartWithoutLeakingToAnotherAccount() {
+        val value=WorkspaceSyncCapabilities(cashBalanceAdjustmentsV1=true)
+        VerifiedWorkspaceCapabilityCache(context).record("cash-partner","ws-cash",value)
+        assertTrue(VerifiedWorkspaceCapabilityCache(context).restore("cash-partner","ws-cash").cashBalanceAdjustmentsV1)
+        assertFalse(VerifiedWorkspaceCapabilityCache(context).restore("other-partner","ws-cash").cashBalanceAdjustmentsV1)
+        assertFalse(VerifiedWorkspaceCapabilityCache(context).restore("cash-partner","other-workspace").cashBalanceAdjustmentsV1)
+    }
     private val context get() = ApplicationProvider.getApplicationContext<Context>()
     @Before fun resetSyntheticCache() {
         context.getSharedPreferences("verified_workspace_capabilities", Context.MODE_PRIVATE).edit().clear().commit()

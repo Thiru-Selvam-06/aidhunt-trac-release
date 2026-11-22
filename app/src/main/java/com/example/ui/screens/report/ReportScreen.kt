@@ -105,6 +105,8 @@ fun ReportScreen(
     netBalance: Double,
     availableAmount: Double,
     displayedBalance: Double? = null,
+    cashAdjustments: List<com.example.data.firebase.CashBalanceEdit> = emptyList(),
+    cashBalanceVerifying: Boolean = false,
     balanceDisplayControls: @Composable () -> Unit = {},
     totalWithdrawn: Double,
     onAddExpense: (ExpenseEntity) -> Unit,
@@ -234,6 +236,8 @@ fun ReportScreen(
             ReportSubPage.BUSINESS_OVERVIEW -> {
                 BusinessOverviewScreen(
                     displayedBalance = displayedBalance,
+                    cashAdjustments = cashAdjustments,
+                    cashBalanceVerifying = cashBalanceVerifying,
                     balanceDisplayControls = balanceDisplayControls,
                     settings = settings,
                     jobs = jobs,
