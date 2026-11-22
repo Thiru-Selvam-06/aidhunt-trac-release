@@ -85,7 +85,7 @@ internal object OwnerVisitCloud {
         "createdByUid authorizationTimeStatus jobEditHistory deletedJobEditHistory recordId kind customerName " +
         "expenseType paidBy fundingSource externalLoanId collectedByUid reversedByUid status " +
         "targetPartnerUid borrowingRequestId isBorrowing withdrawalType uid displayName role ownerUid syncCapabilities "+
-        "entityType entityId mutationType"
+        "entityType entityId mutationType confirmedAt revision beforePaise afterPaise deltaPaise reason"
     ).split(' ').toSet()
 
     suspend fun refresh(key: OwnerVisitKey, since: Long?): Refresh {
@@ -158,7 +158,7 @@ internal object OwnerVisitCloud {
         suspend fun query(collection: String, filterField: String? = null): List<OwnerActivityEvidence> {
             val query = JSONObject().put("from", JSONArray().put(JSONObject().put("collectionId", collection)))
             if (filterField != null) {
-                val value = if (filterField == "serverReceivedAt" || filterField == "createdAt")
+                val value = if (filterField in setOf("serverReceivedAt", "createdAt", "confirmedAt"))
                     JSONObject().put("timestampValue", timestampFloor)
                 else JSONObject().put("integerValue", lowerBound.toString())
                 query.put("where", JSONObject().put("fieldFilter", JSONObject()
@@ -194,6 +194,11 @@ internal object OwnerVisitCloud {
             "expenses" to listOf("actionTime", "serverReceivedAt"),
             "withdrawals" to listOf("actionTime", "serverReceivedAt")
         )
+        if ((workspaceData["syncCapabilities"] as? Map<*, *>)?.get("cashBalanceAdjustmentsV1") == true) {
+            // Cash history has a server Timestamp, not the outbox's integer action time.
+            // An offline client's clock must not hide a newly confirmed adjustment.
+            sources["cashBalanceAdjustments"] = listOf("confirmedAt")
+        }
         if ((workspaceData["syncCapabilities"] as? Map<*, *>)?.get("atomicCashControlV1") == true) {
             sources["cashDeleteProofs"] = listOf("actionTime", "createdAt")
             sources["cashOperations"] = listOf("actionTime", "createdAt")
@@ -225,6 +230,13 @@ internal object OwnerVisitCloud {
     private fun decode(document: JSONObject): Map<String, Any?> {
         val row = document.optJSONObject("fields") ?: return emptyMap()
         return row.keys().asSequence().filter { it in fields }
-            .associateWith { FirestoreValueCodec.decode(row.getJSONObject(it)) }
+            .associateWith { key ->
+                val value = row.getJSONObject(key)
+                // The shared codec deliberately retains lossless Timestamp wrappers for
+                // financial mutations. Convert only this notification's confirmation time.
+                if (key == "confirmedAt") value.optString("timestampValue").takeIf { it.isNotBlank() }
+                    ?.let(FirestoreServerTime::parseReadTime)
+                else FirestoreValueCodec.decode(value)
+            }
     }
 }

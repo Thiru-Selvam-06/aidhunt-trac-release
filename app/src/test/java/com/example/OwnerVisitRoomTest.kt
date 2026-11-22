@@ -31,8 +31,10 @@ class OwnerVisitRoomTest {
             }
         }
         val event = AppNotificationEntity(id = "verified-1", workspaceId = "one",
-            recipientUid = "owner", targetAudience = OwnerVisitActivity.AUDIENCE, actorUid = "partner", createdAt = 100)
-        val otherEvent = event.copy(id = "verified-2", createdAt = 100)
+            recipientUid = "owner", targetAudience = OwnerVisitActivity.AUDIENCE, actorUid = "partner", createdAt = 100,
+            eventType = AppNotificationEntity.EVENT_CASH_BALANCE_ADJUSTED, entityType = "CASH_BALANCE",
+            amount = 1.0, metadataJson = "{\"reason\":\"original cash reason\",\"deltaPaise\":100}")
+        val otherEvent = event.copy(id = "verified-2", createdAt = 100, eventType = AppNotificationEntity.EVENT_JOB_CREATED)
         try {
             withDatabase(firstName) { it.appNotificationDao().upsertPreservingReadState(listOf(event, otherEvent)) }
             withDatabase(secondName) { it.appNotificationDao().upsertPreservingReadState(listOf(event, otherEvent)) }
@@ -41,6 +43,8 @@ class OwnerVisitRoomTest {
                 val first = dao.observeVisibleNotifications("one", "owner", true).first()
                 assertEquals(listOf("verified-1", "verified-2"), first.map { it.id })
                 assertTrue(first.none { it.isRead })
+                assertEquals(event.metadataJson, first.first().metadataJson)
+                assertEquals(event.eventType, first.first().eventType)
                 assertTrue(dao.observeVisibleNotifications("one", "another-owner", true).first().isEmpty())
                 assertTrue(dao.observeVisibleNotifications("other-workspace", "owner", true).first().isEmpty())
                 assertTrue(dao.observeVisibleNotifications("one", "partner", false).first().isEmpty())

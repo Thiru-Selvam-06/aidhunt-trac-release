@@ -116,6 +116,66 @@ class OwnerVisitCloudEmulatorTest {
         }
     }
 
+    @Test fun cashHistoryUsesConfirmedServerTimeAndKeepsOwnerOnlyRecipientAndRolloutBoundaries() = runBlocking {
+        val ping = runCatching { rpc("$root/workspaces/$ws", "GET", null, "owner") }.getOrNull()
+        assumeTrue("Requires local Firestore Emulator at 127.0.0.1:18180", ping != null)
+        seed("workspaces/$ws", mapOf("workspaceId" to ws, "ownerUid" to owner,
+            "syncCapabilities" to mapOf("cashBalanceAdjustmentsV1" to true)))
+        for ((uid, role) in listOf(owner to "OWNER", partner to "PARTNER"))
+            seed("workspaces/$ws/members/$uid", mapOf("uid" to uid, "role" to role,
+                "status" to "ACTIVE", "displayName" to uid))
+        var cashQueries = 0
+        suspend fun fetch() = OwnerVisitCloud.load(OwnerVisitKey(ws, owner), now - 500L, project) { method, data ->
+            val query = data.optJSONObject("structuredQuery")
+            if (query?.getJSONArray("from")?.getJSONObject(0)?.optString("collectionId") == "cashBalanceAdjustments") {
+                cashQueries++
+                val filter = query.getJSONObject("where").getJSONObject("fieldFilter")
+                assertEquals("confirmedAt", filter.getJSONObject("field").getString("fieldPath"))
+                assertTrue(filter.getJSONObject("value").has("timestampValue"))
+            }
+            val (status, body) = rpc(method, "POST", data, jwt(owner))
+            check(status == 200) { "Owner history request failed: $status" }
+            JSONArray(body)
+        }
+        assertTrue(fetch().activities.isEmpty()) // No confirmed action, no success alert.
+        fun confirm(actor: String, revision: Long, priorTotal: Long) {
+            val op = "cash-confirmed-$revision"
+            val state = encoded(mapOf("workspaceId" to ws, "revision" to revision,
+                "totalAdjustmentPaise" to priorTotal + 100L, "operationId" to op, "actorUid" to actor))
+            val edit = encoded(mapOf("workspaceId" to ws, "revision" to revision, "operationId" to op,
+                "previousTotalPaise" to priorTotal, "totalAdjustmentPaise" to priorTotal + 100L,
+                "basePaise" to 100000L, "beforePaise" to 100000L + priorTotal,
+                "afterPaise" to 100100L + priorTotal, "deltaPaise" to 100L,
+                "reason" to "Cash reason / காரணம்", "actorUid" to actor, "actorName" to actor,
+                "actionTime" to System.currentTimeMillis() - 1000))
+            fun write(path: String, fields: JSONObject) = JSONObject().put("update", JSONObject()
+                .put("name", "$root/workspaces/$ws/$path").put("fields", fields))
+                .put("updateTransforms", JSONArray().put(JSONObject().put("fieldPath", "confirmedAt").put("setToServerValue", "REQUEST_TIME")))
+            val writes = JSONArray().put(write("cashBalanceState/current", state)).put(write("cashBalanceAdjustments/$op", edit))
+            val result = rpc("$root:commit", "POST", JSONObject().put("writes", writes), jwt(actor))
+            assertEquals(result.second, 200, result.first)
+        }
+        confirm(partner, 1L, 0L)
+        val first = fetch()
+        assertTrue(first.complete)
+        val event = first.activities.single().item
+        assertEquals(Event.EVENT_CASH_BALANCE_ADJUSTED, event.eventType)
+        assertEquals(owner, event.recipientUid)
+        assertEquals(partner, event.actorUid)
+        assertEquals(1.0, event.amount, 0.0)
+        assertEquals("Cash reason / காரணம்", JSONObject(event.metadataJson).getString("reason"))
+        assertEquals(event.id, fetch().activities.single().item.id)
+        confirm(owner, 2L, 100L)
+        assertEquals(listOf(event.id), fetch().activities.map { it.item.id }) // No Owner self-alert.
+        assertTrue(cashQueries > 0)
+        seed("workspaces/$ws", mapOf("workspaceId" to ws, "ownerUid" to owner))
+        cashQueries = 0
+        val disabled = fetch()
+        assertTrue(disabled.complete)
+        assertEquals(0, cashQueries)
+        assertTrue(disabled.activities.isEmpty())
+    }
+
     @Test fun ownerReadsAuthorizedLedgerAndMissingNotificationCollectionWithoutTrustingClientClaims() = runBlocking {
         val ping = runCatching { rpc("$root/workspaces/$ws", "GET", null, "owner") }.getOrNull()
         assumeTrue("Requires local Firestore Emulator at 127.0.0.1:18180", ping != null)

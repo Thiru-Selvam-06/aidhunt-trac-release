@@ -220,6 +220,19 @@ object NotificationPresenter {
 
 
     private fun presentOwnerVisit(notification: AppNotificationEntity, actor: String, tamil: Boolean): PresentedNotification {
+        if (notification.eventType == AppNotificationEntity.EVENT_CASH_BALANCE_ADJUSTED) {
+            val metadata = runCatching { JSONObject(notification.metadataJson) }.getOrElse { JSONObject() }
+            val amounts = if (metadata.has("beforePaise") && metadata.has("afterPaise"))
+                formatInr(metadata.optLong("beforePaise") / 100.0) + " → " + formatInr(metadata.optLong("afterPaise") / 100.0)
+            else formatInr(notification.amount)
+            val reason = metadata.optString("reason").takeIf { it.isNotBlank() }
+            return PresentedNotification(
+                if (tamil) "$actor கிடைக்கும் ரொக்க இருப்பைத் திருத்தினார்" else "$actor adjusted available cash",
+                amounts + (reason?.let { "\n" + (if (tamil) "காரணம்: " else "Reason: ") + it } ?: ""),
+                if (tamil) "ரொக்க இருப்புத் திருத்தம்" else "Cash adjustment",
+                JobAuditPresentation.instant(notification.createdAt, tamil)
+            )
+        }
         val action = when (notification.eventType) {
             AppNotificationEntity.EVENT_JOB_CREATED -> "added a new job" to "புதிய வேலைப் பதிவைச் சேர்த்தார்"
             com.example.data.sync.OwnerVisitActivity.OLD_ENTRY -> "added an old entry" to "பழைய வேலைப் பதிவைச் சேர்த்தார்"

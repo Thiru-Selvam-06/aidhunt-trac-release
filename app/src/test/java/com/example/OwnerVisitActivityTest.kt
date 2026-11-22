@@ -11,7 +11,12 @@ import com.example.data.sync.OwnerVisitStatus
 import com.example.ui.util.NotificationPresenter
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36], application = android.app.Application::class)
 class OwnerVisitActivityTest {
     private val key = OwnerVisitKey("workspace", "original-owner")
     private val time = 1_767_225_600_000L
@@ -48,6 +53,9 @@ class OwnerVisitActivityTest {
             record("expenses", 8, "expense-edit", created = false),
             record("cashDeleteProofs", 8, "expense-delete", fields = mapOf("kind" to "EXPENSE", "recordId" to "8"), docId = "EXPENSE_8"),
             record("withdrawals", 9, "withdraw", fields = mapOf("targetPartnerUid" to "m")),
+            record("cashBalanceAdjustments", 11, "cash-adjust", docId = "cash-adjust", fields = mapOf(
+                "revision" to 1L, "beforePaise" to 100000L, "afterPaise" to 100001L,
+                "deltaPaise" to 1L, "confirmedAt" to time, "reason" to "Partner test")),
             record("withdrawals", 10, "borrowed", fields = mapOf("targetPartnerUid" to "m", "borrowingRequestId" to 8L)),
             record("expenses", 11, "tombstone", fields = mapOf("isDeleted" to true, "operationType" to "DELETE")),
             record("expenses", 12, "loan-expense", fields = mapOf("paidBy" to "Loan Funded")),
@@ -58,7 +66,7 @@ class OwnerVisitActivityTest {
             record("auditEvents", 1, "forged-assertion"),
         )
         val results = OwnerVisitActivity.verified(key, members, rows)
-        assertEquals(10, results.size)
+        assertEquals(11, results.size)
         assertEquals(OwnerVisitActivity.eventTypes, results.map { it.item.eventType }.toSet())
         assertEquals(setOf("Perumal", "Sriram"), results.map { it.item.actorName }.toSet())
         assertTrue(results.all { it.item.createdAt == time && it.item.recipientUid == key.ownerUid && !it.item.isRead })
@@ -66,6 +74,45 @@ class OwnerVisitActivityTest {
         val otherOwner = OwnerVisitActivity.verified(key.copy(ownerUid = "another-owner"), members, listOf(job)).single()
         assertNotEquals(results.first().item.id, otherOwner.item.id)
         assertTrue(OwnerVisitActivity.verified(key.copy(workspaceId = "different"), members, listOf(job)).isEmpty())
+    }
+
+    @Test fun confirmedCashAdjustmentsPreserveOwnerOnlyPolicyIdentityAndPaisa() {
+        val row = OwnerActivityEvidence("cashBalanceAdjustments", "cash-op", mapOf(
+            "workspaceId" to key.workspaceId, "operationId" to "cash-op", "actorUid" to "m",
+            "revision" to 3L, "beforePaise" to 128667L, "afterPaise" to 128767L,
+            "deltaPaise" to 100L, "confirmedAt" to time, "actionTime" to time - 7 * 86400000L,
+            "reason" to "சோதனை / original user text"
+        ), "confirmed", "confirmed", time + 2000)
+        val result = OwnerVisitActivity.verified(key, members, listOf(row, row))
+        assertEquals(1, result.size)
+        val item = result.single().item
+        assertEquals(Event.EVENT_CASH_BALANCE_ADJUSTED, item.eventType)
+        assertEquals(key.ownerUid, item.recipientUid)
+        assertEquals("m", item.actorUid)
+        assertEquals(3L, item.entityId)
+        assertEquals(time, item.createdAt)
+        assertEquals(1.0, item.amount, 0.0)
+        val english = NotificationPresenter.present(item, false)
+        val tamil = NotificationPresenter.present(item, true)
+        assertEquals("Perumal adjusted available cash", english.title)
+        assertEquals("Perumal கிடைக்கும் ரொக்க இருப்பைத் திருத்தினார்", tamil.title)
+        assertTrue(english.body.contains("1,286.67") && english.body.contains("1,287.67"))
+        assertTrue(english.body.contains("சோதனை / original user text"))
+        assertTrue(tamil.body.contains("சோதனை / original user text"))
+        val invalid = listOf(
+            row.copy(data = row.data + ("actorUid" to key.ownerUid)),
+            row.copy(data = row.data + ("actorUid" to "removed")),
+            row.copy(data = row.data + ("actorUid" to "operator")),
+            row.copy(data = row.data + ("workspaceId" to "different")),
+            row.copy(documentId = "wrong-operation"), row.copy(serverUpdated = "edited"),
+            row.copy(data = row.data - "confirmedAt"),
+            row.copy(data = row.data + ("confirmedAt" to time + 2001)),
+            row.copy(data = row.data + ("deltaPaise" to 0L)),
+            row.copy(data = row.data + ("afterPaise" to 128768L)),
+            row.copy(data = row.data + ("beforePaise" to 128667.0)),
+            row.copy(data = row.data + ("reason" to "  "))
+        )
+        for (bad in invalid) assertTrue(OwnerVisitActivity.verified(key, members, listOf(bad)).isEmpty())
     }
 
     @Test fun firstVisitAnchorsOnlyAfterSuccessfulCloudReadAndRemainsFixedWithinSession() {

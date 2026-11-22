@@ -4,6 +4,7 @@ import com.example.data.auth.RoleUtils
 import com.example.data.entity.AppNotificationEntity
 import com.example.data.entity.AppNotificationEntity.Companion as Event
 import com.example.data.firebase.WorkspaceMember
+import org.json.JSONObject
 
 internal data class OwnerVisitKey(val workspaceId: String, val ownerUid: String) {
     val preferenceKey: String get() = ownerUid.length.toString() + ":" + ownerUid + workspaceId
@@ -48,7 +49,7 @@ internal object OwnerVisitActivity {
     val eventTypes = setOf(Event.EVENT_JOB_CREATED, OLD_ENTRY, Event.EVENT_JOB_EDITED,
         Event.EVENT_JOB_DELETED, Event.EVENT_PAYMENT_RECEIVED, Event.EVENT_PAYMENT_REVERSED,
         Event.EVENT_EXPENSE_ADDED, Event.EVENT_EXPENSE_EDITED, Event.EVENT_EXPENSE_DELETED,
-        Event.EVENT_WITHDRAWAL_RECORDED)
+        Event.EVENT_WITHDRAWAL_RECORDED, Event.EVENT_CASH_BALANCE_ADJUSTED)
     private val operationIdPattern = Regex("[A-Za-z0-9:_-]{1,160}")
 
     fun verified(key: OwnerVisitKey, members: List<WorkspaceMember>,
@@ -63,7 +64,8 @@ internal object OwnerVisitActivity {
             if (row["workspaceId"] != key.workspaceId || document.availableAt <= 0) continue
             val directId = document.documentId.toLongOrNull()
             fun emit(type: String, entity: String, id: Long?, operation: Any?, actor: Any?, time: Any?,
-                     reference: Any? = null, availableAt: Long = document.availableAt) {
+                     reference: Any? = null, availableAt: Long = document.availableAt,
+                     amount: Double = 0.0, metadataJson: String = "{}") {
                 val op = operation as? String ?: return
                 val member = partners[actor as? String] ?: return
                 val recordedAt = (time as? Long)?.takeIf { it in 1..document.availableAt } ?: return
@@ -73,7 +75,8 @@ internal object OwnerVisitActivity {
                     id = keyId, workspaceId = key.workspaceId, operationId = op, recipientUid = key.ownerUid,
                     targetAudience = AUDIENCE, actorUid = member.uid, actorName = member.displayName.orEmpty(),
                     eventType = type, entityType = entity, entityId = id,
-                    counterpartyName = (reference as? String).orEmpty(), createdAt = recordedAt
+                    counterpartyName = (reference as? String).orEmpty(), createdAt = recordedAt,
+                    amount = amount, metadataJson = metadataJson
                 )
                 activities.putIfAbsent(keyId, ConfirmedOwnerActivity(notification, availableAt))
             }
@@ -98,6 +101,24 @@ internal object OwnerVisitActivity {
             }
 
             when (document.collection) {
+                "cashBalanceAdjustments" -> {
+                    val revision = row["revision"] as? Long
+                    val before = row["beforePaise"] as? Long
+                    val after = row["afterPaise"] as? Long
+                    val delta = row["deltaPaise"] as? Long
+                    val confirmed = row["confirmedAt"] as? Long
+                    val reason = row["reason"] as? String
+                    val bounds = -1_000_000_000_000L..1_000_000_000_000L
+                    if (op == document.documentId && document.serverCreated.isNotBlank() &&
+                        document.serverCreated == document.serverUpdated && revision != null && revision > 0 &&
+                        before != null && before in bounds && after != null && after in bounds &&
+                        delta != null && delta in bounds && delta != 0L && after - before == delta &&
+                        confirmed != null && reason != null && reason.isNotBlank() && reason.length <= 500) {
+                        emit(Event.EVENT_CASH_BALANCE_ADJUSTED, "CASH_BALANCE", revision, op, actor, confirmed,
+                            amount = delta / 100.0, metadataJson = JSONObject().put("beforePaise", before)
+                                .put("afterPaise", after).put("deltaPaise", delta).put("reason", reason).toString())
+                    }
+                }
                 "entries" -> if (row["id"] == directId && row["isDeleted"] == false) {
                     if (current && creation && creatorMatches && row["isHistorical"] is Boolean)
                         emit(if (row["isHistorical"] == true) OLD_ENTRY else Event.EVENT_JOB_CREATED,
