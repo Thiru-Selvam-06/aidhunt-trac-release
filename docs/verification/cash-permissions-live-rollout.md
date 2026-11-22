@@ -2,6 +2,14 @@
 
 The user approved the Firebase update and requested a complete testable APK. The user then confirmed the other partner phones are NOT updated, and requested deployment only if regular functions are unaffected. That authorizes the narrow permissions rollout, not unsafe mixed-version cash activation, historical financial corrections or paid billing.
 
+## Current controlled-test update
+
+After declining an isolated workspace, the user explicitly confirmed a coordinated pause for live testing. The single cashBalanceAdjustmentsV1 field is now TRUE, independently read back; atomic and Partner cleanup gates remain FALSE. The original state/history had zero correction/revision/records. The agent changed only this capability metadata, not any financial record. The prior OFF descriptions below are pre-activation checkpoints.
+
+Use the identical signed1.0.17 APK and restart to refresh access. Pause partner activity before testing. Reverse the exact small test difference with a new reasoned audit, not an absolute remembered balance. After completion, verify cumulative correction zero and disable the capability atomically until all partner phones are upgraded. Physical testing remains the user's responsibility and is NOT TESTED until evidence is supplied.
+
+Git publication is currently blocked by missing Git credentials and connector403. No GitHub regression pass is claimed. Full local backend/Rules testing is being run separately; no release certificate or source test is substituted for physical acceptance. No billing or trusted empty-customer endpoint was deployed.
+
 ## Actual result
 
 - Project: `trac-aidhunt`. Active Rules: `dd21da1c-69cd-4978-9279-39f3760c3c0d`.
@@ -38,3 +46,15 @@ Private evidence stays outside Git in `work/protected-release/cash-rules-2026112
 ## User testing choice
 
 The user declined a separate test workspace and proposed remembering/restoring the original amount. No workspace, account, membership or index was created. A remembered absolute target can cancel a legitimate transaction made meanwhile; it is not the prescribed reversal procedure. A controlled real-workspace test requires all partners to pause mutations, the exact small test delta to be reversed with a second reasoned audit, confirmed cumulative adjustment zero, and the feature disabled again until all clients are updated. Confirmation of the pause is pending; no feature flag or financial data has been changed. No agent-created balancing transaction is authorized.
+
+## Completed full backend/Rules regression and handover
+
+The existing complete backend and Rules CI partitions were executed locally with the required Node22.23.3, Java21 and Firebase Firestore Emulator for demo-aidhunt-v16. JUnit testcases and process exit codes independently agree: backend146 PASS, Rules424 PASS, zero failures/errors/skips. Backend elapsed54.47s; Rules elapsed4411.94s (73m32s); these are actual process elapsed times, not estimates of active agent reasoning. Both configured partitions ran to completion and the owned emulator shut down successfully. Denied-write/max-expression messages from negative authorization cases are retained in logs; they are not treated as test failures or used to relax Rules. No application source or business expectation was changed.
+
+The first full attempt used the wrong Node20 runtime and lacked local dependencies; its81 backend/17 file-level Rules results failed and are retained. Node20 also lacks the JSON source-context support required by the existing exact63-bit allocation parser. Installing only the existing package-lock dependencies in this worktree and selecting the existing Node22 toolchain resolved the harness issue. No dependency declarations, lockfiles, test assertions or financial calculations were modified. The rerun XML is retained separately from the failed run.
+
+This is local emulator evidence, not GitHub Actions or phone verification. The new results overlap prior targeted cases; do not add them together as unique coverage. The existing34 release/7 Android emulator checks and signature/configuration/icon checks remain valid for the byte-identical APK. Full Android release CI and manual/automated physical-device acceptance remain NOT RUN / NOT TESTED. Publishing was attempted once through Git (no usable credentials) and once through the GitHub connector (403 Resource not accessible by integration). No development push, production merge or customer release is claimed.
+
+The user can now test cash editing in the existing workspace using the same signed1.0.17 APK after coordinating the approved pause. No financial test transaction has been created by the agent. After the user's test/reversal report, inspect the exact cash current/history and disable only when the cumulative adjustment is zero and the state version is unchanged. Do not auto-create a reversal or hide an unresolved nonzero correction. The real-workspace pilot stays explicitly ON awaiting that user test; it is not a completed permanent multi-client rollout.
+
+Partner deletion of an unused customer profile is still NOT LIVE: current billing is disabled, no Functions are deployed, and the product's trusted endpoint is absent. Existing eligible Partner job deletion is unchanged. The user must choose the separately reviewed backend route (existing callable on Blaze or a separately reviewed Spark-compatible backend); do not bypass reference checks, repoint staging infrastructure or enable billing automatically. Customer readiness must not be claimed while required endpoint/CI/phone gates remain unresolved.
