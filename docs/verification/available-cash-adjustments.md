@@ -3,6 +3,8 @@
 Baseline: `0a7ee67e405f98a9cd8d30d907a1be95221e9bfb`.
 Development branch: `codex/available-cash-adjustments`.
 
+Update22 November: the minimal cash-permission candidate is now live after explicit approval; real-workspace cash activation remains OFF because partner phones are not updated. The earlier predeployment checkpoints below are historical. See [current rollout evidence](cash-permissions-live-rollout.md).
+
 The user superseded the previous display-only decision. A correction must change shared available cash, cash-related reports and cash withdrawal checks, while retaining the reason, authenticated editor, server-confirmed time and before/after/difference history. A correction does not create a customer collection, sales, profit, expense, or partner investment.
 
 ## Confirmed findings

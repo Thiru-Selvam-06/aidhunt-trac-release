@@ -1,5 +1,12 @@
 # AIDHUNT TRAC — Development Progress & Final Reconciliation Log
 
+## Approved cash-permission deployment — 22 November 2026
+
+- User approved the Firebase update, then confirmed other partner phones are not updated and required normal functions remain unaffected. The narrow tested compatibility Rules were activated and independently read back: dd21da1c-69cd-4978-9279-39f3760c3c0d, SHA90eb895bc114a1e22ab58248c339e49e422c598c94b0e9c60d0e5b6fb54931c2. Existing policy is byte-identical after removing only cash additions; zero server validation errors/four retained warnings. Transport errors were resolved by inspecting actual active release/source, not by assuming success or replaying financial operations.
+- Real shared cash/atomic/Partner empty-customer capabilities remain FALSE; no new financial state exists. No financial record, pending action, attribution, default workspace or billing change. Fresh configuration: billing disabled, zero deployed Functions. Partner empty-profile cleanup still needs its trusted endpoint; don't confuse this with already-enabled eligible Partner job deletion.
+- Signed1.0.17/code18 APK and PMS icon unchanged;34 release/42 Rules/7 native-emulator checks remain actual evidence. Customer release/physical-phone/full CI gate are not complete. See docs/verification/cash-permissions-live-rollout.md for current live state, preserved policy, rollback and remaining prerequisites.
+- Exact next action: publish this controlled branch for existing CI and inspect real results; do not create any test workspace (user declined). Await confirmation that all partner activity can pause before any temporary live cash test. A test must reverse its exact difference and retain both audit records, not reset to a remembered target. Keep live cash OFF until all relevant devices are updated and activation is explicitly authorized. Never auto-correct disputed4500 or recover rejected transactions. No production merge or paid deployment.
+
 ## Shared available-cash corrections and PMS launcher — 22 November 2026
 
 - User superseded display-only behavior: audited corrections must affect shared cash and cash withdrawal checks while preserving historical financial records, receipts, customer dues, earned profit and member entitlements. New local branch codex/available-cash-adjustments from0a7ee67. Product entry point now uses CashBalanceEditor/CashBalanceAdjustmentRepository, not the older display prototype. No live correction or historical reclassification has been authorized or performed.
