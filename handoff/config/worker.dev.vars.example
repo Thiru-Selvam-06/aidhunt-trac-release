@@ -1,0 +1,6 @@
+# Staging binding names only. Not a live credential export.
+FIREBASE_PROJECT_ID=trac-aidhunt
+STAGING_WORKSPACE_ID=REPLACE_WITH_AUTHORIZED_STAGING_WORKSPACE
+# The Worker expects the real JSON in its server-side secret binding.
+# Obtain it through the backend owner's protected process; never put it in Git.
+GOOGLE_SERVICE_ACCOUNT_JSON=SET_THROUGH_PROTECTED_SECRET_BINDING

@@ -1,0 +1,77 @@
+{
+  "applicationSourceSnapshot": "924a6d00f2ea90ee533fa7eaf6808e670073fda6",
+  "restoredMainCommit": "767ec8aba5876ee187d13252c932c0733866807a",
+  "version": "1.0.18",
+  "versionCode": 19,
+  "applicationId": "com.aistudio.aidhunttrac.cedlir",
+  "firebaseProject": "trac-aidhunt",
+  "syntheticProject": "demo-aidhunt-v16",
+  "actualPrivateValuesIncluded": false,
+  "privateArchiveCreated": false,
+  "files": [
+    {
+      "destination": "app/src/release/google-services.json",
+      "requiredFor": "Firebase-backed release",
+      "classification": "Android client configuration, not an Admin credential",
+      "source": "Existing project Firebase Console, exact Android application",
+      "publicExample": "handoff/config/google-services.release.json.example",
+      "apiKeyValuesRedacted": true,
+      "apiKeyRestrictionsVerified": false,
+      "authority": "Identifies the app/project; business access still requires authenticated membership and server policy"
+    },
+    {
+      "destination": "outside-checkout/original-release-key.jks",
+      "requiredFor": "Signing updates compatible with the existing product",
+      "classification": "Private release-signing key",
+      "source": "Original release owner through protected transfer or owner-operated signing",
+      "publicExample": null,
+      "authority": "Can sign trusted updates for installed TRAC; never publish"
+    },
+    {
+      "destination": "outside-checkout/keystore.properties",
+      "requiredFor": "Original-key release build",
+      "classification": "Signing passwords and key-file reference",
+      "source": "Original release owner, not Git history",
+      "publicExample": "handoff/config/keystore.properties.example",
+      "requiredPropertyNames": [
+        "storeFile",
+        "storePassword",
+        "keyAlias",
+        "keyPassword"
+      ],
+      "authority": "Unlocks the original signing key; never publish"
+    },
+    {
+      "destination": "server-side GOOGLE_SERVICE_ACCOUNT_JSON binding",
+      "requiredFor": "Existing staging Worker only, when separately authorized",
+      "classification": "Privileged backend service-account credential",
+      "source": "Authorized backend owner and protected server secret binding",
+      "publicExample": "handoff/config/worker.dev.vars.example",
+      "authority": "Grants server access permitted by that service account; not required in the Android APK or synthetic tests"
+    },
+    {
+      "destination": "functions runtime parameters",
+      "requiredFor": "Separately approved deployed notification/invitation services",
+      "classification": "Runtime configuration; actual workspace/Owner values not exported",
+      "source": "Authorized backend owner; preserve existing deployed values",
+      "publicExample": "handoff/config/functions.env.example",
+      "authority": "Controls restricted runtime scope; copying an example does not authorize deployment"
+    }
+  ],
+  "excludedFromAnyPublicHandoff": [
+    "Signing keys and passwords",
+    "Admin service-account private keys",
+    "Cloudflare or provider access tokens",
+    "GitHub/Firebase/gcloud reusable login sessions",
+    "Real phone allowlists",
+    "Customer snapshots and pending operations"
+  ],
+  "currentLocalConfigurationFacts": {
+    "activeRootEnvExists": false,
+    "releaseClientJsonAvailablePrivately": true,
+    "signingPropertiesAvailableOutsideRepository": true,
+    "backendRuntimeSecretsInventoried": false
+  },
+  "deploymentAuthorizedByThisHandoff": false,
+  "customerDataWritesAuthorized": false
+}

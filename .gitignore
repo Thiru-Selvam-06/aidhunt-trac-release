@@ -69,3 +69,17 @@ docs/regression/*.txt
 docs/stabilization-*.log
 docs/stabilization-*.txt
 *.pyc
+
+# Developer handoff: genuine credentials stay outside public Git history.
+/.private-handoff/
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+**/.dev.vars
+**/.dev.vars.*
+!**/.dev.vars.example
+*.jks
+*.keystore
+*.p12
+*.pfx
+**/*service-account*.json

@@ -2,6 +2,8 @@
 
 Kotlin Android workspace and tractor-job ledger following Architecture v1.6 and documented amendments.
 
+For the selected TRAC 1.0.18 configuration and protected release-signing handoff, start with [the developer handoff](handoff/README.md). App source remains the `924a6d0` snapshot; setup documentation does not authorize deployment or financial recovery.
+
 **Release gate: NOT READY.** The standard app still routes trusted operations to Firebase Functions; the latest authorized inspection found none deployed. The Cloudflare service is staging-only. A green CI run does not restore production services.
 
 Read the [Developer Handbook](docs/handbook/README.md): fresh-computer setup, architecture, roles, calculations, offline recovery, tests, CI, security, operations and limitations.
