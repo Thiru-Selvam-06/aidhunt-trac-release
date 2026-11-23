@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -1168,8 +1167,7 @@ fun PartnerWithdrawalPieChart(
                     )
                 }
             } else {
-                if (responsive.screenWidthDp < 400 || androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.15f) {
-                    // Stack chart/legend when actual text needs more space.
+                if (responsive.isSmallPhone) {
                     // On small screen (<360dp), layout Donut and Legend vertically to prevent horizontal crowding
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -1247,8 +1245,7 @@ fun PartnerWithdrawalPieChart(
                                                 fontSize = 11.5.sp,
                                                 fontWeight = FontWeight.Medium,
                                                 color = AppTheme.colors.textPrimary,
-                                                modifier = Modifier.weight(1f),
-                                                maxLines = 2,
+                                                maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Text(
@@ -1346,8 +1343,7 @@ fun PartnerWithdrawalPieChart(
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Medium,
                                                 color = AppTheme.colors.textPrimary,
-                                                modifier = Modifier.weight(1f),
-                                                maxLines = 2,
+                                                maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Text(
@@ -1398,15 +1394,13 @@ fun CollapsibleFilterCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 48.dp)
                     .clickable(onClick = onToggleExpand),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.weight(1f)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Tune,
@@ -1418,7 +1412,6 @@ fun CollapsibleFilterCard(
                         text = if (isTamil) "வடிகட்டுதல்" else "Filter Records",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
                         color = AppTheme.colors.textPrimary
                     )
                     if (activeFiltersCount > 0) {
@@ -1448,7 +1441,7 @@ fun CollapsibleFilterCard(
                     }
                     IconButton(
                         onClick = onToggleExpand,
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
                             imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,

@@ -23,8 +23,6 @@ import androidx.compose.ui.unit.sp
 import com.example.data.entity.*
 import com.example.data.firebase.WorkspaceMember
 import com.example.pdf.PdfGeneratorHelper
-import com.example.ui.components.ReportMetric
-import com.example.ui.components.ReportMetrics
 import com.example.ui.components.PdfOptionsDialog
 import com.example.ui.components.formatDate
 import com.example.ui.components.formatInr
@@ -53,7 +51,7 @@ data class BreakdownPeriodGroup(
     val receipts: List<PaymentEntity> = emptyList()
 )
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BalanceSheetTab(
     settings: AppSettingsEntity,
@@ -109,11 +107,14 @@ fun BalanceSheetTab(
     ) {
         // 1. Top Controls Row: [Daily] [Monthly] [Yearly] on Left + [Export PDF] on Right
         item {
-            FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 // Segmented Pills
                 Row(
-                    modifier = Modifier,
+                    modifier = Modifier.weight(1f, fill = false),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     BalanceSheetTabMode.values().forEach { mode ->
@@ -138,6 +139,8 @@ fun BalanceSheetTab(
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.width(8.dp))
 
                 // Export PDF Button
                 OutlinedButton(
@@ -186,13 +189,63 @@ fun BalanceSheetTab(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    ReportMetrics(listOf(
-                        ReportMetric(if (isTamil) "பெறப்பட்ட தொகை" else "Amount Received", formatInr(totalSalesReceived, settings.currency), tag = "sheet_received"),
-                        ReportMetric(if (isTamil) "மொத்த செலவுகள்" else "Total Expenses", formatInr(totalExpenseAmount, settings.currency),
-                            color = Color(0xFFDC2626), background = Color(0xFFFEF2F2), tag = "sheet_expenses"),
-                        ReportMetric(if (isTamil) "நிகர இருப்பு:" else "Net Balance:", formatInr(netProfitMargin, settings.currency),
-                            color = if (netProfitMargin >= 0) Color(0xFF0F9D58) else Color(0xFFDC2626), tag = "sheet_net")
-                    ))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = if (isTamil) "பெறப்பட்ட தொகை" else "Amount Received",
+                                fontSize = 12.5.sp,
+                                color = Color(0xFF64748B)
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = formatInr(totalSalesReceived, settings.currency),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF0F9D58)
+                            )
+                        }
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = if (isTamil) "மொத்த செலவுகள்" else "Total Expenses",
+                                fontSize = 12.5.sp,
+                                color = Color(0xFF64748B)
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = formatInr(totalExpenseAmount, settings.currency),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFDC2626)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Divider(color = Color(0xFFF1F5F9), thickness = 1.dp)
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isTamil) "நிகர இருப்பு:" else "Net Balance:",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0F172A)
+                        )
+                        Text(
+                            text = formatInr(netProfitMargin, settings.currency),
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (netProfitMargin >= 0) Color(0xFF0F9D58) else Color(0xFFDC2626)
+                        )
+                    }
                 }
             }
         }
@@ -305,13 +358,32 @@ fun BalanceSheetTab(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        ReportMetrics(listOf(
-                            ReportMetric(if (isTamil) "பெறப்பட்ட தொகை" else "Amount Received", formatInr(group.sales, settings.currency), tag = "sheet_received_${group.key}"),
-                            ReportMetric(if (isTamil) "செலவு" else "Expenses", formatInr(group.expenses, settings.currency),
-                                color = Color(0xFFDC2626), background = Color(0xFFFEF2F2), tag = "sheet_expenses_${group.key}"),
-                            ReportMetric(if (isTamil) "நிகர இருப்பு" else "Net Balance", formatInr(group.netMargin, settings.currency),
-                                color = if (group.netMargin >= 0) Color(0xFF0F9D58) else Color(0xFFDC2626), tag = "sheet_net_${group.key}")
-                        ))
+                        // Card Summary Metrics: Sales, Expenses, Net Margin
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text(if (isTamil) "பெறப்பட்ட தொகை" else "Amount Received", fontSize = 11.5.sp, color = Color(0xFF64748B))
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(formatInr(group.sales, settings.currency), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F9D58))
+                            }
+                            Column {
+                                Text(if (isTamil) "செலவு" else "Expenses", fontSize = 11.5.sp, color = Color(0xFF64748B))
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(formatInr(group.expenses, settings.currency), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFFDC2626))
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(if (isTamil) "நிகர இருப்பு" else "Net Balance", fontSize = 11.5.sp, color = Color(0xFF64748B))
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    formatInr(group.netMargin, settings.currency),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (group.netMargin >= 0) Color(0xFF0F9D58) else Color(0xFFDC2626)
+                                )
+                            }
+                        }
 
                         // Expanded View: Jobs & Collections List
                         if (isExpanded) {

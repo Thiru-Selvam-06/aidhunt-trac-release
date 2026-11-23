@@ -16,7 +16,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36], qualifiers = "w320dp-h640dp", application = LedgerUiTestApplication::class)
+@Config(sdk = [36], qualifiers = "w320dp-h640dp")
 class BusinessOverviewCircleUiTest {
     @get:Rule val compose = createComposeRule()
     @Test fun circleShowsMemberAndExactCollectedAndDueWithoutOpeningDetails() {

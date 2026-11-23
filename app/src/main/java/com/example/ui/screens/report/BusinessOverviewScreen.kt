@@ -33,9 +33,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.data.entity.*
 import com.example.data.firebase.WorkspaceMember
-import com.example.ui.components.ReportMetrics
-import com.example.ui.components.ReportMetric
-import com.example.ui.components.ReportGrid
 import com.example.ui.components.formatDate
 import com.example.ui.components.formatDateTime
 import com.example.ui.components.formatInr
@@ -181,9 +178,9 @@ fun BusinessOverviewScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp).testTag("business_overview_list"),
+                .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = PaddingValues(top = 10.dp, bottom = 24.dp)
+            contentPadding = PaddingValues(top = 10.dp, bottom = 100.dp)
         ) {
             // ─────────────────────────────────────────────────────────────
             // 1. TOP BAR DATE FILTER — matches reference: single Overall pill, no duplicate header
@@ -352,23 +349,73 @@ fun BusinessOverviewScreen(
             // ─────────────────────────────────────────────────────────────
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ReportMetrics(listOf(
-                        ReportMetric(if (isTamil) "மொத்த பதிவு" else "Total Recorded", formatInr(summary.totalRecorded, settings.currency),
-                            icon = Icons.Default.ConfirmationNumber, detail = "${summary.jobCount} ${if (isTamil) "பணிகள்" else "Jobs"}", tag = "overview_recorded"),
-                        ReportMetric(if (isTamil) "மொத்த வசூல்" else "Total Collected", formatInr(summary.totalReceived, settings.currency),
-                            color = Color(0xFF0284C7), background = Color(0xFFF0F9FF), icon = Icons.Default.Savings, tag = "overview_received"),
-                        ReportMetric(if (isTamil) "மொத்த பாக்கி" else "Total Due", formatInr(summary.totalDue, settings.currency),
-                            color = Color(0xFFB45309), background = Color(0xFFFFFBEB), icon = Icons.Default.PriorityHigh, tag = "overview_due"),
-                        ReportMetric(if (isTamil) "கிடைக்கும் இருப்பு" else "Available Business Balance",
-                            if (cashBalanceVerifying) (if (isTamil) "சரிபார்க்கிறது…" else "Verifying…") else formatInr(summary.availableBalance, settings.currency),
-                            color = Color(0xFF9333EA), background = Color(0xFFFAF5FF), icon = Icons.Default.AccountBalanceWallet, tag = "overview_cash")
-                    ))
+                    // Row 1: Total Recorded & Total Collected
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Card 1: Total Recorded — from FinancialCalculationEngine.calculateSummary
+                        OverviewSummaryCard(
+                            title = if (isTamil) "மொத்த பதிவு" else "Total Recorded",
+                            amount = formatInr(summary.totalRecorded, settings.currency),
+                            subtitle = "${summary.jobCount} ${if (isTamil) "பணிகள்" else "Jobs"}",
+                            icon = Icons.Default.ConfirmationNumber,
+                            iconBgColor = Color(0xFF16A34A),
+                            cardBgColor = Color(0xFFF0FDF4),
+                            borderColor = Color(0xFFBBF7D0).copy(alpha = 0.7f),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        // Card 2: Total Collected — from FinancialCalculationEngine (totalReceived = sum of amountReceived)
+                        OverviewSummaryCard(
+                            title = if (isTamil) "மொத்த வசூல்" else "Total Collected",
+                            amount = formatInr(summary.totalReceived, settings.currency),
+                            subtitle = null,
+                            icon = Icons.Default.Savings,
+                            iconBgColor = Color(0xFF0284C7),
+                            cardBgColor = Color(0xFFF0F9FF),
+                            borderColor = Color(0xFFBAE6FD).copy(alpha = 0.7f),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    // Row 2: Total Due & Available Business Balance
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Card 3: Total Due — from FinancialCalculationEngine (sum of pending amounts)
+                        OverviewSummaryCard(
+                            title = if (isTamil) "மொத்த பாக்கி" else "Total Due",
+                            amount = formatInr(summary.totalDue, settings.currency),
+                            subtitle = null,
+                            icon = Icons.Default.PriorityHigh,
+                            iconBgColor = Color(0xFFD97706),
+                            cardBgColor = Color(0xFFFFFBEB),
+                            borderColor = Color(0xFFFDE68A).copy(alpha = 0.7f),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        // Card 4: Available Business Balance — from FinancialCalculationEngine (received - expenses - withdrawals)
+                        OverviewSummaryCard(
+                            title = if (isTamil) "கிடைக்கும் இருப்பு" else "Available Business\nBalance",
+                            amount = if (cashBalanceVerifying) (if (isTamil) "சரிபார்க்கிறது…" else "Verifying…") else formatInr(summary.availableBalance, settings.currency),
+                            subtitle = null,
+                            icon = Icons.Default.AccountBalanceWallet,
+                            iconBgColor = Color(0xFF9333EA),
+                            cardBgColor = Color(0xFFFAF5FF),
+                            borderColor = Color(0xFFE9D5FF).copy(alpha = 0.7f),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
 
                     if (selectedMode == FinancialScopeMode.OVERALL) balanceDisplayControls()
 
                     // Row 3: Expenses & Partner Withdrawals — clickable action cards
-                    ReportGrid(2) { index ->
-                        if (index == 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
                         // Card 5: Expenses — REAL total from FinancialCalculationEngine
                         OverviewActionCard(
                             title = if (isTamil) "செலவுகள்" else "Expenses",
@@ -381,10 +428,9 @@ fun BusinessOverviewScreen(
                             isEyeActive = isExpenseVisible,
                             onToggleEye = { isExpenseVisible = !isExpenseVisible },
                             onClick = { onNavigateToExpenses?.invoke() },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.weight(1f)
                         )
 
-                        } else {
                         // Card 6: Partner Withdrawals — REAL total from FinancialCalculationEngine
                         OverviewActionCard(
                             title = if (isTamil) "பங்குதாரர் எடுப்புகள்" else "Partner Withdrawals",
@@ -397,9 +443,9 @@ fun BusinessOverviewScreen(
                             isEyeActive = true,
                             onToggleEye = {},
                             onClick = { onNavigateToWithdrawals?.invoke() },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.weight(1f)
                         )
-                    } }
+                    }
                 }
             }
 
@@ -952,6 +998,79 @@ fun BusinessOverviewScreen(
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPONENT: OVERVIEW SUMMARY CARD (TOP 4 CARDS)
 // ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun OverviewSummaryCard(
+    title: String,
+    amount: String,
+    subtitle: String?,
+    icon: ImageVector,
+    iconBgColor: Color,
+    cardBgColor: Color,
+    borderColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = cardBgColor,
+        border = BorderStroke(1.dp, borderColor),
+        modifier = modifier.height(108.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(iconBgColor),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+
+            Column {
+                Text(
+                    text = title,
+                    fontSize = 11.5.sp,
+                    color = Color(0xFF475569),
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 2,
+                    lineHeight = 14.sp
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = amount,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF0F172A)
+                    )
+                    if (!subtitle.isNullOrBlank()) {
+                        Text(
+                            text = subtitle,
+                            fontSize = 10.5.sp,
+                            color = Color(0xFF64748B),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPONENT: OVERVIEW ACTION CARD (EXPENSES & WITHDRAWALS)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -974,14 +1093,14 @@ private fun OverviewActionCard(
         color = cardBgColor,
         border = BorderStroke(1.dp, borderColor),
         modifier = modifier
-            .heightIn(min = 148.dp)
+            .height(112.dp)
             .clickable { onClick() }
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1005,7 +1124,7 @@ private fun OverviewActionCard(
 
                 IconButton(
                     onClick = onToggleEye,
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(22.dp)
                 ) {
                     Icon(
                         imageVector = if (isEyeActive) Icons.Default.Visibility else Icons.Default.VisibilityOff,
@@ -1025,6 +1144,8 @@ private fun OverviewActionCard(
                     fontSize = 11.5.sp,
                     color = Color(0xFF475569),
                     fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     lineHeight = 14.sp
                 )
                 Text(
@@ -1032,12 +1153,15 @@ private fun OverviewActionCard(
                     fontSize = 15.5.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFF0F172A),
+                    maxLines = 1,
                     lineHeight = 19.sp
                 )
                 Text(
                     text = subtitle,
                     fontSize = 9.5.sp,
                     color = Color(0xFF64748B),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     lineHeight = 12.sp
                 )
             }

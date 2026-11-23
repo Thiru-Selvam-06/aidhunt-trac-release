@@ -1,9 +1,6 @@
 
 package com.example.ui.screens.report
 
-import com.example.ui.components.ReportSectionHeading
-import com.example.ui.components.ReportMetric
-import com.example.ui.components.ReportMetrics
 import com.example.ui.components.ReportDateFilterControl
 import com.example.ui.util.ReportDateFilter
 import com.example.ui.util.reportDate
@@ -476,17 +473,26 @@ fun ExpenseReportListScreen(
             color = Color(0xFFF9FAFB),
             modifier = Modifier.fillMaxWidth()
         ) {
-            ReportSectionHeading(
-                title = if (isTamil) "செலவு அறிக்கை" else "Expense Report",
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Text(
+                    text = if (isTamil) "செலவு அறிக்கை" else "Expense Report",
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF111827)
+                )
                 // Add Expense Button
                 Button(
                     onClick = onOpenAddExpense,
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF072D18)),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                    modifier = Modifier.heightIn(min = 48.dp).testTag("btn_add_expense_top")
+                    modifier = Modifier.testTag("btn_add_expense_top")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Add,
@@ -514,7 +520,7 @@ fun ExpenseReportListScreen(
                 start = 16.dp,
                 end = 16.dp,
                 top = 4.dp,
-                bottom = 24.dp
+                bottom = 100.dp
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -654,15 +660,42 @@ fun ExpenseReportListScreen(
                     .testTag("expense_search_bar")
             )
         }
+        // 3 Stat Cards: Total Expenses, Total Entries, Avg. per Entry
         item {
-            ReportMetrics(listOf(
-                ReportMetric(if (isTamil) "மொத்த செலவுகள்" else "Total Expenses", formatInr(totalAmount, settings.currency),
-                    icon = Icons.Default.ArrowDownward, tag = "expense_total"),
-                ReportMetric(if (isTamil) "மொத்த பதிவுகள்" else "Total Entries", "$totalCount",
-                    color = Color(0xFF4F46E5), background = Color(0xFFEEF2FF), icon = Icons.AutoMirrored.Filled.FormatListBulleted, tag = "expense_count"),
-                ReportMetric(if (isTamil) "சராசரி செலவு" else "Avg. per Entry", formatInr(avgAmount, settings.currency),
-                    color = Color(0xFFB45309), background = Color(0xFFFFFBEB), icon = Icons.Default.MonetizationOn, tag = "expense_average")
-            ))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Card 1: Total Expenses
+                StatCard(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Default.ArrowDownward,
+                    iconBg = Color(0xFFDCFCE7),
+                    iconColor = Color(0xFF16A34A),
+                    title = if (isTamil) "மொத்த செலவுகள்" else "Total Expenses",
+                    value = formatInr(totalAmount, settings.currency)
+                )
+                // Card 2: Total Entries
+                StatCard(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.AutoMirrored.Filled.FormatListBulleted,
+                    iconBg = Color(0xFFE0E7FF),
+                    iconColor = Color(0xFF4F46E5),
+                    title = if (isTamil) "மொத்த பதிவுகள்" else "Total Entries",
+                    value = "$totalCount"
+                )
+                // Card 3: Avg. per Entry
+                StatCard(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Default.MonetizationOn,
+                    iconBg = Color(0xFFFEF3C7),
+                    iconColor = Color(0xFFD97706),
+                    title = if (isTamil) "சராசரி செலவு" else "Avg. per Entry",
+                    value = formatInr(avgAmount, settings.currency)
+                )
+            }
         }
         item { com.example.ui.components.ExpenseAnalyticsCard(filteredExpenses, isTamil) }
         // Expense List Items or Empty State
@@ -968,7 +1001,7 @@ fun ExpenseListItemRow(
         } else null
 
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = if (isArchived) Color(0xFFE9E9E9) else Color.White),
         border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFFE5E7EB))),
         modifier = Modifier
@@ -976,9 +1009,13 @@ fun ExpenseListItemRow(
             .clickable(onClick = onClick)
             .testTag("expense_item_${expense.id}")
     ) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             // Left Category Rounded Square Icon Box
             Box(
                 modifier = Modifier
@@ -1048,16 +1085,29 @@ fun ExpenseListItemRow(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-
             }
+            // Right Column: Amount + 3-dots Menu + Date
+            Column(
+                horizontalAlignment = Alignment.End
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = formatInr(expense.amount, currency),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFDC2626)
+                    )
                     Box {
                         IconButton(
                             onClick = { isMenuExpanded = true },
-                            modifier = Modifier.size(48.dp)
+                            modifier = Modifier.size(24.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.MoreVert,
-                                contentDescription = if (isTamil) "விருப்பங்கள்" else "Options",
+                                contentDescription = "Options",
                                 tint = Color(0xFF9CA3AF),
                                 modifier = Modifier.size(16.dp)
                             )
@@ -1104,14 +1154,17 @@ fun ExpenseListItemRow(
                             }
                         }
                     }
-        }
-                Text(formatInr(expense.amount, currency), fontSize = 18.sp, fontWeight = FontWeight.Bold,
-                    color = Color(0xFFDC2626), modifier = Modifier.fillMaxWidth().testTag("expense_amount_${expense.id}"))
-                Text(reportDate(expense.dateTimestamp, isTamil, "dd MMM yyyy, hh:mm a"), fontSize = 12.sp, color = Color(0xFF64748B))
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = reportDate(expense.dateTimestamp, isTamil, "dd MMM yyyy, hh:mm a"),
+                    fontSize = 10.sp,
+                    color = Color(0xFF6B7280)
+                )
+            }
         }
     }
 }
-
 /* =========================================================================================
    2. ADD / EDIT EXPENSE SCREEN
    ========================================================================================= */

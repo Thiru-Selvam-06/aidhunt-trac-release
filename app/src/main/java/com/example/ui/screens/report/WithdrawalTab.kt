@@ -7,8 +7,6 @@ import com.example.ui.util.reportDate
 import com.example.ui.util.reportDateMatches
 import com.example.ui.util.FinancialFeatureAvailability
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import android.app.DatePickerDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -289,16 +287,21 @@ fun WithdrawalTab(
             color = Color.White,
             modifier = Modifier.fillMaxWidth()
         ) {
-            ReportGrid(2, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) { index ->
-                if (index == 0) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Button(
                     onClick = {
                         takeAmountTargetStatus = null
                         showTakeAmountDialog = true
                     },
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
+                        .weight(1f)
+                        .height(48.dp)
                         .testTag("btn_take_amount"),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0B532E))
@@ -309,18 +312,15 @@ fun WithdrawalTab(
                         text = if (isTamil) "எடுப்புப் பதிவு செய்க" else "Take Amount",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.5.sp,
-                        modifier = Modifier.weight(1f),
-                        textAlign = TextAlign.Center,
                         color = Color.White
                     )
                 }
-                } else {
                 OutlinedButton(
                     onClick = { showPdfOptionsDialog = true },
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
+                        .weight(1f)
+                        .height(48.dp)
                         .testTag("btn_export_withdrawal_pdf"),
                     border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
                     colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White)
@@ -336,12 +336,10 @@ fun WithdrawalTab(
                         text = if (isTamil) "PDF அறிக்கை" else "PDF Report",
                         color = Color(0xFF0F172A),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.5.sp,
-                        modifier = Modifier.weight(1f),
-                        textAlign = TextAlign.Center
+                        fontSize = 13.5.sp
                     )
                 }
-            } }
+            }
             if (canStartBorrowing || onOpenSettlements != null) {
                 Row(
                     modifier = Modifier
@@ -412,19 +410,111 @@ fun WithdrawalTab(
                 start = 16.dp,
                 end = 16.dp,
                 top = 10.dp,
-                bottom = 24.dp
+                bottom = 100.dp
             ),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // 2. Top Summary Card: Available Cash (Green wallet) + Total Withdrawals (Orange trending)
             item {
-                val displayDrawings = if (dateFilter.period != ReportPeriod.ALL_TIME || selectedPartnerFilter != "All") currentFilteredTotal else totalWithdrawn
-                ReportMetrics(listOf(
-                    ReportMetric(if (isTamil) "கிடைக்கும் ரொக்கம்" else "Available Cash", formatInr(availableAmount),
-                        icon = Icons.Default.AccountBalanceWallet, tag = "withdrawal_cash",
-                        detail = if (borrowingOverview.reservedCash > 0.0) (if (isTamil) "முன்பதிவு: " else "Reserved: ") + formatInr(borrowingOverview.reservedCash) else null),
-                    ReportMetric(if (isTamil) "மொத்த எடுப்புகள்" else "Total Withdrawals", formatInr(displayDrawings),
-                        color = Color(0xFFB45309), background = Color(0xFFFFFBEB), icon = Icons.Default.TrendingUp, tag = "withdrawal_total")
-                ))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Left Card: Available Cash
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFFF0FDF4),
+                        border = BorderStroke(1.dp, Color(0xFFDCFCE7)),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFFDCFCE7),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.AccountBalanceWallet,
+                                        contentDescription = null,
+                                        tint = Color(0xFF16A34A),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Column {
+                                Text(
+                                    text = if (isTamil) "கிடைக்கும் ரொக்கம்" else "Available Cash",
+                                    fontSize = 11.5.sp,
+                                    color = Color(0xFF64748B),
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = formatInr(availableAmount),
+                                    fontSize = 19.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0B532E)
+                                )
+                                if (borrowingOverview.reservedCash > 0.0) {
+                                    Text(
+                                        text = if (isTamil) "முன்பதிவு: ${formatInr(borrowingOverview.reservedCash)}" else "Reserved: ${formatInr(borrowingOverview.reservedCash)}",
+                                        fontSize = 10.5.sp,
+                                        color = Color(0xFFB45309),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Right Card: Total Withdrawals
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFFFFFBEB),
+                        border = BorderStroke(1.dp, Color(0xFFFEF3C7)),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFFFEF3C7),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.TrendingUp,
+                                        contentDescription = null,
+                                        tint = Color(0xFFD97706),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Column {
+                                Text(
+                                    text = if (isTamil) "மொத்த எடுப்புகள்" else "Total Withdrawals",
+                                    fontSize = 11.5.sp,
+                                    color = Color(0xFF64748B),
+                                    fontWeight = FontWeight.Medium
+                                )
+                                val displayDrawings = if (dateFilter.period != ReportPeriod.ALL_TIME || selectedPartnerFilter != "All") currentFilteredTotal else totalWithdrawn
+                                Text(
+                                    text = formatInr(displayDrawings),
+                                    fontSize = 19.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFD97706)
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             val activeBorrowingRequests = borrowingRequests.filter { it.status in setOf("PENDING_APPROVAL", "APPROVED_RESERVED") }
@@ -546,20 +636,35 @@ fun WithdrawalTab(
                 item {
                     PartnerWithdrawalPieChart(
                         slices = pieSlices,
-                        totalAmount = currentFilteredTotal,
-                        isTamil = isTamil
+                        totalAmount = currentFilteredTotal
                     )
                 }
             }
 
             // 5. Past Withdrawals Ledger
             item(key = "section_past_withdrawals_header") {
-                ReportSectionHeading(if (isTamil) "கடந்த எடுப்புப் பதிவேடு" else "Past Withdrawals Ledger") {
-                    TextButton(onClick = { showWithdrawalHistory = true }, modifier = Modifier.testTag("view_withdrawal_records")) {
-                        Text(if (dateFilter.period == ReportPeriod.ALL_TIME && selectedPartnerFilter == "All") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isTamil) "கடந்த எடுப்புப் பதிவேடு" else "Past Withdrawals Ledger",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
+                    Text(
+                        text = if (dateFilter.period == ReportPeriod.ALL_TIME && selectedPartnerFilter == "All") {
                             if (isTamil) "அனைத்தும் பார் >" else "View All >"
-                        } else if (isTamil) "பதிவுகளைப் பார்க்கவும்" else "View records", color = Color(0xFF0B532E))
-                    }
+                        } else if (isTamil) "பதிவுகளைப் பார்க்கவும்" else "View records",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0B532E),
+                        modifier = Modifier.testTag("view_withdrawal_records").clickable { showWithdrawalHistory = true }
+                    )
                 }
             }
 
@@ -664,18 +769,36 @@ fun WithdrawalTab(
                 }
             }
 
+            // 6. Partner Share & Investment Section (Horizontal Cards)
             item(key = "section_partner_share_investment_header") {
-                Column(Modifier.fillMaxWidth().padding(top = 8.dp).testTag("partner_share_heading"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ReportSectionHeading(if (isTamil) "பங்குதாரர் பங்கு & முதலீடு" else "Partner Share & Investment")
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(
-                            Color(0xFF0B532E) to if (isTamil) "எடுக்கப்பட்டது" else "Taken",
-                            Color(0xFF86EFAC) to if (isTamil) "மீதம்" else "Remaining"
-                        ).forEach { (color, label) ->
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Box(Modifier.size(8.dp).clip(CircleShape).background(color))
-                                Text(label, fontSize = 12.sp, color = Color(0xFF475569))
-                            }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isTamil) "பங்குதாரர் பங்கு & முதலீடு" else "Partner Share & Investment",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(Color(0xFF0B532E)))
+                            Text(text = if (isTamil) "எடுக்கப்பட்டது" else "Taken", fontSize = 10.sp, color = Color(0xFF475569))
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(Color(0xFF86EFAC)))
+                            Text(text = if (isTamil) "மீதம்" else "Remaining", fontSize = 10.sp, color = Color(0xFF475569))
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(Color(0xFF2563EB)))
+                            Text(text = if (isTamil) "முதலீடு" else "Investment", fontSize = 10.sp, color = Color(0xFF475569))
                         }
                     }
                 }
@@ -902,7 +1025,7 @@ fun WithdrawalTab(
 // COMPONENT: HORIZONTAL PARTNER SHARE & INVESTMENT CARD (REFERENCE IMAGE 1)
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-internal fun PartnerShareInvestmentCard(
+private fun PartnerShareInvestmentCard(
     status: PartnerShareInvestmentStatus,
     isTamil: Boolean,
     isOwner: Boolean = false,
@@ -910,62 +1033,238 @@ internal fun PartnerShareInvestmentCard(
     openBorrowingDebt: Double = 0.0,
     onTakeAmount: (PartnerShareInvestmentStatus) -> Unit
 ) {
-    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color.White),
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
         border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-        modifier = Modifier.fillMaxWidth().testTag("partner_share_card_${status.partnerUid}")) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Surface(shape = CircleShape, color = Color(0xFFDCFCE7), modifier = Modifier.size(36.dp)) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(status.partnerName.take(1).uppercase(Locale.getDefault()), fontWeight = FontWeight.Bold, color = Color(0xFF15803D))
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            // Partner Top Row: Avatar Initial + Partner Name + Open Borrowing Debt Badge
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFDCFCE7),
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = status.partnerName.take(1).uppercase(Locale.getDefault()),
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF15803D),
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                    Text(
+                        text = status.partnerName,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
+                }
+                if (openBorrowingDebt > 0.0) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFFFEF2F2),
+                        border = BorderStroke(1.dp, Color(0xFFFECACA)),
+                        modifier = Modifier.testTag("partner_debt_badge_${status.partnerUid}")
+                    ) {
+                        Text(
+                            text = if (isTamil) "தீர்க்க வேண்டியது: -${formatInr(openBorrowingDebt)}"
+                            else "-${formatInr(openBorrowingDebt)} Amount to Repay",
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFDC2626),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
                     }
                 }
-                Text(status.partnerName, modifier = Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
             }
-            if (openBorrowingDebt > 0.0) {
-                Text(if (isTamil) "தீர்க்க வேண்டியது: -${formatInr(openBorrowingDebt)}" else "-${formatInr(openBorrowingDebt)} Amount to Repay",
-                    modifier = Modifier.testTag("partner_debt_badge_${status.partnerUid}"), color = Color(0xFFDC2626))
-            }
-            if (status.businessFundedCost > 0) Text(
-                "${if (isTamil) "வணிகம் செலுத்திய செலவுப் பங்கு" else "Business-funded cost"}: ${formatInr(status.businessFundedCost)}",
-                fontSize = 12.sp, color = Color(0xFF475569))
-            PartnerBalanceSection(if (isTamil) "பங்கு" else "Share", status.totalShare, status.takenShare, status.remainingShare,
-                Color(0xFF0B532E), Color(0xFF86EFAC), isTamil, "share_${status.partnerUid}")
-            HorizontalDivider(color = Color(0xFFF1F5F9))
-            PartnerBalanceSection(if (isTamil) "முதலீடு" else "Investment", status.totalInvestment, status.takenInvestment, status.remainingInvestment,
-                Color(0xFF2563EB), Color(0xFFBFDBFE), isTamil, "investment_${status.partnerUid}")
-            // A full-width action never competes with the amount columns. Preserve own-card authorization.
-            Surface(shape = RoundedCornerShape(12.dp), color = if (isOwnCard) Color(0xFFF0FDF4) else Color(0xFFF8FAFC),
-                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                modifier = Modifier.fillMaxWidth().then(if (isOwnCard) Modifier.clickable { onTakeAmount(status) } else Modifier)
-                    .testTag("partner_get_${status.partnerUid}")) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(if (isTamil) "பெறவேண்டியது" else "Total to get", fontSize = 12.sp, color = Color(0xFF475569))
-                    Text(if (isOwnCard && status.totalToGet > 0) (if (isTamil) "${formatInr(status.totalToGet)} பெறுக" else "Get ${formatInr(status.totalToGet)}")
-                        else formatInr(status.totalToGet), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0B532E))
-                }
-            }
-        }
-    }
-}
 
-@Composable
-private fun PartnerBalanceSection(title: String, total: Double, taken: Double, remaining: Double,
-    color: Color, track: Color, isTamil: Boolean, tag: String) {
-    val fraction = if (total > 0) (taken / total).toFloat().coerceIn(0f, 1f) else 0f
-    val progress by animateFloatAsState(fraction, tween(180), label = "partner_balance_progress")
-    Column(Modifier.fillMaxWidth().testTag(tag), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("$title (${formatInr(total)})", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF475569))
-        LinearProgressIndicator(progress = { progress }, color = color, trackColor = if (total > 0) track else Color(0xFFE2E8F0),
-            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)))
-        // Shared grid allocates a measured width to each value instead of nested manual widths.
-        ReportGrid(2) { index ->
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(if (index == 0) (if (isTamil) "எடுக்கப்பட்டது" else "Taken") else (if (isTamil) "மீதம்" else "Remaining"),
-                    fontSize = 12.sp, color = Color(0xFF64748B))
-                Text(formatInr(if (index == 0) taken else remaining), fontSize = 15.sp, fontWeight = FontWeight.Bold,
-                    color = if (index == 0) Color(0xFF0F172A) else color,
-                    modifier = Modifier.fillMaxWidth().testTag("${tag}_${if (index == 0) "taken" else "remaining"}"))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Horizontal Details Row: Share | Investment | Total to get
+            if (status.businessFundedCost > 0) {
+                Text("${if (isTamil) "வணிகம் செலுத்திய செலவுப் பங்கு" else "Business-funded cost"}: ${formatInr(status.businessFundedCost)}",
+                    fontSize = 11.sp, color = Color(0xFF475569))
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Column 1: Share
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "${if (isTamil) "பங்கு" else "Share"} (${formatInr(status.totalShare)})",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF475569)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    // Share 2-tone progress bar: Dark green (Taken) + Light green (Remaining)
+                    val shareTakenFrac = if (status.totalShare > 0) (status.takenShare / status.totalShare).toFloat().coerceIn(0f, 1f) else 0f
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF86EFAC)) // Remaining light green
+                    ) {
+                        if (shareTakenFrac > 0f) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(shareTakenFrac)
+                                    .background(Color(0xFF0B532E)) // Taken dark green
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(5.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(formatInr(status.takenShare), fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                            Text(if (isTamil) "எடுக்கப்பட்டது" else "Taken", fontSize = 9.5.sp, color = Color(0xFF64748B))
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(formatInr(status.remainingShare), fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF15803D))
+                            Text(if (isTamil) "மீதம்" else "Remaining", fontSize = 9.5.sp, color = Color(0xFF64748B))
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                // Column 2: Investment
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = (if (isTamil) "முதலீடு" else "Investment") + if (status.totalInvestment > 0) " (${formatInr(status.totalInvestment)})" else "",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF475569)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    // Investment 2-tone progress bar: Strong blue (Taken) + Light blue (Remaining)
+                    val invTakenFrac = if (status.totalInvestment > 0) (status.takenInvestment / status.totalInvestment).toFloat().coerceIn(0f, 1f) else 0f
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (status.totalInvestment > 0) Color(0xFFBFDBFE) else Color(0xFFE2E8F0))
+                    ) {
+                        if (invTakenFrac > 0f) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(invTakenFrac)
+                                    .background(Color(0xFF2563EB)) // Strong blue
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(5.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = formatInr(status.takenInvestment),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (status.totalInvestment > 0) Color(0xFF0F172A) else Color(0xFF2563EB)
+                            )
+                            Text(if (isTamil) "எடுக்கப்பட்டது" else "Taken", fontSize = 9.5.sp, color = Color(0xFF64748B))
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = formatInr(status.remainingInvestment),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (status.totalInvestment > 0) Color(0xFF2563EB) else Color(0xFF64748B)
+                            )
+                            Text(if (isTamil) "மீதம்" else "Remaining", fontSize = 9.5.sp, color = Color(0xFF64748B))
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Column 3: Total to get card / Direct "Get ₹X" Action
+                // Partners can only take their OWN entitlement (isOwnCard enforces this)
+                if (isOwnCard) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFF0FDF4),
+                        border = BorderStroke(1.dp, Color(0xFFDCFCE7)),
+                        modifier = Modifier.clickable { onTakeAmount(status) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(horizontalAlignment = Alignment.Start) {
+                                Text(
+                                    text = if (isTamil) "பெறவேண்டியது" else "Total to get",
+                                    fontSize = 9.5.sp,
+                                    color = Color(0xFF64748B),
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = if (status.totalToGet > 0) (if (isTamil) "${formatInr(status.totalToGet)} பெறுக" else "Get ${formatInr(status.totalToGet)}") else formatInr(0.0),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0B532E)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Icon(
+                                imageVector = Icons.Default.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF16A34A),
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+                } else {
+                    // Partner viewing another person's card — show read-only entitlement amount
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFF8FAFC),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                            horizontalAlignment = Alignment.Start
+                        ) {
+                            Text(
+                                text = if (isTamil) "பெறவேண்டியது" else "Total to get",
+                                fontSize = 9.5.sp,
+                                color = Color(0xFF94A3B8),
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = formatInr(status.totalToGet),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+                    }
+                }
             }
         }
     }

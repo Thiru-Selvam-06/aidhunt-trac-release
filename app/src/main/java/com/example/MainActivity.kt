@@ -157,12 +157,8 @@ internal fun MainAppContent(
     val displayState = displayStateRaw.takeIf { it.workspaceId == activeWorkspaceId && com.example.data.firebase.BalanceDisplayPolicy.canEdit(currentUserRole) }
         ?: com.example.data.firebase.CashBalanceState()
     val displayActor = viewModel.currentUid.orEmpty()
-    var showBalanceDisplayEditor by androidx.compose.runtime.saveable.rememberSaveable(activeWorkspaceId, displayActor) { mutableStateOf(false) }
-    var balanceEditorBusy by remember(activeWorkspaceId, displayActor) { mutableStateOf(false) }
+    var showBalanceDisplayEditor by remember(activeWorkspaceId, displayActor) { mutableStateOf(false) }
     val mayEditBalanceDisplay = com.example.data.firebase.BalanceDisplayPolicy.canEdit(currentUserRole)
-    androidx.compose.runtime.LaunchedEffect(mayEditBalanceDisplay) {
-        if (!mayEditBalanceDisplay) showBalanceDisplayEditor = false
-    }
     val displayControls: @Composable () -> Unit = {
         if (mayEditBalanceDisplay) androidx.compose.material3.TextButton(onClick = { showBalanceDisplayEditor = true }) {
             androidx.compose.material3.Text(if (settings.language.equals("TA", true)) "இருப்புத் திருத்தம் / வரலாறு" else "Adjust cash / history")
@@ -398,8 +394,9 @@ internal fun MainAppContent(
             }
         )
     }
-    BackHandler(enabled = showBalanceDisplayEditor) {
-        if (!balanceEditorBusy) showBalanceDisplayEditor = false
+    if (showBalanceDisplayEditor && mayEditBalanceDisplay && authState is com.example.data.firebase.AuthState.Authenticated) {
+        com.example.ui.components.CashBalanceEditor(displayState, calculatedAvailableAmount, isTamil, isOnline, mayEditBalanceDisplay,
+            onDismiss = { showBalanceDisplayEditor = false }, onSave = viewModel::saveCashBalanceAdjustment)
     }
     var pendingGoogleProfile by remember { mutableStateOf<com.example.data.firebase.UserProfile?>(null) }
 
@@ -623,9 +620,9 @@ internal fun MainAppContent(
             Scaffold(
                 topBar = {
                     AppTopHeader(
-                        title = if (showBalanceDisplayEditor) (if (isTamil) "பண இருப்புத் திருத்தம்" else "Adjust available cash") else topBarTitle,
-                        showBack = showBalanceDisplayEditor || showBackButton,
-                        onBackClick = if (showBalanceDisplayEditor) ({ if (!balanceEditorBusy) showBalanceDisplayEditor = false }) else onBackAction,
+                        title = topBarTitle,
+                        showBack = showBackButton,
+                        onBackClick = onBackAction,
                         settings = settings,
                         partners = partners,
                         isSyncing = isSyncing,
@@ -651,8 +648,8 @@ internal fun MainAppContent(
                             viewModel.setActivePartner(partner)
                             onShowToast(if (isTamil) "பங்குதாரர் மாற்றப்பட்டது: ${partner.name}" else "Switched to ${partner.name}")
                         },
-                        rightActionIcon = if (showBalanceDisplayEditor) null else rightActionIcon,
-                        onRightActionClick = if (showBalanceDisplayEditor) null else onRightActionClick,
+                        rightActionIcon = rightActionIcon,
+                        onRightActionClick = onRightActionClick,
                         isDarkGreenStyle = true,
                         showNotificationBell = currentUserRole == com.example.data.auth.RoleUtils.ROLE_OWNER ||
                             currentUserRole == com.example.data.auth.RoleUtils.ROLE_PARTNER,
@@ -661,7 +658,7 @@ internal fun MainAppContent(
                     )
                 },
                 bottomBar = {
-                    if (!showBalanceDisplayEditor) AppBottomNav(
+                    AppBottomNav(
                         currentTab = currentTab,
                         onTabSelected = { tab ->
                             val (pageKey, canAccess) = when (tab) {
@@ -691,11 +688,7 @@ internal fun MainAppContent(
                         .consumeWindowInsets(innerPadding)
                         .imePadding()
                 ) {
-                    if (showBalanceDisplayEditor && mayEditBalanceDisplay) {
-                        com.example.ui.components.CashBalanceEditor(displayState, calculatedAvailableAmount, isTamil,
-                            isOnline, mayEditBalanceDisplay, onDismiss = { showBalanceDisplayEditor = false },
-                            onSave = viewModel::saveCashBalanceAdjustment, onBusyChange = { balanceEditorBusy = it })
-                    } else Crossfade(targetState = currentTab, animationSpec = androidx.compose.animation.core.tween(160), label = "tab_crossfade") { tab ->
+                    Crossfade(targetState = currentTab, label = "tab_crossfade") { tab ->
                         when (tab) {
                             BottomTab.HOME -> {
                                 val homeSummary = remember(jobs, customers) { com.example.ui.util.HomeRecordSummary.from(jobs, customers) }
