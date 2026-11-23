@@ -48,6 +48,39 @@ integration("Reversed collection history still protects a retained Customer", as
   await db.doc(`workspaces/${ws}/collections/3`).set({ customerId: 2n, status: "REVERSED" });
   await assert.rejects(commands.deleteWorkspaceCustomer.run(request("owner", { workspaceId: ws, customerId: "2" })), /referenced/);
 });
+integration("Enabled active Partner deletes only an unused Customer with one exact acknowledgement", async () => {
+  await setup();
+  await db.doc(`workspaces/${ws}`).update({syncCapabilities:{trustedEmptyCustomerDeletionV1:true}});
+  const customer=db.doc(`workspaces/${ws}/customers/3757519999999999999`);
+  await customer.set({id:3757519999999999999n,workspaceId:ws,createdAt:1});
+  const command=request("partner",{workspaceId:ws,customerId:customer.id});
+  const first=await commands.deleteWorkspaceCustomer.run(command);
+  assert.equal(first.operationId,command.data.operationId);
+  assert.equal((await customer.get()).exists,false);
+  assert.deepEqual(await commands.deleteWorkspaceCustomer.run(command),first);
+  const proof=(await db.doc(`workspaces/${ws}/customerDeletionProofs/${customer.id}`).get()).data();
+  assert.equal(proof.actorUid,"partner");assert.equal(proof.sourceCreatedAt,1n);
+  assert.equal((await db.collection(`workspaces/${ws}/customerDeleteReceipts`).get()).size,1);
+});
+integration("Enabled Partner cannot delete a Customer with any job or reversed receipt", async () => {
+  await setup();await db.doc(`workspaces/${ws}`).update({syncCapabilities:{trustedEmptyCustomerDeletionV1:true}});
+  const customer=db.doc(`workspaces/${ws}/customers/2`);await customer.set({id:2n,workspaceId:ws});
+  const ref=db.doc(`workspaces/${ws}/entries/1`);await ref.set({customerId:2n,totalAmount:0});
+  const command=request("partner",{workspaceId:ws,customerId:"2"});
+  await assert.rejects(commands.deleteWorkspaceCustomer.run(command),/referenced/);
+  await ref.delete();await db.doc(`workspaces/${ws}/collections/1`).set({customerId:2n,status:"REVERSED",amount:100});
+  await assert.rejects(commands.deleteWorkspaceCustomer.run(command),/referenced/);
+  assert.equal((await customer.get()).exists,true);
+  assert.equal((await db.collection(`workspaces/${ws}/customerDeleteReceipts`).get()).size,0);
+});
+integration("Removed Partner, Operator and foreign Owner cannot use the trusted customer deletion command", async () => {
+  await setup();await db.doc(`workspaces/${ws}`).update({syncCapabilities:{trustedEmptyCustomerDeletionV1:true}});
+  await db.doc(`workspaces/${ws}/members/operator`).set({uid:'operator',role:'OPERATOR',status:'ACTIVE'});
+  await db.doc(`workspaces/${ws}/members/partner`).update({status:'REMOVED'});
+  for(const actor of ['operator','partner','foreign'])
+    await assert.rejects(commands.deleteWorkspaceCustomer.run(request(actor,{workspaceId:ws,customerId:'2'})),/access/);
+  await assert.rejects(commands.deleteWorkspaceCustomer.run(request(null,{workspaceId:ws,customerId:'2'})),/Sign in/);
+});
 integration("Invitation is single-use, preserves Owner identity and creates only its locked role", async () => {
   await setup();
   const invitation = await commands.beginWorkspaceInvitation.run(request("owner", { workspaceId: ws, phone: "+919876543210", role: "OPERATOR", name: "Worker" }));

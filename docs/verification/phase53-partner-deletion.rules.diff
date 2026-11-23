@@ -1,0 +1,29 @@
+--- active-rules-e7981704
++++ firestore.phase53.rules
+@@ -223,9 +223,9 @@
+     }
+     function lockableJob(ws, data) {
+       let source = get(/databases/$(database)/documents/workspaces/$(ws)/entries/$(data.jobId)).data;
+-      return source.workspaceId == ws && (owner(ws) || (partner(ws) && source.createdByUid == request.auth.uid &&
+-        source.get('isHistorical', false) == false && source.get('authorizationTimeStatus', '') in ['CLIENT_ORIGINAL_V2', 'VERIFIED'] &&
+-        data.actionTime >= source.createdAt && data.actionTime - source.createdAt < 86400000));
++      return source.workspaceId == ws && (owner(ws) || (partner(ws) &&
++        source.get('authorizationTimeStatus', '') in ['CLIENT_ORIGINAL_V2', 'VERIFIED'] &&
++        data.actionTime >= source.createdAt));
+     }
+     function validDeletionLock(ws, id) {
+       let data = request.resource.data;
+@@ -285,11 +285,10 @@
+         proof.get('deletedCollectionAuditJson', '[]') is string && proof.get('deletedCollectionAuditJson', '[]').size() <= 131072 &&
+         proof.get('deletedExpenseAuditJson', '[]') is string && proof.get('deletedExpenseAuditJson', '[]').size() <= 131072 &&
+         proof.collectionIds is list && proof.collectionIds.size() <= 450 && proof.collectionIds.toSet().size() == proof.collectionIds.size() &&
+-        (owner(ws) || (partner(ws) && source.get('isHistorical', false) == false &&
++        (owner(ws) || (partner(ws) &&
+           source.get('authorizationTimeStatus', '') in ['CLIENT_ORIGINAL_V2', 'VERIFIED'] &&
+-          source.createdByUid == request.auth.uid &&
+           get(memberPath(ws, source.entryForUid)).data.status in ['ACTIVE', 'active'] &&
+-          proof.actionTime >= source.createdAt && proof.actionTime - source.createdAt < 86400000 && partnerDeletionReceipts(ws, source, proof)));
++          proof.actionTime >= source.createdAt && partnerDeletionReceipts(ws, source, proof)));
+     }
+     // The proof create rule performs the full source/receipt validation once.
+     // Every related delete must reference that newly created, immutable proof.

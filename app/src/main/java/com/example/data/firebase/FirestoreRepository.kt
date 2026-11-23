@@ -62,7 +62,7 @@ class FirestoreRepository(
     val currentWorkspace: StateFlow<Workspace?> = _currentWorkspace.asStateFlow()
 
     // Real-time listener registrations per workspace (workspaceId -> Map of listener registrations)
-    private val activeWorkspaceListeners = mutableMapOf<String, MutableList<ListenerRegistration>>()
+    private val activeWorkspaceListeners = java.util.concurrent.ConcurrentHashMap<String, MutableList<ListenerRegistration>>()
     private val activeListenerCapabilities = mutableMapOf<String, WorkspaceSyncCapabilities>()
     private val activeListenerSessions = mutableMapOf<String, Triple<String, Boolean, Boolean>>()
     private fun WorkspaceSyncCapabilities?.orDefaultCapabilities() = this ?: WorkspaceSyncCapabilities()
@@ -312,6 +312,7 @@ class FirestoreRepository(
      * Registers real-time Firestore listeners for a set of visible workspaces.
      * Listens to entries, expenses, customers, tractors, attendees, withdrawals, settings for all given workspaces.
      */
+    @Synchronized
     fun startRealtimeListenersForWorkspaces(
         workspaceIds: Set<String>,
         onJobsUpdated: (List<JobEntryEntity>, String) -> Unit,
@@ -336,7 +337,8 @@ class FirestoreRepository(
         onSettlementRepaymentsUpdated: (List<com.example.data.entity.SettlementRepaymentEntity>, String) -> Unit = { _, _ -> },
         onFinancialStateUpdated: (Double, Double, Double, String) -> Unit = { _, _, _, _ -> },
         ownerWorkspaceIds: Set<String> = emptySet(),
-        onNotificationsUpdated: (List<com.example.data.entity.AppNotificationEntity>, String) -> Unit = { _, _ -> }
+        onNotificationsUpdated: (List<com.example.data.entity.AppNotificationEntity>, String) -> Unit = { _, _ -> },
+        onOwnerLedgerChanged: (String) -> Unit = {}
     ) {
         val firestore = db ?: return
         val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: ""
@@ -381,10 +383,17 @@ class FirestoreRepository(
             listenerHealth.begin(workspaceId, operational + if (workspaceId in operatorWorkspaceIds) {
                 if (capabilities.basicCustomerProfilesV1) setOf("customerDirectory") else emptySet()
             } else setOf("customers", "expenses", "withdrawals", "payments"))
+            // The SDK may dispatch an initial snapshot while more listeners are being added.
+            // Publish the registration before subscription so that snapshot isn't discarded.
+            activeWorkspaceListeners[workspaceId] = regList
+            fun hasCurrentRegistration() =
+                listenerEpoch.get() == epoch &&
+                    com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid == currentUid &&
+                    activeWorkspaceListeners[workspaceId] === regList
             // The full members query loses permission after removal. The actor's own
             // member document remains readable so revocation still reaches this device.
             regList.add(wsRef.collection("members").document(currentUid).addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                if (!hasCurrentRegistration()) return@addSnapshotListener
                 if (error != null) listenerHealth.failed(workspaceId, "actorMembership")
                 if (snapshot != null) listenerHealth.snapshot(workspaceId, "actorMembership", snapshot.metadata.isFromCache)
                 if (error == null && snapshot != null && !snapshot.metadata.isFromCache) {
@@ -396,7 +405,7 @@ class FirestoreRepository(
                 }
             })
             regList.add(wsRef.collection("members").addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                if (!hasCurrentRegistration()) return@addSnapshotListener
                 if (error != null) listenerHealth.failed(workspaceId, "members")
                 if (snapshot != null) listenerHealth.snapshot(workspaceId, "members", snapshot.metadata.isFromCache)
                 // Cached/offline snapshots never manufacture a new verification result.
@@ -419,7 +428,7 @@ class FirestoreRepository(
             val entryQuery: com.google.firebase.firestore.Query = if (workspaceId in operatorWorkspaceIds) wsRef.collection("entries").whereEqualTo("isHistorical", false) else wsRef.collection("entries")
             val regEntries = entryQuery
                 .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                    if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                    if (!hasCurrentRegistration()) return@addSnapshotListener
                     if (error != null) {
                         listenerHealth.failed(workspaceId, "entries")
                         Log.w(TAG, "Entries listener notice: ${error.message}")
@@ -432,6 +441,8 @@ class FirestoreRepository(
                             doc.data?.takeUnless { it["isDeleted"] == true }?.let { jobEntryFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
                         }
                         onJobsUpdated(jobs, workspaceId)
+                        if (workspaceId in ownerWorkspaceIds && snapshot.documentChanges.isNotEmpty())
+                            onOwnerLedgerChanged(workspaceId)
                     }
                 }
             regList.add(regEntries)
@@ -440,7 +451,7 @@ class FirestoreRepository(
             if (workspaceId !in operatorWorkspaceIds) {
                 val regExpenses = wsRef.collection("expenses")
                     .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (!hasCurrentRegistration()) return@addSnapshotListener
                         if (error != null) {
                             listenerHealth.failed(workspaceId, "expenses")
                             Log.w(TAG, "Expenses listener notice: ${error.message}")
@@ -453,6 +464,8 @@ class FirestoreRepository(
                                 doc.data?.takeUnless { it["isDeleted"] == true }?.let { expenseFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
                             }
                             onExpensesUpdated(expenses, workspaceId)
+                            if (workspaceId in ownerWorkspaceIds && snapshot.documentChanges.isNotEmpty())
+                                onOwnerLedgerChanged(workspaceId)
                         }
                     }
                 regList.add(regExpenses)
@@ -461,7 +474,7 @@ class FirestoreRepository(
             // 3. Customers Listener
             if (workspaceId in operatorWorkspaceIds && capabilities.basicCustomerProfilesV1) {
                 regList.add(wsRef.collection("customerDirectory").addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                    if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                    if (!hasCurrentRegistration()) return@addSnapshotListener
                     if (error != null) { listenerHealth.failed(workspaceId, "customerDirectory"); return@addSnapshotListener }
                     if (snapshot != null) listenerHealth.snapshot(workspaceId, "customerDirectory", snapshot.metadata.isFromCache)
                     if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
@@ -476,7 +489,7 @@ class FirestoreRepository(
             if (workspaceId !in operatorWorkspaceIds) {
             val regCustomers = wsRef.collection("customers")
                 .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                    if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                    if (!hasCurrentRegistration()) return@addSnapshotListener
                     if (error != null) {
                         listenerHealth.failed(workspaceId, "customers")
                         Log.w(TAG, "Customers listener notice: ${error.message}")
@@ -497,7 +510,7 @@ class FirestoreRepository(
             // 4. Tractors Listener
             val regTractors = wsRef.collection("tractors")
                 .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                    if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                    if (!hasCurrentRegistration()) return@addSnapshotListener
                     if (error != null) {
                         listenerHealth.failed(workspaceId, "tractors")
                         Log.w(TAG, "Tractors listener notice: ${error.message}")
@@ -517,7 +530,7 @@ class FirestoreRepository(
             // 5. Attendees (Partners / Operators) Listener
             val regAttendees = wsRef.collection("attendees")
                 .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                    if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                    if (!hasCurrentRegistration()) return@addSnapshotListener
                     if (error != null) {
                         listenerHealth.failed(workspaceId, "attendees")
                         Log.w(TAG, "Attendees listener notice: ${error.message}")
@@ -538,7 +551,7 @@ class FirestoreRepository(
             if (workspaceId !in operatorWorkspaceIds) {
                 val regWithdrawals = wsRef.collection("withdrawals")
                     .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (!hasCurrentRegistration()) return@addSnapshotListener
                         if (error != null) {
                             listenerHealth.failed(workspaceId, "withdrawals")
                             Log.w(TAG, "Withdrawals listener notice: ${error.message}")
@@ -551,6 +564,8 @@ class FirestoreRepository(
                                 doc.data?.takeUnless { it["isDeleted"] == true }?.let { withdrawalFromFirestoreMap(it, fallbackId = parseLongId(doc.id), fallbackWorkspaceId = workspaceId) }
                             }
                             onWithdrawalsUpdated(withdrawals, workspaceId)
+                            if (workspaceId in ownerWorkspaceIds && snapshot.documentChanges.isNotEmpty())
+                                onOwnerLedgerChanged(workspaceId)
                         }
                     }
                 regList.add(regWithdrawals)
@@ -559,7 +574,7 @@ class FirestoreRepository(
             // 7. Settings Listener
             val regSettings = wsRef.collection("settings").document("main")
                 .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                    if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                    if (!hasCurrentRegistration()) return@addSnapshotListener
                     if (error != null) {
                         listenerHealth.failed(workspaceId, "settings")
                         Log.w(TAG, "Settings listener notice: ${error.message}")
@@ -577,7 +592,7 @@ class FirestoreRepository(
             if (workspaceId !in operatorWorkspaceIds) {
                 val regPayments = wsRef.collection("collections")
                     .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (!hasCurrentRegistration()) return@addSnapshotListener
                         if (error != null) {
                             listenerHealth.failed(workspaceId, "payments")
                             Log.w(TAG, "Payments listener notice: ${error.message}")
@@ -602,6 +617,8 @@ class FirestoreRepository(
                                 }
                             }
                             onPaymentsUpdated(payments, workspaceId)
+                            if (workspaceId in ownerWorkspaceIds && snapshot.documentChanges.isNotEmpty())
+                                onOwnerLedgerChanged(workspaceId)
                         }
                     }
                 regList.add(regPayments)
@@ -610,7 +627,7 @@ class FirestoreRepository(
             // 9. Access Control Listener: workspaces/{workspaceId}/settings/access_control
             val regAccessControl = wsRef.collection("settings").document("access_control")
                 .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                    if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                    if (!hasCurrentRegistration()) return@addSnapshotListener
                     if (error != null) {
                         listenerHealth.failed(workspaceId, "accessControl")
                         Log.w(TAG, "AccessControl listener notice: ${error.message}")
@@ -629,7 +646,7 @@ class FirestoreRepository(
             // 11. Extensions Listener: workspaces/{workspaceId}/extensions
             val regExtensions = wsRef.collection("extensions")
                 .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                    if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                    if (!hasCurrentRegistration()) return@addSnapshotListener
                     if (error != null) {
                         listenerHealth.failed(workspaceId, "extensions")
                         Log.w(TAG, "Extensions listener notice: ${error.message}")
@@ -648,9 +665,10 @@ class FirestoreRepository(
 
             if (capabilities.expenseCategoriesV1) regList.add(wsRef.collection("expenseCategories")
                 .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                    if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                    if (!hasCurrentRegistration()) return@addSnapshotListener
                     if (error != null) {
                         listenerHealth.failed(workspaceId, "expenseCategories")
+                        Log.w(TAG, "Expense category listener failed: ${error.code}")
                         return@addSnapshotListener
                     }
                     if (snapshot != null) {
@@ -671,7 +689,7 @@ class FirestoreRepository(
             if (workspaceId !in operatorWorkspaceIds) {
                 regList.add(wsRef.collection("externalLoans")
                     .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (!hasCurrentRegistration()) return@addSnapshotListener
                         if (error != null) { Log.w(TAG, "ExternalLoans listener notice: ${error.message}"); return@addSnapshotListener }
                         if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                             val list = snapshot.documents.mapNotNull { doc ->
@@ -682,7 +700,7 @@ class FirestoreRepository(
                     })
                 regList.add(wsRef.collection("externalLoanRepayments")
                     .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (!hasCurrentRegistration()) return@addSnapshotListener
                         if (error != null) { Log.w(TAG, "ExternalLoanRepayments listener notice: ${error.message}"); return@addSnapshotListener }
                         if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                             val list = snapshot.documents.mapNotNull { doc ->
@@ -693,7 +711,7 @@ class FirestoreRepository(
                     })
                 regList.add(wsRef.collection("borrowingRequests")
                     .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (!hasCurrentRegistration()) return@addSnapshotListener
                         if (error != null) { Log.w(TAG, "BorrowingRequests listener notice: ${error.message}"); return@addSnapshotListener }
                         if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                             val list = snapshot.documents.mapNotNull { doc ->
@@ -704,7 +722,7 @@ class FirestoreRepository(
                     })
                 regList.add(wsRef.collection("settlementObligations")
                     .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (!hasCurrentRegistration()) return@addSnapshotListener
                         if (error != null) { Log.w(TAG, "SettlementObligations listener notice: ${error.message}"); return@addSnapshotListener }
                         if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                             val list = snapshot.documents.mapNotNull { doc ->
@@ -715,7 +733,7 @@ class FirestoreRepository(
                     })
                 regList.add(wsRef.collection("settlementRepayments")
                     .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (!hasCurrentRegistration()) return@addSnapshotListener
                         if (error != null) { Log.w(TAG, "SettlementRepayments listener notice: ${error.message}"); return@addSnapshotListener }
                         if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                             val list = snapshot.documents.mapNotNull { doc ->
@@ -726,7 +744,7 @@ class FirestoreRepository(
                     })
                 regList.add(wsRef.collection("financialState").document("current")
                     .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (!hasCurrentRegistration()) return@addSnapshotListener
                         if (error != null) { Log.w(TAG, "FinancialState listener notice: ${error.message}"); return@addSnapshotListener }
                         if (snapshot != null && snapshot.exists() && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                             val confirmedCash = (snapshot.getDouble("confirmedCash") ?: 0.0)
@@ -742,18 +760,19 @@ class FirestoreRepository(
                 }
                 regList.add(notificationsQuery
                     .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snapshot, error ->
-                        if (listenerEpoch.get() != epoch || com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid != currentUid || workspaceId !in activeWorkspaceListeners) return@addSnapshotListener
+                        if (!hasCurrentRegistration()) return@addSnapshotListener
                         if (error != null) { Log.w(TAG, "Notifications listener notice: ${error.message}"); return@addSnapshotListener }
                         if (snapshot != null && authoritativeLedgerSnapshot(snapshot.metadata.isFromCache, snapshot.metadata.hasPendingWrites())) {
                             val list = snapshot.documents.mapNotNull { doc ->
                                 doc.data?.let { notificationFromFirestoreMap(it, fallbackId = doc.id, fallbackWorkspaceId = workspaceId) }
                             }
                             onNotificationsUpdated(list, workspaceId)
+                            if (workspaceId in ownerWorkspaceIds && snapshot.documentChanges.isNotEmpty())
+                                onOwnerLedgerChanged(workspaceId)
                         }
                     })
             }
 
-            activeWorkspaceListeners[workspaceId] = regList
             Log.d(TAG, "All Firestore snapshot listeners started for workspace: $workspaceId")
         }
     }
@@ -879,6 +898,7 @@ class FirestoreRepository(
     /**
      * Cleanly stops and unregisters all real-time listeners across all workspaces.
      */
+    @Synchronized
     fun stopRealtimeListeners() {
         listenerEpoch.incrementAndGet()
         listenerHealth.clear()
@@ -1082,9 +1102,17 @@ class FirestoreRepository(
             WorkspaceSyncCapabilities.fromWorkspace(workspace.data.orEmpty()).also { it.requireSupported(op) }
         } else WorkspaceSyncCapabilities()
         val atomicCashEnabled = if (op.entityType in setOf("PAYMENT", "EXPENSE", "WITHDRAWAL", "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT", "BORROWING_REQUEST", "SETTLEMENT_REPAYMENT")) {
-            capabilities.atomicCashControlV1 || firestore.collection("workspaces").document(op.workspaceId)
-                .collection("financialState").document("current")
-                .get(com.google.firebase.firestore.Source.SERVER).await().exists()
+            capabilities.atomicCashControlV1 || try {
+                firestore.collection("workspaces").document(op.workspaceId)
+                    .collection("financialState").document("current")
+                    .get(com.google.firebase.firestore.Source.SERVER).await().exists()
+            } catch (error: com.google.firebase.firestore.FirebaseFirestoreException) {
+                // Older policies cannot read this optional document. The write still
+                // uses the actor's credentials and remains subject to the active rules.
+                if (error.code != com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED ||
+                    op.entityType !in setOf("PAYMENT", "EXPENSE", "WITHDRAWAL")) throw error
+                false
+            }
         } else false
         // Server Rules reject even milliseconds of future skew. Confirm eligibility
         // before the first mutation, retaining original IDs/times and rejected states.
@@ -1142,7 +1170,15 @@ class FirestoreRepository(
                 return
             }
             if (op.entityType == "CUSTOMER") {
-                FirebaseLedgerDeletion.delete(op)
+                val role = resolveAuthoritativeRole(op.actorUid, op.workspaceId)
+                if (role == com.example.data.auth.RoleUtils.ROLE_PARTNER) {
+                    if (!capabilities.trustedEmptyCustomerDeletionV1) throw WorkspaceCapabilityPendingException()
+                    WorkspaceCommandService.deleteCustomer(op.workspaceId, op.entityId.toString(), op.actorUid,
+                        op.operationId, op.actionTime, dependencies)
+                } else {
+                    require(role == com.example.data.auth.RoleUtils.ROLE_OWNER) { "Customer deletion requires Owner or Partner access" }
+                    FirebaseLedgerDeletion.delete(op)
+                }
                 return
             }
             val existing = ref.get(com.google.firebase.firestore.Source.SERVER).await()

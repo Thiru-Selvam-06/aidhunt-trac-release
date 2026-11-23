@@ -62,6 +62,30 @@ class WorkspaceDiscoveryPolicyTest {
         }
     }
 
+
+    @Test fun confirmedDiscoveryOpensOneOrRestoresOnlyAnAuthorizedChoice() {
+        assertEquals("business", WorkspaceDiscoveryPolicy.selectedWorkspace(listOf("business"), null, null))
+        assertNull(WorkspaceDiscoveryPolicy.selectedWorkspace(listOf("business", "second"), null, null))
+        assertEquals("second", WorkspaceDiscoveryPolicy.selectedWorkspace(listOf("business", "second"), null, "second"))
+        assertEquals("business", WorkspaceDiscoveryPolicy.selectedWorkspace(listOf("business"), null, "revoked"))
+        assertThrows(IllegalArgumentException::class.java) {
+            WorkspaceDiscoveryPolicy.selectedWorkspace(listOf("business"), "revoked", "business")
+        }
+    }
+
+    @Test fun cachedMembershipIsOnlyForTransientNetworkFailures() {
+        fun error(code: com.google.firebase.firestore.FirebaseFirestoreException.Code) =
+            com.google.firebase.firestore.FirebaseFirestoreException("fixture", code)
+        val code = com.google.firebase.firestore.FirebaseFirestoreException.Code.UNAVAILABLE
+        assertTrue(WorkspaceDiscoveryPolicy.mayRestoreCachedWorkspace(error(code)))
+        assertTrue(WorkspaceDiscoveryPolicy.mayRestoreCachedWorkspace(com.google.firebase.FirebaseNetworkException("offline")))
+        for (problem in listOf(error(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED),
+            error(com.google.firebase.firestore.FirebaseFirestoreException.Code.UNAUTHENTICATED),
+            SecurityException("inactive"), IllegalArgumentException("revoked"))) {
+            assertFalse(WorkspaceDiscoveryPolicy.mayRestoreCachedWorkspace(problem))
+        }
+    }
+
     private fun role(role: String, status: String = "ACTIVE", owner: String = "fixture", fields: Map<String, Any?> = emptyMap()): String? =
         WorkspaceDiscoveryPolicy.role("fixture", "workspace", mapOf("role" to role, "status" to status) + fields, owner)
 }

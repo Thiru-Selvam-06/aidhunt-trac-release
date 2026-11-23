@@ -656,88 +656,78 @@ object PdfGeneratorHelper {
         totalSales: Double,
         totalExpenses: Double,
         netBalance: Double,
-        periodSummary: List<BalanceSheetRow>
+        periodSummary: List<BalanceSheetRow>,
+        syncNotices: List<String> = emptyList()
     ): File? {
         if (!checkPdfExportAllowed(context, settings)) return null
         val document = PdfDocument()
-        val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
-        val page = document.startPage(pageInfo)
-        val canvas: Canvas = page.canvas
-
+        val statementDate = dateTimeFormat.format(Date())
         val paint = Paint().apply { isAntiAlias = true }
+        val bold = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        val normal = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
 
-        // Header
-        paint.color = Color.rgb(30, 77, 43)
-        canvas.drawRect(0f, 0f, 595f, 85f, paint)
+        balanceSheetPages(periodSummary).forEachIndexed { index, rows ->
+            val page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, index + 1).create())
+            val canvas = page.canvas
 
-        paint.color = Color.WHITE
-        paint.textSize = 16f
-        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        canvas.drawText(settings.businessName.uppercase(Locale.ROOT), 30f, 35f, paint)
+            paint.color = Color.rgb(30, 77, 43)
+            canvas.drawRect(0f, 0f, 595f, 85f, paint)
+            paint.color = Color.WHITE
+            paint.textSize = 16f
+            paint.typeface = bold
+            canvas.drawText(settings.businessName.uppercase(Locale.ROOT), 30f, 35f, paint)
+            paint.textSize = 11f
+            paint.typeface = normal
+            canvas.drawText("BALANCE SHEET & PROFIT/LOSS STATEMENT", 30f, 55f, paint)
+            canvas.drawText("Statement As Of: $statementDate", 30f, 70f, paint)
 
-        paint.textSize = 11f
-        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-        canvas.drawText("BALANCE SHEET & PROFIT/LOSS STATEMENT", 30f, 55f, paint)
-        canvas.drawText("Statement As Of: ${dateTimeFormat.format(Date())}", 30f, 70f, paint)
-
-        // Summary Card
-        paint.color = Color.rgb(243, 247, 242)
-        canvas.drawRoundRect(30f, 100f, 565f, 160f, 8f, 8f, paint)
-
-        paint.color = Color.rgb(46, 125, 50)
-        paint.textSize = 11f
-        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        canvas.drawText("AMOUNT RECEIVED: ${formatInr(totalSales)}", 45f, 125f, paint)
-
-        paint.color = Color.rgb(198, 40, 40)
-        canvas.drawText("TOTAL EXPENSES: ${formatInr(totalExpenses)}", 45f, 145f, paint)
-
-        val netColor = if (netBalance >= 0) Color.rgb(30, 77, 43) else Color.rgb(198, 40, 40)
-        paint.color = netColor
-        paint.textSize = 12f
-        canvas.drawText("NET BALANCE: ${formatInr(netBalance)}", 330f, 135f, paint)
-
-        // Table
-        var yPos = 180f
-        paint.color = Color.rgb(30, 77, 43)
-        canvas.drawRect(30f, yPos, 565f, yPos + 22f, paint)
-
-        paint.color = Color.WHITE
-        paint.textSize = 9f
-        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        canvas.drawText("PERIOD / DATE", 35f, yPos + 15f, paint)
-        canvas.drawText("AMOUNT RECEIVED", 200f, yPos + 15f, paint)
-        canvas.drawText("EXPENSES", 340f, yPos + 15f, paint)
-        canvas.drawText("NET BALANCE", 460f, yPos + 15f, paint)
-
-        yPos += 22f
-
-        for (i in periodSummary.indices) {
-            val row = periodSummary[i]
-            if (yPos > 760f) break
-
-            paint.color = if (i % 2 == 0) Color.WHITE else Color.rgb(247, 249, 246)
-            canvas.drawRect(30f, yPos, 565f, yPos + 22f, paint)
-
-            paint.color = Color.BLACK
-            paint.textSize = 9f
-            paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-            canvas.drawText(row.periodLabel, 35f, yPos + 15f, paint)
-
+            paint.color = Color.rgb(243, 247, 242)
+            canvas.drawRoundRect(30f, 100f, 565f, 153f, 8f, 8f, paint)
             paint.color = Color.rgb(46, 125, 50)
-            canvas.drawText(formatInr(row.sales), 200f, yPos + 15f, paint)
-
+            paint.textSize = 11f
+            paint.typeface = bold
+            canvas.drawText("AMOUNT RECEIVED: ${formatInr(totalSales, settings.currency)}", 45f, 120f, paint)
             paint.color = Color.rgb(198, 40, 40)
-            canvas.drawText(formatInr(row.expenses), 340f, yPos + 15f, paint)
+            canvas.drawText("TOTAL EXPENSES: ${formatInr(totalExpenses, settings.currency)}", 45f, 140f, paint)
+            paint.color = if (netBalance >= 0) Color.rgb(30, 77, 43) else Color.rgb(198, 40, 40)
+            paint.textSize = 12f
+            canvas.drawText("NET BALANCE: ${formatInr(netBalance, settings.currency)}", 330f, 130f, paint)
 
-            paint.color = if (row.balance >= 0) Color.rgb(30, 77, 43) else Color.rgb(198, 40, 40)
-            paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            canvas.drawText(formatInr(row.balance), 460f, yPos + 15f, paint)
+            paint.color = Color.rgb(146, 64, 14)
+            paint.textSize = 9f
+            paint.typeface = normal
+            syncNotices.forEachIndexed { line, notice -> canvas.drawText(notice, 35f, 164f + 11f * line, paint) }
 
-            yPos += 22f
+            paint.color = Color.rgb(30, 77, 43)
+            canvas.drawRect(30f, 187f, 565f, 209f, paint)
+            paint.color = Color.WHITE
+            paint.typeface = bold
+            canvas.drawText("PERIOD / DATE", 35f, 202f, paint)
+            canvas.drawText("AMOUNT RECEIVED", 200f, 202f, paint)
+            canvas.drawText("EXPENSES", 340f, 202f, paint)
+            canvas.drawText("NET BALANCE", 460f, 202f, paint)
+
+            rows.forEachIndexed { rowIndex, row ->
+                val top = 209f + 22f * rowIndex
+                paint.color = if (rowIndex % 2 == 0) Color.WHITE else Color.rgb(247, 249, 246)
+                canvas.drawRect(30f, top, 565f, top + 22f, paint)
+                paint.color = Color.BLACK
+                paint.typeface = normal
+                canvas.drawText(row.periodLabel, 35f, top + 15f, paint)
+                paint.color = Color.rgb(46, 125, 50)
+                canvas.drawText(formatInr(row.sales, settings.currency), 200f, top + 15f, paint)
+                paint.color = Color.rgb(198, 40, 40)
+                canvas.drawText(formatInr(row.expenses, settings.currency), 340f, top + 15f, paint)
+                paint.color = if (row.balance >= 0) Color.rgb(30, 77, 43) else Color.rgb(198, 40, 40)
+                paint.typeface = bold
+                canvas.drawText(formatInr(row.balance, settings.currency), 460f, top + 15f, paint)
+            }
+
+            paint.color = Color.DKGRAY
+            paint.typeface = normal
+            canvas.drawText("Page ${index + 1}", 35f, 814f, paint)
+            document.finishPage(page)
         }
-
-        document.finishPage(page)
         return savePdfToFile(context, document, "Balance_Sheet_${System.currentTimeMillis()}.pdf")
     }
 
@@ -1092,6 +1082,10 @@ object PdfGeneratorHelper {
         return false
     }
 }
+
+/** The table begins at y=209 and uses 22-point rows, with space reserved for the footer. */
+internal fun balanceSheetPages(rows: List<BalanceSheetRow>): List<List<BalanceSheetRow>> =
+    rows.chunked(26).ifEmpty { listOf(emptyList()) }
 
 data class BalanceSheetRow(
     val periodLabel: String,

@@ -14,7 +14,10 @@ import java.util.concurrent.TimeUnit
 
 /** Firebase-only deletion. Guarded reads and an atomic commit use the signed-in user's access;
  * current membership. No service credential, Cloud Function or third-party endpoint is used. */
-internal class FirebaseLedgerDeletion(private val transport: Transport) {
+internal class FirebaseLedgerDeletion(
+    private val transport: Transport,
+    private val sharedPartnerDeletion: Boolean = com.example.BuildConfig.SHARED_PARTNER_JOB_DELETION
+) {
     interface Transport {
         val documentRoot: String
         suspend fun prepare(op: PendingOperationEntity) {}
@@ -69,12 +72,10 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
         val fsName = name(ws, "financialState", "current")
         val cashOpName = name(ws, "cashOperations", op.operationId)
         val sources = get(transaction, listOf("$root/workspaces/$ws", name(ws, "members", op.actorUid),
-            name(ws, sourceCollection, id), proofName, fsName, cashOpName)).associateBy { it.getString("name") }
+            name(ws, sourceCollection, id), proofName)).associateBy { it.getString("name") }
         val workspace = sources["$root/workspaces/$ws"]?.let(::data) ?: error("Workspace is missing")
         val capabilities = WorkspaceSyncCapabilities.fromWorkspace(workspace)
         val basicDirectoryEnabled = capabilities.basicCustomerProfilesV1
-        val fsDoc = sources[fsName]
-        val atomicCashEnabled = op.entityType == "JOB" && (capabilities.atomicCashControlV1 || fsDoc != null)
         val member = sources[name(ws, "members", op.actorUid)]?.let(::data) ?: error("Workspace access is missing")
         require(member["status"].toString().equals("ACTIVE", true)) { "Workspace access removed" }
         val role = member["role"].toString().uppercase()
@@ -90,8 +91,19 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
         }
         val source = sources[name(ws, sourceCollection, id)] ?: error("Record missing without a deletion acknowledgement")
         require(data(source)["workspaceId"] == ws) { "Record workspace mismatch" }
+        val fsDoc = if (op.entityType == "JOB") {
+            try {
+                get(transaction, listOf(fsName)).singleOrNull()
+            } catch (error: DeletionPermissionDenied) {
+                // Only the optional compatibility probe may fail on older Rules.
+                // The signed-in user's actual deletion still goes through Rules.
+                if (capabilities.atomicCashControlV1) throw error
+                null
+            }
+        } else null
+        val atomicCashEnabled = op.entityType == "JOB" && (capabilities.atomicCashControlV1 || fsDoc != null)
         if (atomicCashEnabled && fsDoc == null) throw FinancialBaselinePendingException()
-        if (atomicCashEnabled) require(sources[cashOpName] == null) { "Cash receipt conflict; refresh shared records" }
+        if (atomicCashEnabled) require(get(transaction, listOf(cashOpName)).isEmpty()) { "Cash receipt conflict; refresh shared records" }
         val entries = list(transaction, ws, "entries")
         val collections = list(transaction, ws, "collections")
         val writes = JSONArray()
@@ -114,7 +126,9 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
                 entry.copy(isSynced = true, updatedAt = 0, jobEditHistoryJson = "[]") == payload.copy(isSynced = true, updatedAt = 0, jobEditHistoryJson = "[]")) {
                 "Entry changed after this deletion was requested; refresh and review it before deleting"
             }
-            require(owner || (entry.createdByUid == op.actorUid && !entry.isHistorical &&
+            val sharedPartner = role == "PARTNER" && sharedPartnerDeletion && entry.createdAt > 0 && op.actionTime >= entry.createdAt &&
+                data(source)["authorizationTimeStatus"] in setOf("CLIENT_ORIGINAL_V2", "VERIFIED")
+            require(owner || sharedPartner || (entry.createdByUid == op.actorUid && !entry.isHistorical &&
                 data(source)["authorizationTimeStatus"] in setOf("CLIENT_ORIGINAL_V2", "VERIFIED") &&
                 com.example.data.auth.AuthorizationManager.within24Hours(entry.createdAt, op.actionTime))) {
                 "Entry deletion is outside your permissions or deadline"
@@ -267,6 +281,8 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
 
     class TransactionConflict : java.io.IOException("Record changed during deletion; retrying safely")
 
+    internal class DeletionPermissionDenied(message: String) : SecurityException(message)
+
     internal class HttpTransport(project: String, private val origin: String, private val token: String,
         private val sessionCheck: () -> Unit) : Transport {
         override val documentRoot = "projects/$project/databases/(default)/documents"
@@ -298,7 +314,7 @@ internal class FirebaseLedgerDeletion(private val transport: Transport) {
                         // Never include that verbose diagnostic for a production project/origin.
                         val detail = if (origin == "http://127.0.0.1:18180" && documentRoot.startsWith("projects/demo-"))
                             error?.optString("message").orEmpty() else ""
-                        throw SecurityException("Firebase rejected deletion during $method; verify the deployed deletion rules. Original data retained." +
+                        throw DeletionPermissionDenied("Firebase rejected deletion during $method; verify the deployed deletion rules. Original data retained." +
                             if (detail.isBlank()) "" else " Emulator: $detail")
                     }
                     error("Firebase deletion could not complete (${error?.optString("status") ?: response.code}); original action retained")

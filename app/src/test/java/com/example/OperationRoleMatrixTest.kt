@@ -33,6 +33,7 @@ class OperationRoleMatrixTest(private val role: String, private val entity: Stri
             expectations.flatMap { (entity, permitted) -> listOf("UPSERT","DELETE").map { mutation ->
                 arrayOf<Any>(role,entity,mutation, role in permitted &&
                     !(entity=="CUSTOMER" && mutation=="DELETE" && role!="OWNER") &&
+                    !(entity=="JOB" && mutation=="DELETE" && role=="OPERATOR") &&
                     !(entity in upsertOnlyEntities && mutation=="DELETE"))
             } }
         }
@@ -81,6 +82,10 @@ class OperationRoleMatrixTest(private val role: String, private val entity: Stri
         if(role!="OWNER" && entity in setOf("JOB","EXPENSE","WITHDRAWAL","TRACTOR","EXTENSION","PAYMENT","EXTERNAL_LOAN","EXTERNAL_LOAN_REPAYMENT","BORROWING_REQUEST","SETTLEMENT_REPAYMENT")) {
             denied(operation(creator="other"),listOf(member(),WorkspaceMember(uid="other",workspaceId="a",role="PARTNER",status="ACTIVE")))
         }
-        if(role!="OWNER" && entity=="JOB") denied(operation(historical=true))
+        if(role!="OWNER" && entity=="JOB") {
+            if (role == "PARTNER" && mutation == "UPSERT")
+                OperationPolicy.requireAuthorized(operation(historical=true), role, listOf(member()))
+            else denied(operation(historical=true))
+        }
     }
 }

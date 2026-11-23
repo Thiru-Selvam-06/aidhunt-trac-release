@@ -51,6 +51,31 @@ class ExpenseEditorUiTest {
         compose.runOnIdle { assertFalse(saved) }
     }
 
+    @Test fun personalExpensesKeepThePayerUid() = checkOrdinaryExpenseFunding("who_paid_i_paid", "I Paid", "owner")
+
+    @Test fun businessExpensesHaveNoPersonalPayerUid() = checkOrdinaryExpenseFunding("who_paid_business", "Business Paid", "")
+
+    private fun checkOrdinaryExpenseFunding(tag: String, funding: String, payerUid: String) {
+        var saved: ExpenseEntity? = null
+        compose.setContent { MyApplicationTheme { AddOrEditExpenseScreen(false, null, emptyList(), emptyList(),
+            AppSettingsEntity(workspaceId = "w"), isOwner = true, currentUid = "owner",
+            workspaceMembers = listOf(WorkspaceMember(uid = "owner", workspaceId = "w", role = "OWNER", status = "ACTIVE", displayName = "Muniyappan")),
+            externalLoans = listOf(ExternalLoanEntity(id = 11, workspaceId = "w", lenderName = "Test Loan",
+                principalAmount = 500.0, destination = "DIRECT_TO_SUPPLIER")),
+            onBack = {}, onSaveExpense = { saved = it }) } }
+        compose.onNodeWithTag("input_expense_amount").performTextInput("25.75")
+        compose.onNodeWithTag(tag).performScrollTo().performClick()
+        compose.onNodeWithTag("who_paid_loan_funded").assertDoesNotExist()
+        compose.onAllNodesWithText("Save").onFirst().performClick()
+        compose.runOnIdle {
+            val expense = requireNotNull(saved)
+            assertEquals(funding, expense.paidBy)
+            assertEquals(payerUid, expense.paidByUid)
+            assertEquals(25.75, expense.amount, 0.0)
+            assertEquals(0L, expense.externalLoanId)
+        }
+    }
+
     @Test fun failedLocalSaveRetainsTypedAmountAndAllowsAnExplicitRetry() {
         val saving = mutableStateOf(false)
         val failed = mutableStateOf(false)

@@ -1,5 +1,7 @@
 package com.example.ui.screens.entry
 
+import com.example.ui.util.FinancialFeatureAvailability
+
 import com.example.ui.utils.trackFocusedField
 import android.app.TimePickerDialog
 import android.content.Context
@@ -231,7 +233,7 @@ fun NewEntryScreen(
         settings.ownerName.ifBlank { "Owner" }
     }
     val activeMemberName = workspaceMembers.firstOrNull {
-        it.uid == currentUid && it.status.equals("active", ignoreCase = true)
+        it.uid == currentUid && it.workspaceId == settings.workspaceId && it.status.equals("active", ignoreCase = true)
     }?.displayName?.trim().orEmpty()
     val currentPartnerName = activeMemberName.ifBlank {
         settings.activePartnerName.ifBlank { settings.ownerName.ifBlank { "Partner" } }
@@ -256,14 +258,22 @@ fun NewEntryScreen(
     } else if (canSelectEntryPerson) selectedMember?.uid ?: currentUid else currentUid
     val effectivePersonName = if (draft.isEditingExistingEntry) {
         draft.selectedPersonName.ifBlank { currentPartnerName }
-    } else workspaceMembers.firstOrNull { it.uid == entryTargetUid && it.workspaceId == settings.workspaceId }
-        ?.displayName.orEmpty().ifBlank { if (entryTargetUid == ownerUid) ownerDisplayName else currentPartnerName }
+    } else if (entryTargetUid == currentUid) {
+        currentPartnerName
+    } else if (entryTargetUid == ownerUid) {
+        ownerDisplayName
+    } else {
+        selectedMember?.displayName?.trim().orEmpty()
+            .ifBlank { selectedMember?.phoneNumber.orEmpty().ifBlank { if (isTamil) "பெயர் இல்லை" else "Unnamed member" } }
+    }
 
     // 2. Tractor Selection & Lock State
     val ownTractors = remember(tractors, settings.workspaceId) {
         tractors.filter { it.workspaceId == settings.workspaceId }
     }
-    val selectedTractor = if (draft.selectedTractor.isNotBlank() && tractors.any { it.label == draft.selectedTractor }) {
+    val originalJob = draft.originalJob
+    val retainsTractor = originalJob != null && originalJob.tractorLabel == draft.selectedTractor
+    val selectedTractor = if (retainsTractor || (draft.selectedTractor.isNotBlank() && ownTractors.any { it.label == draft.selectedTractor })) {
         draft.selectedTractor
     } else if (settings.lockedTractorLabel.isNotBlank() && tractors.any { it.label == settings.lockedTractorLabel }) {
         settings.lockedTractorLabel
@@ -375,10 +385,12 @@ fun NewEntryScreen(
         showClearConfirmationDialog = false
     }
 
-    val isTractorInvalid = selectedTractor.isBlank() || (tractors.isNotEmpty() && tractors.none { it.label == selectedTractor })
+    val isTractorInvalid = !retainsTractor && (selectedTractor.isBlank() || ownTractors.none { it.label == selectedTractor })
     val isCustomerNameInvalid = customerNameInput.isBlank()
     val isCustomerPhoneInvalid = !com.example.ui.util.isOptionalContactPhoneValid(customerPhoneInput)
-    val isTimeInvalid = computedDurationMinutes <= 0L
+    val originalDraft = remember(originalJob) { originalJob?.let { NewEntryDraft.fromJobEntry(it) } }
+    val isTimeInvalid = computedDurationMinutes <= 0L &&
+        !(originalJob != null && originalJob.durationMinutes == 0L && originalDraft != null && draft.hasUnchangedWorkTime(originalDraft))
     val isWorkAmountInvalid = if (isWorkAmountManuallyEdited) {
         (customWorkAmountInput.toDoubleOrNull() ?: 0.0) <= 0.0
     } else {
@@ -616,9 +628,9 @@ fun NewEntryScreen(
 
                 val (resolvedCreatorUid, resolvedCreatorRole, resolvedCreatorName) = if (draft.isEditingExistingEntry) {
                     Triple(
-                        draft.originalCreatedByUid,
-                        draft.originalCreatedByRole.ifBlank { activeCreatorRole },
-                        if (!originalAddedBy.isNullOrBlank()) originalAddedBy else activeCreatorName
+                        originalJob?.createdByUid ?: draft.originalCreatedByUid,
+                        originalJob?.createdByRole ?: draft.originalCreatedByRole,
+                        originalJob?.addedByPartner ?: draft.originalAddedByPartner
                     )
                 } else {
                     Triple(
@@ -652,7 +664,7 @@ fun NewEntryScreen(
 
                 val resolvedCustomerId = draft.matchedCustomerId
 
-                val finalNotes = if (draft.isOldEntry) {
+                val finalNotes = if (draft.isOldEntry && !draft.isEditingExistingEntry) {
                     if (notes.isBlank()) {
                         "Historical Entry"
                     } else if (!notes.contains("Old", ignoreCase = true) && !notes.contains("Historical", ignoreCase = true)) {
@@ -664,14 +676,14 @@ fun NewEntryScreen(
                     notes
                 }
 
-                val resolvedOperatorName = effectivePersonName
+                val resolvedOperatorName = draft.originalJob?.operatorName ?: effectivePersonName
                 val job = JobEntryEntity(
                     id = entryId,
                     customerId = resolvedCustomerId,
                     customerName = resolvedCustomerName,
                     customerPhone = resolvedCustomerPhone,
                     customerLocation = customerLocationInput.trim(),
-                    tractorId = matchedTractor?.id ?: 0L,
+                    tractorId = if (retainsTractor) originalJob?.tractorId ?: 0L else matchedTractor?.id ?: 0L,
                     tractorLabel = selectedTractor,
                     operatorName = resolvedOperatorName,
                     workType = selectedWorkType,
@@ -684,8 +696,8 @@ fun NewEntryScreen(
                     pendingAmount = pendingAmount,
                     notes = finalNotes,
                     isHistorical = draft.isOldEntry,
-                    entryForUid = entryTargetUid,
-                    financialAttributionUid = entryTargetUid,
+                    entryForUid = draft.originalJob?.entryForUid ?: entryTargetUid,
+                    financialAttributionUid = draft.originalJob?.financialAttributionUid ?: entryTargetUid,
                     addedByPartner = resolvedCreatorName,
                     createdAt = resolvedCreatedAt,
                     createdByUid = resolvedCreatorUid,
@@ -930,7 +942,7 @@ fun NewEntryScreen(
                 }
             }
 
-            // 1. Entry For Section (No outer card)
+            // One member selection supplies the job operator and existing financial association.
             item {
                 if (canSelectEntryPerson && !draft.isEditingExistingEntry) {
                     var personDropdownExpanded by remember { mutableStateOf(false) }
@@ -944,7 +956,7 @@ fun NewEntryScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator",
+                                text = if (isTamil) "யாருக்காக" else "Entry For",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = DeepSageGreen
@@ -958,7 +970,7 @@ fun NewEntryScreen(
                                     .testTag("btn_person_lock")
                                     .clickable {
                                         val newLocked = !draft.isPersonLocked
-                                        val currentSelectedUid = draft.selectedPersonUid.ifBlank { currentUid }
+                                        val currentSelectedUid = entryTargetUid
                                         onUpdateDraft(draft.copy(isPersonLocked = newLocked, selectedPersonUid = currentSelectedUid))
                                         val lockedUid = if (newLocked) currentSelectedUid else ""
                                         onUpdateLockedPerson?.invoke(lockedUid)
@@ -1025,8 +1037,7 @@ fun NewEntryScreen(
                                 expanded = personDropdownExpanded,
                                 onDismissRequest = { personDropdownExpanded = false }
                             ) {
-                                // 1. Owner Option
-                                DropdownMenuItem(
+                                if (ownerUid.isNotBlank()) DropdownMenuItem(
                                     text = {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
@@ -1094,7 +1105,7 @@ fun NewEntryScreen(
                                                         color = AppTheme.colors.textMuted
                                                     )
                                                 }
-                                                if (draft.selectedPersonUid == partner.uid || draft.selectedPersonName == pName) {
+                                                if (entryTargetUid == partner.uid) {
                                                     Icon(
                                                         imageVector = Icons.Default.Check,
                                                         contentDescription = null,
@@ -1139,11 +1150,8 @@ fun NewEntryScreen(
                         )
 
                         Column(modifier = Modifier.weight(1f)) {
-                            val currentMember = workspaceMembers.find { it.uid == entryTargetUid && it.workspaceId == settings.workspaceId }
-                            val currentRole = currentMember?.role?.ifBlank { null } ?: "Partner"
-                            val roleLabel = com.example.ui.util.businessRoleDisplayName(currentRole, settings.workspaceId, workspaceMembers, isTamil)
                             Text(
-                                text = if (isTamil) "வேலை செய்பவர் ($roleLabel)" else "Entry for Operator: $roleLabel",
+                                text = if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator",
                                 fontSize = 10.5.sp,
                                 color = AppTheme.colors.textMuted,
                                 fontWeight = FontWeight.Medium
@@ -1886,7 +1894,7 @@ fun NewEntryScreen(
                     ) {
                         OutlinedTextField(
                             value = amountReceivedInput,
-                            enabled = canReceivePayment && draft.originalCreatedAt == null,
+                            enabled = canReceivePayment && !draft.isEditingExistingEntry,
                             onValueChange = { onUpdateDraft(draft.copy(amountReceivedInput = it)) },
                             label = { Text(if (isTamil) "பெற்ற தொகை *" else "Amount Received (${settings.currency}) *", fontSize = 11.5.sp, maxLines = 1) },
                             singleLine = true,
@@ -2031,13 +2039,15 @@ fun NewEntryScreen(
 
                         // Multiple Expenses List
                         draft.expensesList.forEachIndexed { index, exp ->
+                            val canEditFunding = draft.originalLinkedExpenses.firstOrNull { it.id == exp.id }
+                                ?.let(FinancialFeatureAvailability::canChangeExpense) ?: true
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = Color.White,
                                 border = androidx.compose.foundation.BorderStroke(1.dp, SageOutline.copy(alpha = 0.5f)),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable {
+                                    .clickable(enabled = canEditFunding) {
                                         expenseToEdit = exp
                                         showAddExpenseModal = true
                                     }
@@ -2114,7 +2124,7 @@ fun NewEntryScreen(
                                             fontSize = 14.sp,
                                             color = AppTheme.colors.textPrimary
                                         )
-                                        IconButton(
+                                        if (canEditFunding) IconButton(
                                             onClick = {
                                                 expenseToEdit = exp
                                                 showAddExpenseModal = true
@@ -2128,7 +2138,7 @@ fun NewEntryScreen(
                                                 modifier = Modifier.size(17.dp)
                                             )
                                         }
-                                        IconButton(
+                                        if (canEditFunding) IconButton(
                                             onClick = {
                                                 val updated = draft.expensesList.toMutableList().also { it.removeAt(index) }
                                                 onUpdateDraft(draft.copy(expensesList = updated))
@@ -2199,7 +2209,7 @@ fun NewEntryScreen(
                     onClick = {
                         if (effectiveIsSaving) return@Button
                         onUpdateDraft(draft.copy(hasAttemptedReview = true))
-                        if (tractors.isEmpty()) {
+                        if (ownTractors.isEmpty() && !retainsTractor) {
                             Toast.makeText(
                                 context,
                                 if (isTamil) "முதலில் ஒரு டிராக்டரைச் சேர்க்கவும்" else "Please add a tractor before creating an entry.",

@@ -214,7 +214,9 @@ fun CustomerCreditDueTab(
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     partners: List<com.example.data.entity.PartnerEntity> = emptyList(),
     expenses: List<com.example.data.entity.ExpenseEntity> = emptyList(),
-    onEditCustomerProfile: ((CustomerEntity, CustomerEntity, () -> Unit) -> Unit)? = null
+    onEditCustomerProfile: ((CustomerEntity, CustomerEntity, () -> Unit) -> Unit)? = null,
+    payments: List<com.example.data.entity.PaymentEntity> = emptyList(),
+    retainedOperations: List<com.example.data.entity.PendingOperationEntity> = emptyList()
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -243,6 +245,15 @@ fun CustomerCreditDueTab(
         mutableLongStateOf(Calendar.getInstance().timeInMillis)
     }
     var selectedCustomer by remember { mutableStateOf<CustomerEntity?>(null) }
+    var showUnusedCustomers by remember(settings.workspaceId, actorUid) { mutableStateOf(false) }
+    val unusedCustomers = remember(settings.workspaceId, customers, jobs, payments, retainedOperations) {
+        com.example.ui.components.UnusedCustomerPolicy.candidates(settings.workspaceId, customers, jobs, payments, retainedOperations)
+    }
+    val mayDeleteUnused = isOwner || workspaceMembers.any { it.workspaceId == settings.workspaceId &&
+        it.uid == actorUid && actorUid.isNotBlank() && it.status.equals("ACTIVE", true) && it.role.equals("PARTNER", true) }
+    if (showUnusedCustomers && mayDeleteUnused && onDeleteCustomer != null) {
+        com.example.ui.components.UnusedCustomersDialog(unusedCustomers, isTamil, { showUnusedCustomers = false }, onDeleteCustomer)
+    }
     var customerToEditPhone by remember { mutableStateOf<CustomerEntity?>(null) }
     var customerForPayment by remember { mutableStateOf<CustomerEntity?>(null) }
     var showBulkPdfOptionsDialog by remember { mutableStateOf(false) }
@@ -441,6 +452,11 @@ fun CustomerCreditDueTab(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(if (isTamil) "PDF அறிக்கை" else "Bulk Export", color = ForestGreenHeader)
                 }
+            }
+        }
+        if (mayDeleteUnused && onDeleteCustomer != null) item {
+            OutlinedButton(onClick = { showUnusedCustomers = true }, modifier = Modifier.fillMaxWidth().testTag("unused_customer_profiles")) {
+                Text((if (isTamil) "பதிவுகள் இல்லாத வாடிக்கையாளர்கள்" else "Customers without records") + " (${unusedCustomers.size})")
             }
         }
         // 2. Search Field
@@ -854,6 +870,8 @@ fun CustomerCreditDueTab(
         CustomerDetailSheet(
             customer = currentCustomer,
             jobs = customerJobs,
+            hasRetainedRecords = jobs.any { it.workspaceId == currentCustomer.workspaceId && it.customerId == currentCustomer.id } ||
+                payments.any { it.workspaceId == currentCustomer.workspaceId && it.customerId == currentCustomer.id },
             settings = settings,
             workspaceMembers = workspaceMembers,
             partners = partners,
@@ -1410,10 +1428,15 @@ fun CustomerDetailSheet(
     actorUid: String = "",
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     partners: List<com.example.data.entity.PartnerEntity> = emptyList(),
-    expenses: List<com.example.data.entity.ExpenseEntity> = emptyList()
+    expenses: List<com.example.data.entity.ExpenseEntity> = emptyList(),
+    hasRetainedRecords: Boolean = jobs.isNotEmpty()
 ) {
     val context = LocalContext.current
     val isTamil = settings.language == "TA"
+    val canOfferEdit = isOwner || workspaceMembers.any {
+        it.workspaceId == settings.workspaceId && it.uid == actorUid && actorUid.isNotBlank() &&
+            it.status.equals("active", true) && com.example.data.auth.RoleUtils.normalizeRole(it.role) == com.example.data.auth.RoleUtils.ROLE_PARTNER
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val workJobs = jobs.filterNot { com.example.ui.util.FinancialCalculationEngine.isSyntheticPayment(it) }
     val totalMinutes = workJobs.sumOf { it.durationMinutes }
@@ -1429,6 +1452,7 @@ fun CustomerDetailSheet(
     ) {
         LazyColumn(
             modifier = Modifier
+                .testTag("customer_job_history")
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -1649,9 +1673,8 @@ fun CustomerDetailSheet(
                                 color = TextMutedDark
                              )
                             if (!isPayment) {
-                                val hasPartnership = com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
-                                val createdByDisplay = com.example.data.auth.RoleUtils.getCreatedByDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil, hasPartnership)
-                                val entryForDisplay = com.example.data.auth.RoleUtils.getEntryForDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil, hasPartnership)
+                                val createdByDisplay = com.example.data.auth.RoleUtils.getCreatedByDisplay(job, workspaceMembers, partners, isTamil)
+                                val entryForDisplay = com.example.data.auth.RoleUtils.getEntryForDisplay(job, workspaceMembers, partners, isTamil)
                                 Spacer(modifier = Modifier.height(3.dp))
                                 Text(createdByDisplay, fontSize = 11.sp, color = Color(0xFF374151), fontWeight = FontWeight.Medium)
                                 if (entryForDisplay != null) {
@@ -1671,8 +1694,10 @@ fun CustomerDetailSheet(
                                     Text("${if (isTamil) "நிலுவை" else "Due"}: ${formatInr(job.pendingAmount)}", fontSize = 11.sp, color = dueTextColor, fontWeight = FontWeight.SemiBold)
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
-                                val canEdit = isOwner
                                 val role = workspaceMembers.firstOrNull { it.uid == actorUid && it.workspaceId == job.workspaceId && it.status.equals("active", true) }?.role.orEmpty()
+                                val canEdit = canOfferEdit && onEditJob != null && job.workspaceId == settings.workspaceId &&
+                                    !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(job.workspaceId, job.createdByUid, job.entryForUid, workspaceMembers) &&
+                                    com.example.data.auth.AuthorizationManager.canEditEntry(job, isOwner, actorName, actorUid, role = role)
                                 val canDelete = com.example.data.auth.AuthorizationManager.canDeleteEntry(job, isOwner, actorName, actorUid, role = role)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1753,7 +1778,7 @@ fun CustomerDetailSheet(
                     }
                 }
             }
-            if (isOwner) {
+            if (canOfferEdit && !hasRetainedRecords && onDeleteCustomer != null) {
                 item {
                     Spacer(modifier = Modifier.height(10.dp))
                     OutlinedButton(
@@ -1845,7 +1870,7 @@ fun CustomerDetailSheet(
                     jobToDelete = job
                 }
             },
-            onEditJob = if (isOwner) { editJob ->
+            onEditJob = if (canOfferEdit && onEditJob != null) { editJob ->
                 selectedJobForDetail = null
                 onDismiss()
                 onEditJob?.invoke(editJob)

@@ -79,47 +79,61 @@ object RoleUtils {
 
     }
 
-    /**
-     * Returns formatted "Created by: Role — Name" string.
-     */
+    fun getCreatedByName(
+        job: JobEntryEntity,
+        workspaceMembers: List<WorkspaceMember>,
+        partners: List<PartnerEntity>,
+        isTamil: Boolean
+    ): String = memberName(job.workspaceId, job.createdByUid, workspaceMembers, partners)
+        .ifBlank { job.addedByPartner.trim() }
+        .ifBlank { if (isTamil) "பெயர் பதிவு செய்யப்படவில்லை" else "Name not recorded" }
+
     fun getCreatedByDisplay(
         job: JobEntryEntity,
-        ownerName: String = "",
         workspaceMembers: List<WorkspaceMember> = emptyList(),
         partners: List<PartnerEntity> = emptyList(),
-        isTamil: Boolean = false,
-        hasBusinessPartnership: Boolean = false
+        isTamil: Boolean = false
     ): String {
-        val (role, name) = resolveCreatorRoleAndName(job, ownerName, workspaceMembers, partners)
-        val displayRole = if (hasBusinessPartnership && role == ROLE_OWNER) ROLE_PARTNER else role
-        val roleAndName = formatRoleAndName(displayRole, name, isTamil)
         val prefix = if (isTamil) "உருவாக்கியவர்" else "Entry by"
-        return "$prefix: $roleAndName"
+        return "$prefix: ${getCreatedByName(job, workspaceMembers, partners, isTamil)}"
     }
 
-    /**
-     * Returns formatted "Entry For: Role — Name" string, or null if no entry-for is specified.
-     */
+    fun getEntryForName(
+        job: JobEntryEntity,
+        workspaceMembers: List<WorkspaceMember>,
+        partners: List<PartnerEntity>
+    ): String? {
+        if (job.entryForUid.isBlank()) return null
+        val savedName = job.operatorName.trim()
+        val name = memberName(job.workspaceId, job.entryForUid, workspaceMembers, partners)
+        // An older job may contain a separately recorded driver. Only normalize casing for that snapshot.
+        return (if (savedName.isBlank() || savedName.equals(name, ignoreCase = true)) name else savedName)
+            .takeIf { it.isNotBlank() }
+    }
+
     fun getEntryForDisplay(
         job: JobEntryEntity,
-        ownerName: String = "",
         workspaceMembers: List<WorkspaceMember> = emptyList(),
         partners: List<PartnerEntity> = emptyList(),
-        isTamil: Boolean = false,
-        hasBusinessPartnership: Boolean = false
+        isTamil: Boolean = false
     ): String? {
-        val member = workspaceMembers.firstOrNull { it.uid == job.entryForUid && it.workspaceId == job.workspaceId && it.uid.isNotBlank() }
-        val entryForName = member?.displayName?.takeIf { it.isNotBlank() } ?: job.operatorName.trim()
-        if (entryForName.isBlank() || job.entryForUid.isBlank()) return null
-
-        val entryForRole = member?.role?.let(::normalizeRole)
-            ?: partners.firstOrNull { it.workspaceId == job.workspaceId && it.firebaseUid.isNotBlank() && it.firebaseUid == job.entryForUid }?.role?.let(::normalizeRole)
-            ?: ""
-
-        val displayRole = if (hasBusinessPartnership && entryForRole == ROLE_OWNER) ROLE_PARTNER else entryForRole
-        val roleAndName = formatRoleAndName(displayRole, entryForName, isTamil)
+        val name = getEntryForName(job, workspaceMembers, partners) ?: return null
         val prefix = if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator"
-        return "$prefix: $roleAndName"
+        return "$prefix: $name"
+    }
+
+    private fun memberName(
+        workspaceId: String,
+        uid: String,
+        workspaceMembers: List<WorkspaceMember>,
+        partners: List<PartnerEntity>
+    ): String {
+        if (workspaceId.isBlank() || uid.isBlank()) return ""
+        return workspaceMembers.firstOrNull { it.uid == uid && it.workspaceId == workspaceId }
+            ?.displayName?.trim().orEmpty().ifBlank {
+                partners.firstOrNull { it.firebaseUid == uid && it.workspaceId == workspaceId }
+                    ?.name?.trim().orEmpty()
+            }
     }
 
     /**

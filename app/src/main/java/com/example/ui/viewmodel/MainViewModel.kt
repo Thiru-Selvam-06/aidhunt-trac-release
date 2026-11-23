@@ -1,5 +1,7 @@
 package com.example.ui.viewmodel
 
+import com.example.ui.util.FinancialFeatureAvailability
+
 import com.example.data.firebase.asCustomerChoice
 
 import com.example.data.repository.awaitWorkspaceRequest
@@ -51,7 +53,10 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
@@ -113,12 +118,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val phoneVerificationId: StateFlow<String?> = _phoneVerificationId.asStateFlow()
 
     val cloudConnectionState by lazy {
-        combine(workspaceRepository.cloudConnectionState, localSyncStatus) { cloud, local ->
-            if (cloud == com.example.data.firebase.CloudConnectionState.CONNECTED && !local.loaded)
-                com.example.data.firebase.CloudConnectionState.CONNECTING else cloud
+        combine(workspaceRepository.cloudConnectionState, localSyncStatus, cashBalanceAdjustments) { cloud, local, cash ->
+            com.example.data.firebase.CashBalanceAdjustmentPolicy.connection(cloud, local.loaded, cash)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.data.firebase.CloudConnectionState.CONNECTING)
     }
     fun retryCloudListeners() = workspaceRepository.retryCloudListeners()
+
+    val cashBalanceAdjustments get() = workspaceRepository.cashBalanceAdjustments
+
+    fun saveCashBalanceAdjustment(amount: Long, calculated: Long, revision: Long, reason: String, operationId: String, onResult: (String?) -> Unit) {
+        val ws = activeWorkspaceId.value.orEmpty()
+        val actor = currentUid.orEmpty()
+        viewModelScope.launch {
+            val result = runCatching {
+                require(isOnline.value) { "Connect to the internet before adjusting shared cash" }
+                require(workspaceRepository.verifiedWorkspaceContext.value == (actor to ws)) { "Verify workspace access first" }
+                require(cloudConnectionState.value == com.example.data.firebase.CloudConnectionState.CONNECTED) { "Wait for cloud records to finish synchronizing" }
+                workspaceRepository.saveCashBalanceAdjustment(ws, actor, amount, calculated, revision, reason, operationId)
+            }
+            onResult(result.exceptionOrNull()?.message)
+        }
+    }
 
     // Sync State
     private val _isSyncing = MutableStateFlow(false)
@@ -290,7 +310,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun canDeleteCustomer(): Boolean = com.example.data.auth.AuthorizationManager.canDeleteCustomer(isCollaborationOwner.value)
+    fun canDeleteCustomer(): Boolean = com.example.data.auth.AuthorizationManager.canDeleteCustomer(isCollaborationOwner.value, currentUserRole.value)
 
     fun canCollectPayment(): Boolean = com.example.data.auth.AuthorizationManager.canCollectPayment(isCollaborationOwner.value, currentUserRole.value)
 
@@ -655,6 +675,104 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+
+    private val ownerVisitForeground = MutableStateFlow(false)
+    private val ownerVisitPrefs = application.getSharedPreferences("owner_activity_visits", android.content.Context.MODE_PRIVATE)
+    private val _ownerVisit = MutableStateFlow<com.example.data.sync.OwnerVisit?>(null)
+    internal val ownerVisit = _ownerVisit.asStateFlow()
+
+    internal fun setOwnerVisitForeground(foreground: Boolean) {
+        ownerVisitForeground.value = foreground
+    }
+
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun observeOwnerVisits() {
+        val key = combine(activeWorkspaceId, currentUserRole, authState, currentWorkspace) { ws, role, auth, workspace ->
+            val uid = (auth as? AuthState.Authenticated)?.profile?.uid
+            if (uid.isNullOrBlank() || ws.isNullOrBlank() || role != com.example.data.auth.RoleUtils.ROLE_OWNER ||
+                (workspace?.workspaceId == ws && workspace.ownerUid != uid)) null
+            else com.example.data.sync.OwnerVisitKey(ws, uid).takeIf(workspaceRepository::isCurrentOriginalOwner)
+        }
+        val visits = mutableMapOf<com.example.data.sync.OwnerVisitKey, com.example.data.sync.OwnerVisit>()
+        viewModelScope.launch {
+            combine(key, ownerVisitForeground, isEffectiveOnline) { owner, foreground, online ->
+                Triple(owner, foreground, online)
+            }.collectLatest { (owner, foreground, online) ->
+                if (!foreground) visits.clear()
+                if (!foreground || owner == null || !workspaceRepository.isCurrentOriginalOwner(owner)) {
+                    _ownerVisit.value = null
+                    return@collectLatest
+                }
+                val saved = ownerVisitPrefs.getLong(owner.preferenceKey, 0L).takeIf { it > 0L }
+                var visit = visits[owner] ?: com.example.data.sync.OwnerVisit(owner, saved, saved,
+                    com.example.data.sync.OwnerVisitStatus.LOADING)
+                fun show(status: com.example.data.sync.OwnerVisitStatus) {
+                    visit = visit.copy(status = status)
+                    visits[owner] = visit
+                    _ownerVisit.value = visit
+                }
+                if (!online) {
+                    show(com.example.data.sync.OwnerVisitStatus.OFFLINE)
+                    return@collectLatest
+                }
+                show(com.example.data.sync.OwnerVisitStatus.LOADING)
+
+                // Conflate a burst of authoritative listener changes into one serial refresh.
+                workspaceRepository.ownerActivityChanges
+                    .filter { it == owner.workspaceId }
+                    .debounce(1200L)
+                    .onStart { emit(owner.workspaceId) }
+                    .buffer(kotlinx.coroutines.channels.Channel.CONFLATED)
+                    .collect {
+                        fun canRefresh() = ownerVisitForeground.value && isEffectiveOnline.value &&
+                            workspaceRepository.isCurrentOriginalOwner(owner)
+                        if (!canRefresh()) return@collect
+                        try {
+                            val refresh = workspaceRepository.refreshOwnerVisit(owner, visit.since, ::canRefresh)
+                            if (!canRefresh()) return@collect
+                            val since = visit.since
+                            val recent = if (since == null) emptySet() else refresh.activities
+                                .filter { it.availableAt >= since && it.availableAt > 0L }
+                                .mapTo(mutableSetOf()) { it.item.id }
+                            // The readTime marks the beginning of the verified server read.
+                            // Write only after Room commits and only for this online visit.
+                            if (!refresh.complete) {
+                                visit = visit.copy(recentIds = visit.recentIds + recent, diagnostics = refresh.incompleteSources)
+                                android.util.Log.w("TRAC_OWNER_VISIT", "stage=REFRESH category=PARTIAL sources=" +
+                                    refresh.incompleteSources.sorted().joinToString(","))
+                                show(com.example.data.sync.OwnerVisitStatus.PARTIAL)
+                                return@collect
+                            }
+                            val updated = visit.refreshed(refresh.readTime, recent)
+                            val savedCheckpoint = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                if (!canRefresh()) false else ownerVisitPrefs.edit()
+                                    .putLong(owner.preferenceKey, checkNotNull(updated.lastUpdated)).commit()
+                            }
+                            if (!canRefresh()) return@collect
+                            if (!savedCheckpoint) {
+                                show(com.example.data.sync.OwnerVisitStatus.FAILED)
+                            } else {
+                                visit = updated
+                                show(com.example.data.sync.OwnerVisitStatus.READY)
+                            }
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            val diagnostic = com.example.data.firebase.OwnerVisitCloud.safeFailure(error)
+                            android.util.Log.w("TRAC_OWNER_VISIT", "refresh=" + diagnostic)
+                            if (canRefresh()) {
+                                visit = visit.copy(diagnostics = setOf(diagnostic))
+                                show(com.example.data.sync.OwnerVisitStatus.FAILED)
+                            }
+                        }
+                    }
+            }
+        }
+    }
+
+    init {
+        observeOwnerVisits()
+    }
     val unreadNotificationCount: StateFlow<Int> = notifications
         .map { list -> list.count { !it.isRead } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
@@ -668,7 +786,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Cash Collections are the receipt source. Entry amountReceived includes non-cash methods.
-    val availableAmount: StateFlow<Double> = combine(
+    val calculatedAvailableAmount: StateFlow<Double> = combine(
         combine(cashPayments, expenses, withdrawals, activeWorkspaceId, jobs) { payments, expenseRows, withdrawalRows, wsId, jobRows ->
             arrayOf<Any?>(payments, expenseRows, withdrawalRows, wsId, jobRows)
         },
@@ -693,6 +811,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             externalLoanRepayments = loanReps,
             settlementRepayments = setReps
         )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val availableAmount: StateFlow<Double> = combine(calculatedAvailableAmount, cashBalanceAdjustments, activeWorkspaceId) { cash, correction, ws ->
+        if (correction.workspaceId == ws && correction.enabled && !correction.loaded) 0.0 else
+        com.example.ui.util.FinancialCalculationEngine.roundMoney(cash +
+            if (correction.workspaceId == ws && correction.loaded) correction.totalAdjustmentPaise / 100.0 else 0.0)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     val borrowingOverview: StateFlow<com.example.ui.util.WorkspaceBorrowingOverview> = combine(
@@ -806,13 +930,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val balanceSheetSummary: StateFlow<com.example.ui.util.FinancialSummary> = combine(
-        jobs,
-        expenses,
-        withdrawals,
-        cashPayments,
-        balanceSheetScope
-    ) { jList, eList, wList, pList, sc ->
-        com.example.ui.util.FinancialCalculationEngine.calculateSummary(jList, eList, wList, sc, pList)
+        combine(
+            jobs,
+            expenses,
+            withdrawals,
+            cashPayments,
+            balanceSheetScope
+        ) { jList, eList, wList, pList, sc ->
+            val ledgerScope = sc.copy(workspaceId = sc.workspaceId.ifBlank {
+                (jList.map { it.workspaceId } + eList.map { it.workspaceId } + wList.map { it.workspaceId } +
+                    pList.map { it.workspaceId }).filter { it.isNotBlank() }.distinct().singleOrNull().orEmpty()
+            })
+            ledgerScope to com.example.ui.util.FinancialCalculationEngine.calculateSummary(jList, eList, wList, ledgerScope, pList)
+        }, cashBalanceAdjustments
+    ) { (sc, summary), correction ->
+        summary.copy(availableBalance = com.example.ui.util.FinancialCalculationEngine.roundMoney(summary.availableBalance +
+            com.example.ui.util.FinancialCalculationEngine.cashAdjustmentDelta(correction.edits, sc)))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.ui.util.FinancialSummary())
 
     private var draftActorUid: String? = null
@@ -1007,6 +1140,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         linkedExpense: ExpenseEntity? = null,
         linkedExpenses: List<ExpenseEntity> = emptyList(),
         createNewCustomer: Boolean = false,
+        expectedEditBase: JobEntryEntity? = null,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
@@ -1015,19 +1149,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             onError("Account access is suspended or expired by administration")
             return
         }
-        val isEditing = job.updatedAt > 0L
+        val isEditing = expectedEditBase != null
 
         val isHistorical = job.isHistorical
-        if (isHistorical && !com.example.data.auth.AuthorizationManager.canCreateOldEntry(isCollaborationOwner.value, currentUserRole.value)) {
+        if (!isEditing && isHistorical && !com.example.data.auth.AuthorizationManager.canCreateOldEntry(isCollaborationOwner.value, currentUserRole.value)) {
             val isTamil = settings.value.language.equals("TA", ignoreCase = true)
-            onError(if (isTamil) "பழைய பதிவு உருவாக்கம் உரிமையாளருக்கு மட்டுமே அனுமதிக்கப்படுகிறது" else "Old/historical entry creation is restricted to the workspace Owner")
+            onError(if (isTamil) "உரிமையாளரும் பங்குதாரர்களும் மட்டுமே பழைய பதிவை உருவாக்க முடியும்" else "Only the workspace Owner and Partners can create Old Entries")
             return
         }
         if (!isEditing && !isHistorical && !com.example.data.auth.AuthorizationManager.canCreateNewEntry(isCollaborationOwner.value)) {
             onError("New entry creation is restricted by administration")
             return
         }
-        if (!isCollaborationOwner.value) {
+        if (!isEditing && !isCollaborationOwner.value) {
             val myUid = currentUid ?: ""
             if (job.createdByUid.isNotBlank() && job.createdByUid != myUid) {
                 onError("Unauthorized: You can only create entries for yourself")
@@ -1037,7 +1171,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isSavingJob.value = true
         viewModelScope.launch {
             try {
-                workspaceRepository.saveJobEntry(job, linkedExpense, linkedExpenses, createNewCustomer)
+                workspaceRepository.saveJobEntry(job, linkedExpense, linkedExpenses, createNewCustomer, expectedEditBase)
                 clearNewEntryDraft()
                 _syncMessage.value = "Saved on this device; cloud sync pending"
                 _isSavingJob.value = false
@@ -1054,12 +1188,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteJob(job: JobEntryEntity, onResult: (String) -> Unit = {}) {
-        // Pre-check permissions before calling repository (defense in depth)
-        val isOwner = isCollaborationOwner.value
-        val currentActorName = settings.value.activePartnerName.ifBlank { null } ?: settings.value.ownerName.ifBlank { null } ?: "Partner"
-        val actorUid = currentUid ?: currentUserProfile.value?.uid ?: ""
-
-        if (!com.example.data.auth.AuthorizationManager.canDeleteEntry(job, isOwner, currentActorName, actorUid, role = currentUserRole.value)) {
+        // Use the same membership/workspace check as the visible Delete action.
+        if (!canDeleteEntry(job)) {
             _syncMessage.value = "Unauthorized: You cannot delete this entry"
             onResult(_syncMessage.value)
             return
@@ -1095,6 +1225,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun queueExpense(expense: ExpenseEntity, original: ExpenseEntity?, editing: Boolean,
         onQueued: () -> Unit, onError: (String) -> Unit) {
+        if (!FinancialFeatureAvailability.canChangeExpense(expense) || (original != null && !FinancialFeatureAvailability.canChangeExpense(original))) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         // Bind the click to its account/workspace before dispatching asynchronous work.
         val actor = currentUid.orEmpty()
         val workspace = activeWorkspaceId.value.orEmpty()
@@ -1120,6 +1254,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteExpense(expense: ExpenseEntity, onQueued: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        if (!FinancialFeatureAvailability.canChangeExpense(expense)) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         if (!com.example.data.auth.AuthorizationManager.canViewExpenses(isCollaborationOwner.value, role = currentUserRole.value)) {
             _syncMessage.value = "Expense deletion restricted by administration"
             onError("Expense deletion restricted by administration")
@@ -1248,6 +1386,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun loanTransactionsPausedMessage(): String = FinancialFeatureAvailability.comingSoon(
+        settings.value.language.equals("TA", ignoreCase = true)
+    )
+
     fun canManageExternalLoans(): Boolean =
         com.example.data.auth.AuthorizationManager.canManageExternalLoans(isCollaborationOwner.value, currentUserRole.value)
 
@@ -1261,6 +1403,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: (Long) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         if (!canManageExternalLoans()) {
             onError("External loans are restricted to Owner and Partner")
             return
@@ -1288,6 +1434,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: (Long) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         if (!canManageExternalLoans()) {
             onError("External loan repayments are restricted to Owner and Partner")
             return
@@ -1314,6 +1464,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: (Long) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         if (!com.example.data.auth.AuthorizationManager.canViewWithdrawals(isCollaborationOwner.value, role = currentUserRole.value)) {
             onError("Borrowing is restricted for this role")
             return
@@ -1336,6 +1490,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun approveAndReserveBorrowing(requestId: Long, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         viewModelScope.launch {
             try {
                 workspaceRepository.approveAndReserveBorrowing(requestId)
@@ -1350,6 +1508,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun executeApprovedBorrowing(requestId: Long, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         viewModelScope.launch {
             try {
                 workspaceRepository.executeApprovedBorrowing(requestId)
@@ -1400,6 +1562,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: (Long) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+            onError(loanTransactionsPausedMessage())
+            return
+        }
         viewModelScope.launch {
             try {
                 val id = workspaceRepository.recordSettlementRepayment(obligationId, amount, mode, note, paidAt)
@@ -2383,6 +2549,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun logout(onComplete: () -> Unit = {}) {
         viewModelScope.launch {
+            try {
+                com.example.data.firebase.OwnerActivityPush.unregister(getApplication<Application>())
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                Log.w("TRAC_OWNER_PUSH", "Owner activity registration cleanup unavailable")
+            }
             try {
                 authRepository.signOut()
             } catch (e: Exception) {

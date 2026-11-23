@@ -1,5 +1,7 @@
 package com.example.ui.screens.report
 
+import com.example.ui.util.FinancialFeatureAvailability
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -102,6 +104,10 @@ fun ReportScreen(
     totalExpenses: Double,
     netBalance: Double,
     availableAmount: Double,
+    displayedBalance: Double? = null,
+    cashAdjustments: List<com.example.data.firebase.CashBalanceEdit> = emptyList(),
+    cashBalanceVerifying: Boolean = false,
+    balanceDisplayControls: @Composable () -> Unit = {},
     totalWithdrawn: Double,
     onAddExpense: (ExpenseEntity) -> Unit,
     onUpdateExpense: (ExpenseEntity) -> Unit,
@@ -151,9 +157,12 @@ fun ReportScreen(
     onCancelBorrowing: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
     onRecordSettlementRepayment: ((Long, Double, String, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
     onConfirmSettlementRepayment: ((Long, () -> Unit, (String) -> Unit) -> Unit)? = null,
-    onRejectSettlementRepayment: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null
+    onRejectSettlementRepayment: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
+    pendingActions: List<com.example.data.entity.PendingOperationEntity> = emptyList()
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
+    val hasLoanHistory = externalLoans.isNotEmpty() || externalLoanRepayments.isNotEmpty()
+    val hasSettlementHistory = borrowingRequests.isNotEmpty() || settlementObligations.isNotEmpty() || settlementRepayments.isNotEmpty()
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -172,16 +181,15 @@ fun ReportScreen(
                     totalWithdrawn = totalWithdrawn,
                     totalPendingDue = synchronizedCustomers.filter { it.balanceDue > 0 }.sumOf { it.balanceDue },
                     pendingCustomersCount = synchronizedCustomers.count { it.balanceDue > 0 },
-                    activeLoansCount = externalLoans.count { it.status != "SETTLED" },
-                    openSettlementsCount = settlementObligations.count { it.status != "SETTLED" } +
-                        borrowingRequests.count { it.status in setOf("PENDING_APPROVAL", "APPROVED_RESERVED") } +
-                        settlementRepayments.count { it.status == "PENDING_CONFIRMATION" },
+                    hasLoanHistory = hasLoanHistory,
+                    hasSettlementHistory = hasSettlementHistory,
                     payments = payments,
                     jobs = jobs,
                     workspaceMembers = workspaceMembers,
                     currentUid = currentUid,
                     isOwner = isOwner,
-                    initiateOldDatePick = currentSubPage == ReportSubPage.OLD_ENTRY && isOwner && com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner),
+                    currentRole = currentRole,
+                    initiateOldDatePick = currentSubPage == ReportSubPage.OLD_ENTRY && com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner, currentRole),
                     onStartOldEntry = onStartOldEntry,
                     onNavigate = onSubPageSelected
                 )
@@ -221,11 +229,16 @@ fun ReportScreen(
                     totalExpenses = totalExpenses,
                     netBalance = netBalance,
                     initialScope = initialScope,
-                    onUpdateFinancialScope = onUpdateFinancialScope
+                    onUpdateFinancialScope = onUpdateFinancialScope,
+                    pendingActions = pendingActions
                 )
             }
             ReportSubPage.BUSINESS_OVERVIEW -> {
                 BusinessOverviewScreen(
+                    displayedBalance = displayedBalance,
+                    cashAdjustments = cashAdjustments,
+                    cashBalanceVerifying = cashBalanceVerifying,
+                    balanceDisplayControls = balanceDisplayControls,
                     settings = settings,
                     jobs = jobs,
                     expenses = expenses,
@@ -276,11 +289,15 @@ fun ReportScreen(
                     onRejectBorrowing = onRejectBorrowing,
                     onExecuteBorrowing = onExecuteBorrowing,
                     onCancelBorrowing = onCancelBorrowing,
-                    onOpenSettlements = { onSubPageSelected(ReportSubPage.SETTLEMENTS) }
+                    onOpenSettlements = if (hasSettlementHistory || FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+                        { onSubPageSelected(ReportSubPage.SETTLEMENTS) }
+                    } else null
                 )
             }
             ReportSubPage.CUSTOMER_CREDIT_DUE -> {
                 CustomerCreditDueTab(
+                    payments = payments,
+                    retainedOperations = pendingActions,
                     settings = settings,
                     customers = customers,
                     jobs = jobs,
@@ -361,13 +378,14 @@ fun ReportMenuDashboard(
     totalWithdrawn: Double,
     totalPendingDue: Double,
     pendingCustomersCount: Int,
-    activeLoansCount: Int = 0,
-    openSettlementsCount: Int = 0,
+    hasLoanHistory: Boolean = false,
+    hasSettlementHistory: Boolean = false,
     payments: List<com.example.data.entity.PaymentEntity> = emptyList(),
     jobs: List<com.example.data.entity.JobEntryEntity> = emptyList(),
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     currentUid: String = "",
     isOwner: Boolean = false,
+    currentRole: String = "",
     initiateOldDatePick: Boolean = false,
     onStartOldEntry: ((Long) -> Unit)? = null,
     onNavigate: (ReportSubPage) -> Unit
@@ -638,15 +656,15 @@ fun ReportMenuDashboard(
                             onClick = { onNavigate(ReportSubPage.COLLECTION_HISTORY) }
                         )
 
-                        val canShowOldEntry = isOwner && com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner)
+                        val canShowOldEntry = com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner, currentRole)
                         if (canShowOldEntry) {
                             ReportTileCard(
-                                title = if (isTamil) "பழைய பதிவு" else "Old History",
+                                title = if (isTamil) "பழைய பதிவு" else "Old Entry",
                                 subtitle = if (isTamil) "முந்தைய பதிவுகள்" else "Previous entries & records",
                                 icon = Icons.Default.Description,
                                 iconBgColor = Color(0xFFEDE9FE),
                                 iconTint = Color(0xFF7C3AED),
-                                badgeText = if (isTamil) "உரிமையாளர் மட்டும்" else "Owner Only",
+                                badgeText = if (isTamil) "உரிமையாளர் / பங்குதாரர்" else "Owner / Partner",
                                 badgeBgColor = Color(0xFFF5F3FF),
                                 badgeTextColor = Color(0xFF6D28D9),
                                 cornerAuraColor = Color(0xFF8B5CF6).copy(alpha = 0.09f),
@@ -662,42 +680,66 @@ fun ReportMenuDashboard(
                     }
                 }
 
-                // Row 4: External Loans & Partner Settlements
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(11.dp)
                     ) {
-                        ReportTileCard(
-                            title = if (isTamil) "வெளிப்புற கடன்கள்" else "External Loans",
-                            subtitle = if (isTamil) "அசல் & வட்டி கணக்கு" else "Principal & interest tracking",
+                        FinancePreviewCard(
+                            title = if (isTamil) "வெளிப்புறக் கடன்கள்" else "External Loans",
                             icon = Icons.Default.AccountBalance,
-                            iconBgColor = Color(0xFFE0E7FF),
-                            iconTint = Color(0xFF4338CA),
-                            badgeText = if (isTamil) "$activeLoansCount நிலுவை" else "$activeLoansCount active",
-                            badgeBgColor = Color(0xFFEEF2FF),
-                            badgeTextColor = Color(0xFF3730A3),
-                            cornerAuraColor = Color(0xFF6366F1).copy(alpha = 0.09f),
+                            isTamil = isTamil,
+                            hasHistory = hasLoanHistory,
                             testTag = "report_menu_card_external_loans",
                             modifier = Modifier.weight(1f),
-                            onClick = { onNavigate(ReportSubPage.EXTERNAL_LOANS) }
+                            onOpen = { onNavigate(ReportSubPage.EXTERNAL_LOANS) }
                         )
-
-                        ReportTileCard(
-                            title = if (isTamil) "கடன் & தீர்வுகள்" else "Partner Settlements",
-                            subtitle = if (isTamil) "ஒப்புதல் & திருப்பிச் செலுத்தல்" else "Borrowing & repayments",
+                        FinancePreviewCard(
+                            title = if (isTamil) "பங்குதாரர் கடன் தீர்வுகள்" else "Partner Settlements",
                             icon = Icons.Default.Handshake,
-                            iconBgColor = Color(0xFFFEF3C7),
-                            iconTint = Color(0xFFB45309),
-                            badgeText = if (isTamil) "$openSettlementsCount திறந்தவை" else "$openSettlementsCount open",
-                            badgeBgColor = Color(0xFFFFFBEB),
-                            badgeTextColor = Color(0xFF92400E),
-                            cornerAuraColor = Color(0xFFF59E0B).copy(alpha = 0.09f),
+                            isTamil = isTamil,
+                            hasHistory = hasSettlementHistory,
                             testTag = "report_menu_card_settlements",
                             modifier = Modifier.weight(1f),
-                            onClick = { onNavigate(ReportSubPage.SETTLEMENTS) }
+                            onOpen = { onNavigate(ReportSubPage.SETTLEMENTS) }
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FinancePreviewCard(
+    title: String,
+    icon: ImageVector,
+    isTamil: Boolean,
+    hasHistory: Boolean,
+    testTag: String,
+    modifier: Modifier = Modifier,
+    onOpen: () -> Unit
+) {
+    Card(
+        modifier = modifier.testTag(testTag),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = AppTheme.colors.cardBg),
+        border = BorderStroke(1.dp, AppTheme.colors.cardBorder)
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Icon(icon, contentDescription = null, tint = AppTheme.colors.textMuted, modifier = Modifier.size(20.dp))
+            Text(title, color = AppTheme.colors.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            if (!FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+                Text(FinancialFeatureAvailability.comingSoon(isTamil), color = AppTheme.colors.textMuted, fontSize = 12.sp)
+            }
+            if (hasHistory || FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+                TextButton(onClick = onOpen) {
+                    Text(
+                        if (FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+                            if (isTamil) "திறக்கவும்" else "Open"
+                        } else if (isTamil) "ஏற்கனவே உள்ள பதிவுகள்" else "Existing records",
+                        fontSize = 12.sp
+                    )
                 }
             }
         }

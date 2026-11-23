@@ -11,9 +11,10 @@ allprojects {
    if (!known.contains(suite)) throw new GradleException("Unknown ciSuite: " + suite)
    fileTree(project.file("src/test/java")).matching { include "**/*Test.kt" }.each { f ->
     def body = f.getText("UTF-8")
-    def partition = body.contains("createComposeRule") ? "compose" :
+    def partition = f.name.endsWith("EmulatorTest.kt") ? "outbox" :
+      (body.contains("createComposeRule") ? "compose" :
       (body.contains("Room.") || body.contains("SupportSQLite") ? "database" :
-      (f.name ==~ /.*(Command|Offline|Acknowledgement|Deletion|Operation|Sync|Dependencies|Routing|Recovery|Protocol).*Test.kt/ ? "outbox" : "unit"))
+      (f.name ==~ /.*(Command|Offline|Acknowledgement|Deletion|Operation|Sync|Dependencies|Routing|Recovery|Protocol).*Test.kt/ ? "outbox" : "unit")))
     def packageMatch = body =~ /(?m)^\s*package\s+([A-Za-z_][\w.]*)/
     if (!packageMatch.find()) throw new GradleException("Test source has no package: " + f)
     if (suite == partition) names.add(packageMatch.group(1) + "." + f.name.replace(".kt",""))

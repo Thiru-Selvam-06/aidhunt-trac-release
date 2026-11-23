@@ -74,6 +74,7 @@ class FirebaseLedgerDeletionTest {
         var rollbacks = 0
         var conflictOnce = false
         var sessionValid = true
+        var deniedRead: String? = null
         private fun typed(value: Any?): JSONObject = when(value) {
             null -> JSONObject().put("nullValue", JSONObject.NULL)
             is String -> JSONObject().put("stringValue", value)
@@ -98,6 +99,7 @@ class FirebaseLedgerDeletionTest {
                 val names = body.getJSONArray("documents")
                 for (i in 0 until names.length()) {
                     val name = names.getString(i)
+                    if (name == deniedRead) throw FirebaseLedgerDeletion.DeletionPermissionDenied("Denied fixture read")
                     put(records[name]?.let { JSONObject().put("found", it) } ?: JSONObject().put("missing", name))
                 }
             }.toString()
@@ -123,6 +125,22 @@ class FirebaseLedgerDeletionTest {
         (0 until rows.length()).mapNotNull { rows.getJSONObject(it).optString("delete").takeIf(String::isNotEmpty) }.toSet()
     }
 
+    @Test fun stagedSharedDeletionPreservesAuditAndPaidSourceStillBlocks() = runBlocking {
+        for (historical in listOf(false, true)) {
+            val source = job().copy(createdByUid = "other", createdAt = now - 365 * 86_400_000L, isHistorical = historical, amountReceived = 0.0, pendingAmount = 100.0)
+            val transport = fixture(source, "PARTNER")
+            transport.put(transport.name("entries", source.id), source.toFirestoreMap() + mapOf("authorizationTimeStatus" to "CLIENT_ORIGINAL_V2"))
+            FirebaseLedgerDeletion(transport, sharedPartnerDeletion = true).execute(operation(source))
+            assertEquals(setOf(transport.name("entries", id)), deleted(transport))
+            assertTrue(transport.commits.single().toString().contains("explicit-delete"))
+            val paid = source.copy(amountReceived = 40.0, pendingAmount = 60.0)
+            val blocked = fixture(paid, "PARTNER")
+            blocked.put(blocked.name("entries", paid.id), paid.toFirestoreMap() + mapOf("authorizationTimeStatus" to "CLIENT_ORIGINAL_V2"))
+            assertTrue(runCatching { FirebaseLedgerDeletion(blocked, sharedPartnerDeletion = true).execute(operation(paid)) }.isFailure)
+            assertTrue(blocked.commits.isEmpty())
+        }
+    }
+
     @Test fun explicitLegacyOwnerDeletionRemovesTheSourceAndUnusedCustomerInOneCommit() = runBlocking {
         val transport = fixture()
         FirebaseLedgerDeletion(transport).execute(operation())
@@ -135,6 +153,27 @@ class FirebaseLedgerDeletionTest {
         assertTrue(proofNames.contains(transport.name("entryDeletionProofs", id)))
         assertTrue(proofNames.contains(transport.name("customerDeletionProofs", customerId)))
         assertEquals(1, transport.begins)
+    }
+
+    @Test fun deniedOptionalCashProbeDoesNotBlockAnOtherwiseAuthorizedLegacyDelete() = runBlocking {
+        val transport = fixture().apply { deniedRead = name("financialState", "current") }
+        FirebaseLedgerDeletion(transport).execute(operation())
+        assertEquals(setOf(transport.name("entries", id), transport.name("customers", customerId)), deleted(transport))
+        assertFalse(transport.commits.single().toString().contains("/cashOperations/"))
+    }
+
+    @Test fun deniedCashProbeCannotDisableAnExplicitWorkspaceCapability() = runBlocking {
+        val transport = fixture().apply {
+            deniedRead = name("financialState", "current")
+            put("$documentRoot/workspaces/ws_test", mapOf("ownerUid" to "owner",
+                "syncCapabilities" to mapOf("atomicCashControlV1" to true)))
+        }
+        try {
+            FirebaseLedgerDeletion(transport).execute(operation())
+            fail("Atomic cash capability cannot fall back to legacy writes")
+        } catch (_: FirebaseLedgerDeletion.DeletionPermissionDenied) {
+            assertTrue(transport.commits.isEmpty())
+        }
     }
 
     @Test fun currentEntryDeletesItsCollectionAndExpenseTogether() = runBlocking {

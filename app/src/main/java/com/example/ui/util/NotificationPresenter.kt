@@ -23,6 +23,10 @@ object NotificationPresenter {
         currency: String = "₹"
     ): PresentedNotification {
         val actor = notification.actorName.ifBlank { if (isTamil) "பங்குதாரர்" else "Partner" }
+
+        if (notification.targetAudience == com.example.data.sync.OwnerVisitActivity.AUDIENCE) {
+            return presentOwnerVisit(notification, actor, isTamil)
+        }
         val target = notification.counterpartyName.ifBlank { if (isTamil) "வணிகம்" else "Business" }
         val amt = formatInr(notification.amount, currency)
         val meta = runCatching { JSONObject(notification.metadataJson) }.getOrElse { JSONObject() }
@@ -212,5 +216,47 @@ object NotificationPresenter {
             categoryLabel = categoryLabel,
             timestampLabel = JobAuditPresentation.instant(notification.createdAt, isTamil)
         )
+    }
+
+
+    private fun presentOwnerVisit(notification: AppNotificationEntity, actor: String, tamil: Boolean): PresentedNotification {
+        if (notification.eventType == AppNotificationEntity.EVENT_CASH_BALANCE_ADJUSTED) {
+            val metadata = runCatching { JSONObject(notification.metadataJson) }.getOrElse { JSONObject() }
+            val amounts = if (metadata.has("beforePaise") && metadata.has("afterPaise"))
+                formatInr(metadata.optLong("beforePaise") / 100.0) + " → " + formatInr(metadata.optLong("afterPaise") / 100.0)
+            else formatInr(notification.amount)
+            val reason = metadata.optString("reason").takeIf { it.isNotBlank() }
+            return PresentedNotification(
+                if (tamil) "$actor கிடைக்கும் ரொக்க இருப்பைத் திருத்தினார்" else "$actor adjusted available cash",
+                amounts + (reason?.let { "\n" + (if (tamil) "காரணம்: " else "Reason: ") + it } ?: ""),
+                if (tamil) "ரொக்க இருப்புத் திருத்தம்" else "Cash adjustment",
+                JobAuditPresentation.instant(notification.createdAt, tamil)
+            )
+        }
+        val action = when (notification.eventType) {
+            AppNotificationEntity.EVENT_JOB_CREATED -> "added a new job" to "புதிய வேலைப் பதிவைச் சேர்த்தார்"
+            com.example.data.sync.OwnerVisitActivity.OLD_ENTRY -> "added an old entry" to "பழைய வேலைப் பதிவைச் சேர்த்தார்"
+            AppNotificationEntity.EVENT_JOB_EDITED -> "edited a job" to "வேலைப் பதிவைத் திருத்தினார்"
+            AppNotificationEntity.EVENT_JOB_DELETED -> "deleted a job" to "வேலைப் பதிவை நீக்கினார்"
+            AppNotificationEntity.EVENT_PAYMENT_RECEIVED -> "collected a payment" to "பணத்தை வசூலித்தார்"
+            AppNotificationEntity.EVENT_PAYMENT_REVERSED -> "reversed a payment" to "வசூல் பதிவைத் திரும்பப் பெற்றார்"
+            AppNotificationEntity.EVENT_EXPENSE_ADDED -> "added an expense" to "செலவைச் சேர்த்தார்"
+            AppNotificationEntity.EVENT_EXPENSE_EDITED -> "edited an expense" to "செலவைத் திருத்தினார்"
+            AppNotificationEntity.EVENT_EXPENSE_DELETED -> "deleted an expense" to "செலவை நீக்கினார்"
+            AppNotificationEntity.EVENT_WITHDRAWAL_RECORDED -> "recorded a withdrawal" to "பணம் எடுத்ததைப் பதிவு செய்தார்"
+            else -> "updated the workspace" to "வணிகப் பதிவைப் புதுப்பித்தார்"
+        }
+        val reference = notification.counterpartyName.ifBlank {
+            val record = when (notification.entityType) {
+                "JOB" -> if (tamil) "வேலை" else "Job"
+                "PAYMENT" -> if (tamil) "வசூல்" else "Payment"
+                "EXPENSE" -> if (tamil) "செலவு" else "Expense"
+                else -> if (tamil) "பணம் எடுத்த பதிவு" else "Withdrawal"
+            }
+            "$record #" + notification.entityId
+        }
+        return PresentedNotification("$actor " + if (tamil) action.second else action.first,
+            reference, if (tamil) "பங்குதாரர்" else "Partner",
+            JobAuditPresentation.instant(notification.createdAt, tamil))
     }
 }

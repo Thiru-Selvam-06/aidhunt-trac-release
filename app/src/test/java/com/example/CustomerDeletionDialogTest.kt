@@ -17,7 +17,7 @@ import org.robolectric.annotation.Config
 class CustomerDeletionDialogTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun show(owner: Boolean) {
+    private fun show(owner: Boolean, verifiedPartner: Boolean = false, retainedRecords: Boolean = false) {
         compose.setContent {
             MyApplicationTheme {
                 CustomerDetailSheet(
@@ -25,7 +25,10 @@ class CustomerDeletionDialogTest {
                     jobs = emptyList(),
                     settings = AppSettingsEntity(workspaceId = "stage"),
                     onDismiss = {}, onAddPayment = {}, onCall = {}, onWhatsApp = {}, onSharePdf = {},
-                    onDeleteCustomer = {}, isOwner = owner, actorUid = if (owner) "owner" else "partner"
+                    onDeleteCustomer = {}, isOwner = owner, actorUid = if (owner) "owner" else "partner",
+                    hasRetainedRecords = retainedRecords,
+                    workspaceMembers = if (verifiedPartner) listOf(com.example.data.firebase.WorkspaceMember(
+                        uid="partner",workspaceId="stage",role="PARTNER",status="ACTIVE")) else emptyList()
                 )
             }
         }
@@ -38,8 +41,16 @@ class CustomerDeletionDialogTest {
         compose.onNodeWithText("Cancel").performClick()
     }
 
-    @Test fun partnerCannotSeeCustomerDeletionAction() {
+    @Test fun unverifiedPartnerCannotSeeCustomerDeletionAction() {
         show(false)
+        compose.onNodeWithTag("btn_delete_customer").assertDoesNotExist()
+    }
+    @Test fun activePartnerCanSeeUnusedCustomerDeletionAction() {
+        show(false, verifiedPartner=true)
+        compose.onNodeWithTag("btn_delete_customer").performScrollTo().assertExists()
+    }
+    @Test fun activePartnerCannotSeeDeletionForAReferencedCustomer() {
+        show(false, verifiedPartner=true, retainedRecords=true)
         compose.onNodeWithTag("btn_delete_customer").assertDoesNotExist()
     }
 }

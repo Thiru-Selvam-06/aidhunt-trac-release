@@ -1,6 +1,7 @@
 package com.example
 
 import android.os.Bundle
+import android.content.Intent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -25,6 +26,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
+import com.example.data.firebase.OwnerActivityDestination
+import com.example.data.firebase.OwnerActivityItem
+import com.example.data.firebase.OwnerActivityPush
 import com.example.ui.components.AppBottomNav
 import com.example.ui.components.AppTopHeader
 import com.example.ui.components.StartupSplashScreen
@@ -43,24 +47,52 @@ import com.example.ui.viewmodel.ReportSubPage
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
+    private var openOwnerActivity by mutableStateOf<OwnerActivityDestination?>(null)
+    private var ownerActivityResume by mutableStateOf(0)
+
+    override fun onStart() {
+        super.onStart()
+        viewModel.setOwnerVisitForeground(true)
+    }
+
+    override fun onStop() {
+        if (!isChangingConfigurations) viewModel.setOwnerVisitForeground(false)
+        super.onStop()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        ownerActivityResume++
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        openOwnerActivity = OwnerActivityPush.destination(intent)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
-                MainAppContent(viewModel = viewModel, onShowToast = { msg ->
+                MainAppContent(viewModel = viewModel, openOwnerActivity = openOwnerActivity,
+                    ownerActivityResume = ownerActivityResume,
+                    onOwnerActivityOpened = { openOwnerActivity = null }, onShowToast = { msg ->
                     Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
                 })
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        OwnerActivityPush.destination(intent)?.let { openOwnerActivity = it }
+    }
 }
 
 @Composable
-fun MainAppContent(
+internal fun MainAppContent(
     viewModel: MainViewModel,
-    onShowToast: (String) -> Unit
+    onShowToast: (String) -> Unit,
+    openOwnerActivity: OwnerActivityDestination? = null,
+    ownerActivityResume: Int = 0,
+    onOwnerActivityOpened: () -> Unit = {}
 ) {
     val settings by viewModel.settings.collectAsState()
     val partners by viewModel.partners.collectAsState()
@@ -120,6 +152,18 @@ fun MainAppContent(
     val authenticatedUserName by viewModel.authenticatedUserName.collectAsState()
     val authenticatedUserRole by viewModel.authenticatedUserRole.collectAsState()
     val currentUserRole by viewModel.currentUserRole.collectAsState()
+    val calculatedAvailableAmount by viewModel.calculatedAvailableAmount.collectAsState()
+    val displayStateRaw by viewModel.cashBalanceAdjustments.collectAsState()
+    val displayState = displayStateRaw.takeIf { it.workspaceId == activeWorkspaceId && com.example.data.firebase.BalanceDisplayPolicy.canEdit(currentUserRole) }
+        ?: com.example.data.firebase.CashBalanceState()
+    val displayActor = viewModel.currentUid.orEmpty()
+    var showBalanceDisplayEditor by remember(activeWorkspaceId, displayActor) { mutableStateOf(false) }
+    val mayEditBalanceDisplay = com.example.data.firebase.BalanceDisplayPolicy.canEdit(currentUserRole)
+    val displayControls: @Composable () -> Unit = {
+        if (mayEditBalanceDisplay) androidx.compose.material3.TextButton(onClick = { showBalanceDisplayEditor = true }) {
+            androidx.compose.material3.Text(if (settings.language.equals("TA", true)) "இருப்புத் திருத்தம் / வரலாறு" else "Adjust cash / history")
+        }
+    }
     val profitShareAllocations by viewModel.profitShareAllocations.collectAsState()
     val profitShareAllocationDetails by viewModel.profitShareAllocationDetails.collectAsState()
     val externalLoans by viewModel.externalLoans.collectAsState()
@@ -129,8 +173,29 @@ fun MainAppContent(
     val settlementRepayments by viewModel.settlementRepayments.collectAsState()
     val borrowingOverview by viewModel.borrowingOverview.collectAsState()
     val notifications by viewModel.notifications.collectAsState()
+    val ownerVisit by viewModel.ownerVisit.collectAsState()
     val unreadNotificationCount by viewModel.unreadNotificationCount.collectAsState()
     var showNotificationsSheet by remember { mutableStateOf(false) }
+    val pushContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val pushUid = viewModel.currentUid.orEmpty()
+    var openedActivity by remember(pushUid, activeWorkspaceId, isCollaborationOwner) {
+        mutableStateOf<OwnerActivityItem?>(null)
+    }
+    var permissionResult by remember { mutableStateOf(false) }
+    val notificationPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { permissionResult = it }
+    androidx.compose.runtime.LaunchedEffect(activeWorkspaceId, isCollaborationOwner, pushUid, settings.language,
+        isOnline, ownerActivityResume, permissionResult) {
+        val workspace = activeWorkspaceId ?: return@LaunchedEffect
+        if (isOnline && isCollaborationOwner && pushUid.isNotBlank()) {
+            if (OwnerActivityPush.shouldRequestPermission(pushContext, pushUid)) {
+                OwnerActivityPush.markPermissionAsked(pushContext, pushUid)
+                notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+            OwnerActivityPush.scheduleRegister(pushContext, workspace, pushUid, settings.language)
+        }
+    }
     val coroutineScope = rememberCoroutineScope()
 
     // Handle Hardware Back Button
@@ -285,6 +350,54 @@ fun MainAppContent(
 
     val isStartupAuthResolved by viewModel.isStartupAuthResolved.collectAsState()
     val workspaceInitState by viewModel.workspaceInitState.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(openOwnerActivity, pushUid, activeWorkspaceId, workspaceInitState,
+        isCollaborationOwner) {
+        val target = openOwnerActivity ?: return@LaunchedEffect
+        if (pushUid.isBlank() || activeWorkspaceId.isNullOrBlank()) return@LaunchedEffect
+        if (target.uid != pushUid || !OwnerActivityPush.wasRegistered(pushContext, target.workspaceId, pushUid)) {
+            onOwnerActivityOpened()
+            return@LaunchedEffect
+        }
+        val item = try {
+            OwnerActivityPush.fetch(pushContext, target)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        }
+        if (item == null) {
+            onOwnerActivityOpened()
+            onShowToast(if (settings.language.equals("TA", true)) "இந்தச் செயல்பாடு இப்போது கிடைக்கவில்லை."
+                else "This activity is currently unavailable.")
+            return@LaunchedEffect
+        }
+        if (target.workspaceId != activeWorkspaceId) {
+            viewModel.switchWorkspace(target.workspaceId, onSuccess = {}, onError = {
+                onOwnerActivityOpened()
+                onShowToast(it)
+            })
+        } else {
+            if (target.matches(pushUid, activeWorkspaceId, isCollaborationOwner)) openedActivity = item
+            onOwnerActivityOpened()
+        }
+    }
+    openedActivity?.let { item ->
+        val tamil = settings.language.equals("TA", true)
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { openedActivity = null },
+            title = { androidx.compose.material3.Text(if (tamil) "வணிகச் செயல்பாடு" else "Business activity") },
+            text = { androidx.compose.material3.Text(item.label(tamil).orEmpty()) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { openedActivity = null }) {
+                    androidx.compose.material3.Text(if (tamil) "மூடு" else "Close")
+                }
+            }
+        )
+    }
+    if (showBalanceDisplayEditor && mayEditBalanceDisplay && authState is com.example.data.firebase.AuthState.Authenticated) {
+        com.example.ui.components.CashBalanceEditor(displayState, calculatedAvailableAmount, isTamil, isOnline, mayEditBalanceDisplay,
+            onDismiss = { showBalanceDisplayEditor = false }, onSave = viewModel::saveCashBalanceAdjustment)
+    }
     var pendingGoogleProfile by remember { mutableStateOf<com.example.data.firebase.UserProfile?>(null) }
 
     // HARD AUTH BOUNDARY:
@@ -448,7 +561,9 @@ fun MainAppContent(
         com.example.ui.screens.auth.WorkspaceRecoveryScreen(
             message = (workspaceInitState as? com.example.data.repository.WorkspaceInitState.Error)?.exception?.message ?: "Choose the workspace and role you want to use.",
             workspaces = (workspaceInitState as? com.example.data.repository.WorkspaceInitState.SelectionRequired)?.workspaces ?: choices,
-            canCreate = !com.example.BuildConfig.PHYSICAL_TEST,
+            canCreate = !com.example.BuildConfig.PHYSICAL_TEST && !com.example.BuildConfig.OWNER_VISIT_PILOT &&
+                (workspaceInitState as? com.example.data.repository.WorkspaceInitState.Error)?.exception
+                    is com.example.data.repository.NoActiveWorkspaceException,
             onRetry = { viewModel.retryWorkspaceDiscovery() },
             onSwitch = { ws -> viewModel.switchWorkspace(ws, onError = onShowToast) },
             onCreate = { name, business -> viewModel.createAccountForPhoneUser(name, business, onError = onShowToast) },
@@ -583,6 +698,8 @@ fun MainAppContent(
                                     totalCustomerDue = homeSummary.due,
                                     totalExpenses = totalExpenses,
                                     availableBalance = availableAmount,
+                                    cashBalanceVerifying = displayState.enabled && !displayState.loaded,
+                                    balanceDisplayControls = displayControls,
                                     recentJobs = todayJobs.take(20),
                                     recordedJobCount = homeSummary.count,
                                     recordedCustomerCount = homeSummary.customerCount,
@@ -592,6 +709,10 @@ fun MainAppContent(
                                     unsyncedCount = totalUnsyncedCount,
                                     syncMessage = syncMessage,
                                     retainedOperationWarning = retainedOperationWarning,
+                                    onOpenSyncDetails = {
+                                        viewModel.setBottomTab(BottomTab.ACCOUNT)
+                                        viewModel.setAccountSubPage(AccountSubPage.SQLITE_SYNC_STATUS)
+                                    },
                                     retainedActions = retainedHomeActions,
                                     isOwner = isCollaborationOwner,
                                     currentUid = viewModel.currentUid ?: "",
@@ -633,6 +754,10 @@ fun MainAppContent(
 
                             BottomTab.REPORT -> {
                                 ReportScreen(
+                                    cashAdjustments = displayState.edits,
+                                    cashBalanceVerifying = displayState.enabled && !displayState.loaded,
+                                    balanceDisplayControls = displayControls,
+                                    pendingActions = retainedHomeActions,
                                     customExpenseCategories = expenseCategories.map { it.name },
                                     onAddExpenseCategory = if (syncCapabilities.expenseCategoriesV1) viewModel::addExpenseCategory else null,
                                     currentSubPage = currentReportSubPage,
@@ -1045,6 +1170,7 @@ fun MainAppContent(
                                             linkedExpense = linkedExpense,
                                             linkedExpenses = linkedExpenses,
                                             createNewCustomer = draft.createNewCustomer,
+                                            expectedEditBase = draft.originalJob,
                                             onSuccess = {
                                                 android.util.Log.d("TRAC_ENTRY", "SAVE_SUCCESS entryId=${job.id} -> NAVIGATE_HOME")
                                                 onShowToast(if (isTamil) "வேலைப் பதிவு வெற்றிகரமாகச் சேமிக்கப்பட்டது!" else "Job Entry saved successfully!")
@@ -1241,7 +1367,8 @@ fun MainAppContent(
             }
             if (showNotificationsSheet) {
                 com.example.ui.components.NotificationPanelSheet(
-                    notifications = notifications,
+                    notifications = notifications.filter { it.workspaceId == activeWorkspaceId },
+                    visit = ownerVisit?.takeIf { it.key.workspaceId == activeWorkspaceId && it.key.ownerUid == viewModel.currentUid },
                     isOwner = isCollaborationOwner,
                     isTamil = isTamil,
                     currency = settings.currency,

@@ -104,8 +104,8 @@ class EntryMutationAuthorizationTest {
     }
 
     @Test
-    fun testOperatorCanDeleteOwnOrdinaryEntryBefore24Hours() {
-        assertTrue(canDelete(job(creatorRole = RoleUtils.ROLE_OPERATOR), "partner-uid", RoleUtils.ROLE_OPERATOR, createdAt + 1L))
+    fun testOperatorCannotQueueDeletionWhichTheGuardedBackendAlreadyDenies() {
+        assertFalse(canDelete(job(creatorRole = RoleUtils.ROLE_OPERATOR), "partner-uid", RoleUtils.ROLE_OPERATOR, createdAt + 1L))
     }
 
     @Test

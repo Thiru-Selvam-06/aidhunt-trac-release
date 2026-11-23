@@ -14,27 +14,28 @@ android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
+  val ownerActivityLiveTest = providers.gradleProperty("ownerActivityLiveTest").orNull == "true"
+  val ownerVisitPilot = providers.gradleProperty("ownerVisitPilot").orNull == "true"
+  check(!ownerVisitPilot || !ownerActivityLiveTest) { "The Owner visit pilot requires native push to be disabled." }
   defaultConfig {
     applicationId = "com.aistudio.aidhunttrac.cedlir"
     minSdk = 24
     targetSdk = 36
-    versionCode = 12
-    versionName = "1.0.11"
+    versionCode = 19
+    versionName = "1.0.18"
 
+    buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", "false")
     buildConfigField("boolean", "DEVICE_TEST", "false")
     buildConfigField("boolean", "LIVE_TEST", "false")
+    buildConfigField("boolean", "OWNER_VISIT_PILOT", "false")
+    // Isolated variants retain the gate; the approved product release enables it below.
+    buildConfigField("boolean", "SHARED_PARTNER_JOB_DELETION", "false")
     buildConfigField("boolean", "PHYSICAL_TEST", "false")
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   // Release credentials stay outside source; debug/test variants use Android's debug key.
   signingConfigs {
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
-    }
     create("release") {
       val credentialsFile = rootProject.file(
         providers.gradleProperty("releaseSigningProperties").orElse("keystore.properties").get()
@@ -68,13 +69,14 @@ android {
 
   buildTypes {
     release {
+      // Requires the approved, verified Phase 5.3 Firebase Rules rollout.
+      buildConfigField("boolean", "SHARED_PARTNER_JOB_DELETION", "true")
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
-      signingConfig = signingConfigs.getByName("debugConfig")
       enableUnitTestCoverage = providers.gradleProperty("ciCoverage").orNull == "true"
     }
     create("deviceTest") {
@@ -90,6 +92,8 @@ android {
       versionNameSuffix = "-live-test"
       matchingFallbacks += listOf("debug")
       buildConfigField("boolean", "LIVE_TEST", "true")
+      buildConfigField("boolean", "OWNER_VISIT_PILOT", ownerVisitPilot.toString())
+      buildConfigField("boolean", "OWNER_ACTIVITY_PUSH", ownerActivityLiveTest.toString())
     }
     create("physicalTest") {
       initWith(getByName("debug"))
@@ -138,6 +142,7 @@ googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.W
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
+  implementation("com.google.firebase:firebase-messaging")
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   // implementation(libs.androidx.camera.camera2)

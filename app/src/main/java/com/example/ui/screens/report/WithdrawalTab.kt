@@ -1,5 +1,12 @@
 package com.example.ui.screens.report
 
+import com.example.ui.components.ReportDateFilterControl
+import com.example.ui.util.ReportDateFilter
+import com.example.ui.util.ReportPeriod
+import com.example.ui.util.reportDate
+import com.example.ui.util.reportDateMatches
+import com.example.ui.util.FinancialFeatureAvailability
+
 import android.app.DatePickerDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -45,7 +52,6 @@ import com.example.data.firebase.WorkspaceMember
 import com.example.data.firebase.ProfitShareAllocation
 import com.example.pdf.PdfGeneratorHelper
 import com.example.ui.components.*
-import com.example.ui.components.DatePreset
 import com.example.ui.theme.*
 import com.example.ui.util.FinancialCalculationEngine
 import com.example.ui.util.PartnerShareInvestmentStatus
@@ -147,15 +153,15 @@ fun WithdrawalTab(
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     var takeAmountTargetStatus by remember { mutableStateOf<PartnerShareInvestmentStatus?>(null) }
     var showTakeAmountDialog by remember { mutableStateOf(false) }
+    val canStartBorrowing = FinancialFeatureAvailability.newLoanTransactionsEnabled && onRequestBorrowing != null
     var showBorrowDialog by remember { mutableStateOf(false) }
     var borrowActionError by remember { mutableStateOf("") }
     var showPdfOptionsDialog by remember { mutableStateOf(false) }
     var selectedPartnerFilter by remember(settings.workspaceId, currentUid) { mutableStateOf("All") }
     var draftPartnerFilter by remember(settings.workspaceId, currentUid) { mutableStateOf("All") }
-    var selectedDatePreset by remember { mutableStateOf(DatePreset.ALL_TIME) }
-    var draftDatePreset by remember { mutableStateOf(DatePreset.ALL_TIME) }
-    var customDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
-    var draftCustomDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var dateFilter by remember(settings.workspaceId, currentUid) { mutableStateOf(ReportDateFilter()) }
+    var draftDateFilter by remember(settings.workspaceId, currentUid) { mutableStateOf(ReportDateFilter()) }
+    val dateBounds = dateFilter.bounds(System.currentTimeMillis())
     var isFilterExpanded by remember { mutableStateOf(false) }
     var withdrawalToDelete by remember { mutableStateOf<WithdrawalEntity?>(null) }
     val effectiveUid = if (currentUid.isNotBlank()) currentUid else (try { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid } catch (_: Exception) { null } ?: "")
@@ -168,19 +174,7 @@ fun WithdrawalTab(
     val filteredWithdrawals = withdrawals.filter { w ->
         if (settings.workspaceId.isBlank() || w.workspaceId != settings.workspaceId) return@filter false
         val matchesPartner = selectedPartnerFilter == "All" || w.targetPartnerUid == selectedPartnerFilter
-        val ts = if (w.timestamp > 0) w.timestamp else w.createdAt
-        val matchesDate = when (selectedDatePreset) {
-            DatePreset.ALL_TIME -> true
-            DatePreset.TODAY -> isDateInPreset(ts, DatePreset.TODAY)
-            DatePreset.THIS_MONTH -> isDateInPreset(ts, DatePreset.THIS_MONTH)
-            DatePreset.CUSTOM -> {
-                val calW = Calendar.getInstance().apply { timeInMillis = ts }
-                val calCustom = Calendar.getInstance().apply { timeInMillis = customDateMillis }
-                calW.get(Calendar.YEAR) == calCustom.get(Calendar.YEAR) &&
-                calW.get(Calendar.DAY_OF_YEAR) == calCustom.get(Calendar.DAY_OF_YEAR)
-            }
-            else -> isDateInPreset(ts, selectedDatePreset)
-        }
+        val matchesDate = reportDateMatches(w.timestamp, dateBounds)
         matchesPartner && matchesDate
     }
     val currentFilteredTotal = filteredWithdrawals.sumOf { it.amount }
@@ -346,7 +340,7 @@ fun WithdrawalTab(
                     )
                 }
             }
-            if (onRequestBorrowing != null || onOpenSettlements != null) {
+            if (canStartBorrowing || onOpenSettlements != null) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -354,7 +348,7 @@ fun WithdrawalTab(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (onRequestBorrowing != null) {
+                    if (canStartBorrowing) {
                         OutlinedButton(
                             onClick = { showBorrowDialog = true },
                             shape = RoundedCornerShape(12.dp),
@@ -399,7 +393,7 @@ fun WithdrawalTab(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = if (isTamil) "தீர்வுகள்" else "Settlements",
+                                text = if (isTamil) "கடன் பதிவுகள்" else "Settlement history",
                                 color = Color(0xFF0F172A),
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 13.sp
@@ -411,7 +405,7 @@ fun WithdrawalTab(
         }
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().testTag("withdrawal_report_list"),
             contentPadding = PaddingValues(
                 start = 16.dp,
                 end = 16.dp,
@@ -510,7 +504,7 @@ fun WithdrawalTab(
                                     color = Color(0xFF64748B),
                                     fontWeight = FontWeight.Medium
                                 )
-                                val displayDrawings = if (selectedDatePreset != DatePreset.ALL_TIME || selectedPartnerFilter != "All") currentFilteredTotal else totalWithdrawn
+                                val displayDrawings = if (dateFilter.period != ReportPeriod.ALL_TIME || selectedPartnerFilter != "All") currentFilteredTotal else totalWithdrawn
                                 Text(
                                     text = formatInr(displayDrawings),
                                     fontSize = 19.sp,
@@ -585,70 +579,28 @@ fun WithdrawalTab(
                     onToggleExpand = {
                         if (!isFilterExpanded) {
                             draftPartnerFilter = selectedPartnerFilter
-                            draftDatePreset = selectedDatePreset
-                            draftCustomDateMillis = customDateMillis
+                            draftDateFilter = dateFilter
                         }
                         isFilterExpanded = !isFilterExpanded
                     },
-                    activeFiltersCount = (if (selectedPartnerFilter != "All") 1 else 0) + (if (selectedDatePreset != DatePreset.ALL_TIME) 1 else 0),
+                    activeFiltersCount = (if (selectedPartnerFilter != "All") 1 else 0) + (if (dateFilter.period != ReportPeriod.ALL_TIME) 1 else 0),
                     onClearFilters = {
                         draftPartnerFilter = "All"
-                        draftDatePreset = DatePreset.ALL_TIME
+                        draftDateFilter = ReportDateFilter()
                         selectedPartnerFilter = "All"
-                        selectedDatePreset = DatePreset.ALL_TIME
+                        dateFilter = ReportDateFilter()
                         isFilterExpanded = false
                     },
                     onApplyFilters = {
                         selectedPartnerFilter = draftPartnerFilter
-                        selectedDatePreset = draftDatePreset
-                        customDateMillis = draftCustomDateMillis
+                        dateFilter = draftDateFilter
                         isFilterExpanded = false
-                    }
+                    },
+                    isTamil = isTamil
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = if (isTamil) "தேதி வடிகட்டி:" else "Filter by Date:",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF475569)
-                        )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            listOf(DatePreset.ALL_TIME to "All", DatePreset.TODAY to "Today", DatePreset.THIS_MONTH to "This Month", DatePreset.CUSTOM to "Specific Date").forEach { (preset, label) ->
-                                FilterChip(
-                                    selected = draftDatePreset == preset,
-                                    onClick = {
-                                        draftDatePreset = preset
-                                        if (preset == DatePreset.CUSTOM) {
-                                            val cal = Calendar.getInstance().apply { timeInMillis = draftCustomDateMillis }
-                                            DatePickerDialog(
-                                                context,
-                                                { _, y, m, d ->
-                                                    val nc = Calendar.getInstance().apply { set(y, m, d) }
-                                                    draftCustomDateMillis = nc.timeInMillis
-                                                },
-                                                cal.get(Calendar.YEAR),
-                                                cal.get(Calendar.MONTH),
-                                                cal.get(Calendar.DAY_OF_MONTH)
-                                            ).show()
-                                        }
-                                    },
-                                    label = { Text(label, fontSize = 11.sp) },
-                                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFFDCFCE7))
-                                )
-                            }
-                        }
-                        if (draftDatePreset == DatePreset.CUSTOM) {
-                            Text(
-                                text = "${if (isTamil) "தேர்ந்தெடுக்கப்பட்ட தேதி:" else "Selected Date:"} ${formatDate(draftCustomDateMillis)}",
-                                fontSize = 11.sp,
-                                color = Color(0xFF0B532E),
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-
+                        ReportDateFilterControl(draftDateFilter, isTamil, { draftDateFilter = it },
+                            withdrawals.any { it.workspaceId == settings.workspaceId && it.timestamp <= 0 })
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = if (isTamil) "பங்குதாரர் மூலம் வடிகட்டு:" else "Filter by Partner:",
@@ -705,15 +657,13 @@ fun WithdrawalTab(
                         color = Color(0xFF0F172A)
                     )
                     Text(
-                        text = if (isTamil) "அனைத்தும் பார் >" else "View All >",
+                        text = if (dateFilter.period == ReportPeriod.ALL_TIME && selectedPartnerFilter == "All") {
+                            if (isTamil) "அனைத்தும் பார் >" else "View All >"
+                        } else if (isTamil) "பதிவுகளைப் பார்க்கவும்" else "View records",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF0B532E),
-                        modifier = Modifier.clickable {
-                            selectedPartnerFilter = "All"
-                            selectedDatePreset = DatePreset.ALL_TIME
-                            showWithdrawalHistory = true
-                        }
+                        modifier = Modifier.testTag("view_withdrawal_records").clickable { showWithdrawalHistory = true }
                     )
                 }
             }
@@ -905,7 +855,7 @@ fun WithdrawalTab(
         )
     }
 
-    if (showBorrowDialog && onRequestBorrowing != null) {
+    if (canStartBorrowing && showBorrowDialog && onRequestBorrowing != null) {
         BorrowDialog(
             workspaceId = settings.workspaceId,
             workspaceMembers = workspaceMembers,
@@ -931,6 +881,12 @@ fun WithdrawalTab(
                         Text(if (isTamil) "கடந்த எடுப்புப் பதிவேடு" else "Past Withdrawals Ledger", fontWeight = FontWeight.Bold)
                         TextButton(onClick = { showWithdrawalHistory = false }) { Text(if (isTamil) "மூடு" else "Close") }
                     }
+                    val countLabel = if (isTamil) "பதிவுகள்" else if (filteredWithdrawals.size == 1) "record" else "records"
+                    Text(
+                        text = "${filteredWithdrawals.size} $countLabel · ${formatInr(currentFilteredTotal, settings.currency)}",
+                        modifier = Modifier.padding(bottom = 8.dp).testTag("withdrawal_filtered_summary"),
+                        fontSize = 13.sp
+                    )
                     LazyColumn(Modifier.weight(1f).testTag("withdrawal_history"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (filteredWithdrawals.isEmpty()) {
                 item(key = "section_empty_withdrawals") {
@@ -2016,7 +1972,7 @@ fun WithdrawalItemCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = formatDateTime(withdrawal.timestamp),
+                    text = reportDate(withdrawal.timestamp, isTamil, "dd MMM yyyy, hh:mm a"),
                     fontSize = 10.sp,
                     color = Color(0xFF94A3B8),
                     modifier = Modifier.weight(1f, fill = false)

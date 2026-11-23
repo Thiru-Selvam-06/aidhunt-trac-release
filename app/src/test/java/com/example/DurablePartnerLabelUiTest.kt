@@ -1,7 +1,7 @@
 package com.example
 
 import android.content.Context
-import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -90,8 +90,8 @@ class DurablePartnerLabelUiTest {
             }
         }
         compose.onNodeWithText("Owner: Ravi").assertExists()
-        compose.onAllNodesWithText("Owner", substring = true).assertCountEquals(2)
-        compose.onNodeWithText("Entry by: Owner — Ravi").assertExists()
+        compose.onAllNodesWithText("Owner", substring = true).assertCountEquals(1)
+        compose.onNodeWithText("Entry by: Ravi", substring = true).assertExists()
     }
 
     @Test
@@ -99,13 +99,9 @@ class DurablePartnerLabelUiTest {
         val membersAfterRemoval = listOf(owner, removedPartner, operator)
         assertTrue(hasBusinessPartnershipHistory(wsId, membersAfterRemoval))
 
-        // RoleUtils helpers reflect Partner display
-        assertEquals("Entry by: Partner — Ravi", RoleUtils.getCreatedByDisplay(
-            sampleJob(), "Ravi", membersAfterRemoval, isTamil = false, hasBusinessPartnership = true
-        ))
-        assertEquals("Entry for Operator: Partner — Ravi", RoleUtils.getEntryForDisplay(
-            sampleJob(), "Ravi", membersAfterRemoval, isTamil = false, hasBusinessPartnership = true
-        ))
+        // Job attribution displays names while the business role label remains durable.
+        assertEquals("Entry by: Ravi", RoleUtils.getCreatedByDisplay(sampleJob(), membersAfterRemoval))
+        assertEquals("Entry for Operator: Ravi", RoleUtils.getEntryForDisplay(sampleJob(), membersAfterRemoval))
         assertEquals("Edited by: Partner — Ravi", RoleUtils.getEditedByDisplay(
             sampleJob().copy(editedByName = "Ravi", editedByRole = "OWNER"), isTamil = false, hasBusinessPartnership = true
         ))
@@ -144,7 +140,7 @@ class DurablePartnerLabelUiTest {
         }
         compose.onNodeWithText("Partner: Ravi").assertExists()
         compose.onAllNodesWithText("Owner", substring = true).assertCountEquals(0)
-        compose.onNodeWithText("Entry by: Partner — Ravi").assertExists()
+        compose.onNodeWithText("Entry by: Ravi", substring = true).assertExists()
     }
 
     @Test
@@ -181,7 +177,39 @@ class DurablePartnerLabelUiTest {
             }
         }
         compose.onNodeWithTag("expand_job_card_${job.id}").performClick()
-        compose.onAllNodesWithText("பங்குதாரர் — Ravi", substring = true).assertCountEquals(3)
+        compose.onAllNodesWithText("பங்குதாரர் — Ravi", substring = true).assertCountEquals(2)
+        compose.onNodeWithText("உருவாக்கியவர்: Ravi").assertExists()
+        compose.onNodeWithText("வேலை இயக்குபவர்: Ravi").assertExists()
         compose.onAllNodesWithText("உரிமையாளர்", substring = true).assertCountEquals(0)
     }
+    @Test
+    @Config(sdk = [36], qualifiers = "w320dp-h640dp")
+    fun compactJobCardShowsWorkDateAndRecordedIstWithFullNames() {
+        val longName = "Marameri Agricultural Cooperative Customer"
+        val longActor = "Muniyappan Rajamanickam Chettiar"
+        val workTime = java.time.Instant.parse("2026-11-15T02:45:00Z").toEpochMilli()
+        val recordedTime = java.time.Instant.parse("2026-11-15T11:53:00Z").toEpochMilli()
+        val entry = sampleJob(workTime).copy(customerName = longName, createdAt = recordedTime,
+            entryForUid = activePartner.uid, financialAttributionUid = activePartner.uid, operatorName = "mani")
+        val oldEntry = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent { MyApplicationTheme {
+            com.example.ui.screens.home.JobEntryItemCard(
+                job = entry.copy(isHistorical = oldEntry.value), settings = AppSettingsEntity(workspaceId = wsId),
+                workspaceMembers = listOf(owner.copy(displayName = longActor), activePartner),
+                onClick = {}, onShareWhatsApp = {}, onSharePdf = {}
+            )
+        } }
+        val name = compose.onNodeWithText(longName, useUnmergedTree = true)
+        name.assertIsDisplayed()
+        val layout = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        name.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layout) }
+        assertFalse(layout.single().hasVisualOverflow)
+        compose.onNodeWithText("15 Nov 2026 · 05:23\u00a0PM\u00a0IST", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Entry by: $longActor", substring = true, useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Entry for Operator: Mani", useUnmergedTree = true).assertIsDisplayed()
+        compose.runOnIdle { oldEntry.value = true }
+        compose.onNodeWithText("15 Nov 2026", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Recorded: 15 Nov 2026 · 05:23\u00a0PM\u00a0IST", useUnmergedTree = true).assertIsDisplayed()
+    }
+
 }

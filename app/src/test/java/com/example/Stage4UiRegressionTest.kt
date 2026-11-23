@@ -1,5 +1,6 @@
 package com.example
 
+import androidx.compose.ui.test.*
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -124,6 +125,8 @@ class Stage4UiRegressionTest {
                 )
             }
         }
+        compose.onNodeWithTag("btn_add_external_loan").assertDoesNotExist()
+        compose.onNodeWithText("New loans and repayment entries are coming soon").assertIsDisplayed()
         compose.onNodeWithTag("loan_analytics_section").assertIsDisplayed()
         compose.onNodeWithTag("loan_analytics_toggle").performClick()
         compose.onNodeWithTag("loan_analytics_mode_repayments").assertIsDisplayed()
@@ -132,4 +135,97 @@ class Stage4UiRegressionTest {
         compose.onNodeWithTag("loan_analytics_mode_funding").performClick()
         compose.onNodeWithText("Business Bank").assertIsDisplayed()
     }
+    @Test
+    @Config(sdk = [36], qualifiers = "w320dp-h640dp")
+    fun previewCardsAreMutedAndOnlyOpenExistingRecordsInEnglishAndTamil() {
+        val language = androidx.compose.runtime.mutableStateOf("EN")
+        val existingRecords = androidx.compose.runtime.mutableStateOf(false)
+        var opened: com.example.ui.viewmodel.ReportSubPage? = null
+        compose.setContent { MyApplicationTheme {
+            com.example.ui.screens.report.ReportMenuDashboard(
+                settings = AppSettingsEntity(language = language.value), expensesCount = 0,
+                totalExpenses = 0.0, netBalance = 0.0, totalWithdrawn = 0.0, totalPendingDue = 0.0,
+                pendingCustomersCount = 0, hasLoanHistory = existingRecords.value,
+                onNavigate = { opened = it }
+            )
+        } }
+        compose.onNode(hasScrollAction()).performScrollToNode(hasTestTag("report_menu_card_external_loans"))
+        compose.onNodeWithTag("report_menu_card_external_loans").assertIsDisplayed().assertHasNoClickAction()
+        compose.onNodeWithTag("report_menu_card_settlements").assertIsDisplayed().assertHasNoClickAction()
+        compose.onAllNodesWithText("Coming Soon").assertCountEquals(2)
+        compose.onNodeWithText("Existing records").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(null, opened)
+            language.value = "TA"
+            existingRecords.value = true
+        }
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("ஏற்கனவே உள்ள பதிவுகள்"))
+        compose.onAllNodesWithText("விரைவில்").assertCountEquals(2)
+        compose.onNodeWithText("ஏற்கனவே உள்ள பதிவுகள்").performClick()
+        compose.runOnIdle { assertEquals(com.example.ui.viewmodel.ReportSubPage.EXTERNAL_LOANS, opened) }
+    }
+
+    @Test
+    fun loanAndSettlementActionsStayPausedWhilePendingRecordsCanBeReviewed() {
+        val req = com.example.data.entity.BorrowingRequestEntity(
+            id = 3, workspaceId = "a", borrowerUid = "borrower", borrowerName = "Borrowing Partner",
+            lendingPartnerUid = "lender", lendingPartnerName = "Lending Partner", sourceType = "NAMED_PARTNER",
+            amount = 200.0, status = "PENDING_APPROVAL"
+        )
+        var rejected = false
+        compose.setContent { MyApplicationTheme {
+            com.example.ui.screens.report.BorrowingRequestCard(
+                req, "₹", false, false, "lender", "Partner", onApprove = { error("Approval started") },
+                onReject = { rejected = true }, onExecute = { error("Disbursement started") }, onCancel = {}
+            )
+        } }
+        compose.onNodeWithTag("borrowing_request_card_3").assertIsDisplayed()
+        compose.onNodeWithTag("btn_approve_borrow_3").assertDoesNotExist()
+        compose.onNodeWithTag("btn_execute_borrow_3").assertDoesNotExist()
+        compose.onNodeWithTag("btn_reject_borrow_3").performClick()
+        compose.runOnIdle { org.junit.Assert.assertTrue(rejected) }
+    }
+
+    @Test
+    fun withdrawalsRetainTheirOrdinaryActionWithoutBorrowing() {
+        compose.setContent { MyApplicationTheme {
+            com.example.ui.screens.report.WithdrawalTab(
+                settings = AppSettingsEntity(workspaceId = "a"), withdrawals = emptyList(), partners = emptyList(),
+                availableAmount = 1000.0, totalWithdrawn = 0.0, isOwner = true, currentUid = "owner", currentRole = "Owner",
+                onAddWithdrawal = {}, onDeleteWithdrawal = {},
+                onRequestBorrowing = { _, _, _, _, _, _, _ -> error("Borrowing started") }
+            )
+        } }
+        compose.onNodeWithTag("btn_take_amount").assertIsDisplayed()
+        compose.onNodeWithTag("btn_borrow_amount").assertDoesNotExist()
+        compose.onNodeWithTag("btn_open_settlements").assertDoesNotExist()
+    }
+
+    @Test
+    fun existingSettlementRepaymentsRemainVisibleAndPendingReceiptCanBeConfirmed() {
+        val pending = com.example.data.entity.SettlementRepaymentEntity(
+            id = 21, workspaceId = "a", payerUid = "lender", payerName = "Current Payer",
+            creditorUid = "lender", creditorName = "Business", amount = 125.0, mode = "INTO_BUSINESS"
+        )
+        val previous = pending.copy(id = 22, payerName = "Previous Payer", status = "CONFIRMED")
+        var confirmed = 0L
+        compose.setContent { MyApplicationTheme {
+            com.example.ui.screens.report.PartnerSettlementsScreen(
+                settings = AppSettingsEntity(workspaceId = "a"), isOwner = false,
+                currentUid = "lender", currentRole = "Partner",
+                borrowingOverview = com.example.ui.util.WorkspaceBorrowingOverview(0.0, 0.0, 0.0, 0.0, 0.0, emptyMap()),
+                borrowingRequests = emptyList(), obligations = emptyList(), repayments = listOf(pending, previous),
+                onApproveRequest = { _, _, _ -> }, onRejectRequest = { _, _, _, _ -> }, onExecuteRequest = { _, _, _ -> },
+                onCancelRequest = { _, _, _, _ -> }, onRecordRepayment = { _, _, _, _, _, _ -> error("New settlement started") },
+                onConfirmRepayment = { id, _, _ -> confirmed = id }, onRejectRepayment = { _, _, _, _ -> }
+            )
+        } }
+        compose.onNode(hasScrollAction()).performScrollToNode(hasTestTag("btn_confirm_repayment_21"))
+        compose.onNodeWithTag("btn_confirm_repayment_21").performClick()
+        compose.runOnIdle { assertEquals(21L, confirmed) }
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Previous Payer → Business"))
+        compose.onNodeWithText("Previous Payer → Business").assertIsDisplayed()
+        compose.onNodeWithText("₹125 · Confirmed", substring = true, useUnmergedTree = true).assertExists()
+    }
+
 }

@@ -94,7 +94,7 @@ class EntryDeletionReconciliationTest {
 
     @Test fun existingRoleOwnershipAndHistoricalRestrictionsRemain() {
         for(role in listOf("PARTNER","OPERATOR")) {
-            assertTrue(AuthorizationManager.canDeleteEntry(entry(),false,"", "actor",role=role))
+            assertEquals(role == "PARTNER", AuthorizationManager.canDeleteEntry(entry(),false,"", "actor",role=role))
             assertFalse(AuthorizationManager.canDeleteEntry(entry(),false,"", "other",role=role))
             assertFalse(AuthorizationManager.canDeleteEntry(entry().copy(isHistorical=true),false,"", "actor",role=role))
         }

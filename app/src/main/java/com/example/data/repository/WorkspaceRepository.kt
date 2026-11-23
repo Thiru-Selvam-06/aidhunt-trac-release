@@ -50,7 +50,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
+
+/** A successful membership discovery found no authorized workspace. */
+internal class NoActiveWorkspaceException : SecurityException(
+    "No active workspace was found. Ask the business Owner to verify your invitation or membership."
+)
 
 sealed class WorkspaceInitState {
     object Uninitialized : WorkspaceInitState()
@@ -215,6 +222,39 @@ class WorkspaceRepository(
     // can never contribute participants to the current report.
     private val _activeWorkspaceMembers = MutableStateFlow<List<WorkspaceMember>>(emptyList())
     val activeWorkspaceMembers: StateFlow<List<WorkspaceMember>> = _activeWorkspaceMembers.asStateFlow()
+
+    private val cashAdjustmentRepository by lazy { com.example.data.firebase.CashBalanceAdjustmentRepository(
+        com.google.firebase.firestore.FirebaseFirestore.getInstance(), com.google.firebase.auth.FirebaseAuth.getInstance()) }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val cashBalanceAdjustments: StateFlow<com.example.data.firebase.CashBalanceState> by lazy {
+        combine(verifiedWorkspaceContext, activeWorkspaceMembers, syncCapabilities) { identity, members, flags ->
+            val member = members.firstOrNull { identity != null && it.uid == identity.first && it.workspaceId == identity.second &&
+                it.status.equals("ACTIVE", true) && com.example.data.firebase.BalanceDisplayPolicy.canEdit(it.role) }
+            Triple(identity, member != null, flags.cashBalanceAdjustmentsV1)
+        }.flatMapLatest { (identity, authorized, enabled) ->
+            if (identity == null || !authorized) kotlinx.coroutines.flow.flowOf(com.example.data.firebase.CashBalanceState())
+            else if (!enabled) kotlinx.coroutines.flow.flowOf(com.example.data.firebase.CashBalanceState(identity.second, loaded = true))
+            else cashAdjustmentRepository.observe(identity.second, identity.first)
+        }.stateIn(scope, SharingStarted.Eagerly, com.example.data.firebase.CashBalanceState())
+    }
+
+    suspend fun saveCashBalanceAdjustment(ws: String, actor: String, target: Long, base: Long, revision: Long, reason: String, operationId: String) {
+        fun requireOriginalContext() = com.example.data.firebase.CashBalanceAdjustmentPolicy.requireContext(
+            ws, actor, _activeWorkspaceId.value, getEffectiveActorUid(), _verifiedWorkspaceContext.value)
+        requireOriginalContext()
+        requireWorkspaceActor(ws)
+        check(currentCapabilities(ws).cashBalanceAdjustmentsV1) { "Shared cash adjustments have not been activated" }
+        check(database.pendingOperationDao().outstandingOperations(ws).none {
+            it.entityType in setOf("JOB", "PAYMENT", "EXPENSE", "WITHDRAWAL", "EXTERNAL_LOAN", "EXTERNAL_LOAN_REPAYMENT", "BORROWING_REQUEST", "SETTLEMENT_REPAYMENT")
+        }) { "Resolve retained financial operations before adjusting cash; no original operation has been changed" }
+        requireOriginalContext()
+        val latestBase = com.example.data.firebase.BalanceDisplayPolicy.parsePaise(
+            java.math.BigDecimal.valueOf(getAvailableBalance(includeAdjustments = false, subtractReservations = false)).setScale(2).toPlainString())
+        check(latestBase == base) { "The balance changed. Refresh before saving." }
+        requireOriginalContext()
+        cashAdjustmentRepository.save(ws, actor, operationId, revision, target, base, reason)
+        requireOriginalContext()
+    }
 
     // SAFE DEFAULT: non-owner. Owner is only ever granted from an explicit resolved
     // membership role, never from a default, a fallback, or workspace ownership.
@@ -707,11 +747,22 @@ class WorkspaceRepository(
      * then resolves Firestore bootstrap & verification, attaches real-time snapshot listeners,
      * resolves settings safely, and performs safe initial migration.
      */
-    suspend fun createPersonalWorkspace(user: com.google.firebase.auth.FirebaseUser, fullName: String, businessName: String): UserProfile =
-        firestoreRepository.createPersonalWorkspace(user, fullName, businessName)
+    suspend fun createPersonalWorkspace(user: com.google.firebase.auth.FirebaseUser, fullName: String, businessName: String): UserProfile {
+        check(!com.example.BuildConfig.OWNER_VISIT_PILOT) { "This test build uses the existing pilot workspace." }
+        check(getAvailableWorkspaces(UserProfile(uid = user.uid)).isEmpty()) {
+            "An authorized workspace already exists. Retry workspace verification to open it."
+        }
+        return firestoreRepository.createPersonalWorkspace(user, fullName, businessName)
+    }
 
     suspend fun initializeForUser(userProfile: UserProfile, selectedWorkspaceId: String? = null): Result<String> = kotlinx.coroutines.withContext(Dispatchers.IO) {
         val uid = userProfile.uid
+        if (com.example.BuildConfig.OWNER_VISIT_PILOT && uid !in setOf("notifyOwner_4a2ff95fafcb8b", "notifyPartner_4a2ff95fafcb8b")) {
+            val error = SecurityException("Use one of the authorized synthetic pilot accounts.")
+            stopWorkspaceListeners()
+            _workspaceInitState.value = WorkspaceInitState.Error(error)
+            return@withContext Result.failure(error)
+        }
         if (uid.isBlank()) {
             val err = IllegalArgumentException("User profile UID is blank")
             _workspaceInitState.value = WorkspaceInitState.Error(err)
@@ -752,7 +803,11 @@ class WorkspaceRepository(
                 return@withTimeout Result.failure(IllegalStateException("Choose a workspace to continue"))
             }
             val membership = selected?.let { id -> choices.firstOrNull { it.workspaceId == id } }
-                ?: throw SecurityException(if (com.example.BuildConfig.PHYSICAL_TEST) "Signed in. This isolated test build cannot open business workspaces. Choose an authorized staging workspace, or use the standard app for your personal/business workspace." else "No active workspace. Create a personal workspace or ask the Owner to complete your invitation.")
+                ?: if (com.example.BuildConfig.PHYSICAL_TEST) {
+                    throw SecurityException("This test build can only open authorized staging workspaces.")
+                } else {
+                    throw NoActiveWorkspaceException()
+                }
             if (com.example.BuildConfig.PHYSICAL_TEST && !com.example.data.firebase.FirebaseEnvironment.isStagingWorkspace(membership.workspaceId))
                 throw SecurityException("Physical test membership is outside the staging workspace")
             authoritativeWsId = membership.workspaceId
@@ -785,6 +840,12 @@ class WorkspaceRepository(
             if (normalizedFinalRole.isBlank()) throw SecurityException("Unsupported workspace role")
             val verifiedMembers = firestoreRepository.getWorkspaceMembers(targetWsId)
             workspaceRequests.check(request)
+            if (uid != getEffectiveActorUid() || verifiedMembers.none { member ->
+                    member.uid == uid && member.workspaceId == targetWsId && member.status.equals("active", true) &&
+                        com.example.data.auth.RoleUtils.normalizeRole(member.role) == normalizedFinalRole
+                }) {
+                throw SecurityException("Workspace membership changed. Verify your access and retry.")
+            }
             _activeWorkspaceMembers.value = verifiedMembers
             _workspaceMembers.value = verifiedMembers
             cacheVerifiedMembership(uid, targetWsId, verifiedMembers)
@@ -900,27 +961,27 @@ class WorkspaceRepository(
             workspaceRequests.check(request)
             if (e is kotlinx.coroutines.CancellationException && e !is kotlinx.coroutines.TimeoutCancellationException) throw e
             Log.w(TAG, "Workspace verification unavailable: ${e.message}")
-            if (e is SecurityException || (e is com.google.firebase.firestore.FirebaseFirestoreException &&
-                e.code in setOf(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,
-                    com.google.firebase.firestore.FirebaseFirestoreException.Code.UNAUTHENTICATED))) {
+            val networkFailure = com.example.data.firebase.WorkspaceDiscoveryPolicy.mayRestoreCachedWorkspace(e)
+            if (networkFailure) {
+                restoreVerifiedMembership(uid)
+                val cachedId = _activeWorkspaceId.value
+                if (!cachedId.isNullOrBlank() && _verifiedWorkspaceContext.value == (uid to cachedId) &&
+                    uid == getEffectiveActorUid() && resolveRoleForWorkspace(cachedId).isNotBlank()) {
+                    val cachedSettings = appSettingsDao.getSettingsForWorkspaceOnce(cachedId)
+                    if (cachedSettings != null) _settingsSyncState.value = SettingsSyncState.LoadedFromCloud(cachedSettings)
+                    return@withContext Result.success(cachedId)
+                }
+            } else if (e is SecurityException || (e is com.google.firebase.firestore.FirebaseFirestoreException &&
+                    e.code in setOf(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED,
+                        com.google.firebase.firestore.FirebaseFirestoreException.Code.UNAUTHENTICATED))) {
                 context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE).edit().clear().commit()
-                _activeWorkspaceMembers.value = emptyList()
-                _workspaceMembers.value = emptyList()
-                currentUserRole = null
-                stopWorkspaceListeners()
-                _workspaceInitState.value = WorkspaceInitState.Error(e)
-                return@withContext Result.failure(e)
             }
-            restoreVerifiedMembership(uid)
-            val cachedId = _activeWorkspaceId.value
-            if (!cachedId.isNullOrBlank() && resolveRoleForWorkspace(cachedId).isNotBlank()) {
-                val cachedSettings = appSettingsDao.getSettingsForWorkspaceOnce(cachedId)
-                if (cachedSettings != null) _settingsSyncState.value = SettingsSyncState.LoadedFromCloud(cachedSettings)
-                Result.success(cachedId)
-            } else {
-                _workspaceInitState.value = WorkspaceInitState.Error(e)
-                Result.failure(e)
-            }
+            stopWorkspaceListeners()
+            val error = if (networkFailure)
+                IllegalStateException("Unable to verify workspace access. Check your internet connection and retry.", e)
+            else e
+            _workspaceInitState.value = WorkspaceInitState.Error(error)
+            Result.failure(error)
         }
     }
 
@@ -1309,6 +1370,7 @@ class WorkspaceRepository(
                     _hasConfirmedFinancialState.value = true
                 }
             },
+            onOwnerLedgerChanged = ::signalOwnerActivity,
             onNotificationsUpdated = { remoteNotifications, listenerWsId ->
                 val snapshotActor = getEffectiveActorUid()
                 scope.launch {
@@ -1316,7 +1378,7 @@ class WorkspaceRepository(
                         return@launch
                     }
                     require(remoteNotifications.all { it.workspaceId == listenerWsId }) { "Notification snapshot workspace mismatch" }
-                    appNotificationDao.upsertPreservingReadState(remoteNotifications)
+                    appNotificationDao.upsertPreservingReadState(remoteNotifications.filter(::isCloudNotification))
                 }
             }
         )
@@ -1394,6 +1456,7 @@ class WorkspaceRepository(
         _visibleWorkspaceIds.value = emptySet()
         _activeWorkspaceId.value = null
         _genuinePartnerWorkspaces.value = emptyList()
+        _availableWorkspaces.value = emptyList()
         // Reset to the least-privileged state. Owner must be re-resolved from the
         // membership record on the next initializeForUser(), never assumed.
         _isCollaborationOwner.value = false
@@ -1782,7 +1845,7 @@ class WorkspaceRepository(
         val prefs = context.getSharedPreferences("verified_workspace_session", Context.MODE_PRIVATE)
         if (prefs.getString("uid", "") != uid) return
         val wsId = prefs.getString("workspaceId", "").orEmpty()
-        if (com.example.BuildConfig.PHYSICAL_TEST && !com.example.data.firebase.FirebaseEnvironment.isStagingWorkspace(wsId)) return
+        if (!com.example.data.firebase.FirebaseEnvironment.permitsWorkspaceDiscovery(wsId, com.example.BuildConfig.PHYSICAL_TEST)) return
         if (wsId.isBlank()) return
         val json = runCatching { org.json.JSONArray(prefs.getString("members", "[]")) }.getOrNull() ?: return
         val members = (0 until json.length()).map { index ->
@@ -2106,7 +2169,8 @@ class WorkspaceRepository(
         job: JobEntryEntity,
         linkedExpense: ExpenseEntity? = null,
         linkedExpenses: List<ExpenseEntity> = emptyList(),
-        createNewCustomer: Boolean = false
+        createNewCustomer: Boolean = false,
+        expectedEditBase: JobEntryEntity? = null
     ): Long {
         val operationActorUid = getEffectiveActorUid().orEmpty()
         val operationTime = System.currentTimeMillis()
@@ -2121,6 +2185,14 @@ class WorkspaceRepository(
             throw SecurityException("Entry does not belong to the active workspace")
         }
         val verifiedActorRole = requireWorkspaceActor(wsId)
+        if (expectedEditBase != null || job.updatedAt > 0L) {
+            require(existingJob != null) { "This entry is no longer available. Return to the job list before editing." }
+            if (expectedEditBase != null) {
+                require(existingJob.copy(isSynced = expectedEditBase.isSynced) == expectedEditBase) {
+                    "This entry changed while you were editing. Reopen it and review the latest record."
+                }
+            }
+        }
         if (job.workspaceId.isNotBlank() && job.workspaceId != wsId) throw SecurityException("Entry workspace mismatch")
         val authenticatedUid = getEffectiveActorUid().orEmpty()
         val entryTarget = existingJob?.entryForUid ?: job.entryForUid.ifBlank { authenticatedUid }
@@ -2205,7 +2277,7 @@ class WorkspaceRepository(
             val isHistorical = job.isHistorical
             if (isHistorical && !com.example.data.auth.AuthorizationManager.canCreateOldEntry(isOwner, role = actorRole)) {
                 Log.w(TAG, "Security rejection: User ($currentActorName, isOwner=$isOwner, uid=$actorUid, role=$actorRole) is not authorized to create old/historical entry")
-                throw SecurityException("Unauthorized: Old/historical entry creation is restricted to the workspace Owner")
+                throw SecurityException("Only the workspace Owner and Partners can create Old Entries")
             }
         }
 
@@ -2218,18 +2290,8 @@ class WorkspaceRepository(
         // - Preserve the original entry creation date/time exactly.
         // - Editing must never overwrite or reset the original entry timestamp or author.
         val finalCreatedAt = existingJob?.createdAt ?: if (job.createdAt > 0) job.createdAt else operationTime
-        val finalAddedBy = if (!isOwner && existingJob == null) {
-            currentActorName
-        } else if (existingJob != null) {
-            existingJob.addedByPartner.ifBlank { job.addedByPartner }
-        } else {
-            currentActorName
-        }
-        val finalCreatedByUid = if (existingJob != null) {
-            existingJob.createdByUid.ifBlank { job.createdByUid }
-        } else {
-            actorUid
-        }
+        val finalAddedBy = existingJob?.addedByPartner ?: currentActorName
+        val finalCreatedByUid = existingJob?.createdByUid ?: actorUid
         val currentMember = workspaceMembers.value.firstOrNull { it.uid == actorUid }
         val resolvedDefaultRole = if (isOwner) "Owner" else (currentMember?.role?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() } ?: "Partner")
         val candidateRole = if (existingJob != null) {
@@ -2242,16 +2304,14 @@ class WorkspaceRepository(
         }
         val finalCreatedByRole = existingJob?.createdByRole ?: candidateRole
         val finalOperator = if (existingJob == null) {
-            _activeWorkspaceMembers.value.firstOrNull { it.uid == entryTarget && it.workspaceId == wsId }
-                ?.displayName.orEmpty().ifBlank { job.operatorName.ifBlank { currentActorName } }
+            job.operatorName.trim().ifBlank {
+                _activeWorkspaceMembers.value.firstOrNull { it.uid == entryTarget && it.workspaceId == wsId }
+                    ?.displayName.orEmpty().ifBlank { currentActorName }
+            }
         } else if (verifiedActorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR) {
             currentActorName
-        } else if (job.operatorName.isNotBlank()) {
-            job.operatorName
-        } else if (existingJob != null && existingJob.operatorName.isNotBlank()) {
-            existingJob.operatorName
         } else {
-            currentActorName
+            existingJob.operatorName.ifBlank { job.operatorName.ifBlank { currentActorName } }
         }
 
         val currentCustomer = if (verifiedActorRole == com.example.data.auth.RoleUtils.ROLE_OPERATOR)
@@ -2319,7 +2379,10 @@ class WorkspaceRepository(
         val entrySnapshot = if (existingJob == null && localJob.amountReceived > 0) localJob.copy(amountReceived = 0.0, pendingAmount = localJob.totalAmount) else localJob
         enqueue("JOB", localJob.id, entrySnapshot.toFirestoreMap(), "UPSERT", actionTime = operationTime, expectedActorUid = operationActorUid, baseSnapshot = existingJob?.toFirestoreMap(), operationId = initialJobOperationId)
         if (existingJob == null && localJob.amountReceived > 0) {
-            val initialCollector = com.example.data.auth.CollectionPolicy.requireInitialCollector(wsId, localJob.entryForUid, _activeWorkspaceMembers.value)
+            // Historical Partner entries use the existing self-only collector rule.
+            // The job's independent financial attribution is unchanged.
+            val initialCollectorUid = if (localJob.isHistorical && !isOwner) actorUid else localJob.entryForUid
+            val initialCollector = com.example.data.auth.CollectionPolicy.requireInitialCollector(wsId, initialCollectorUid, _activeWorkspaceMembers.value)
             val collection = PaymentEntity(id = IdGenerator.generateId(), workspaceId = wsId, jobEntryId = localJob.id,
                 customerId = customerId, customerName = localJob.customerName, tractorId = localJob.tractorId, tractorLabel = localJob.tractorLabel,
                 amount = localJob.amountReceived, collectedByUid = actorUid, collectedByName = currentActorName,
@@ -2483,7 +2546,7 @@ class WorkspaceRepository(
             requireRecordMembersActive(stored.createdByUid, stored.entryForUid)
             val owner = isOwnerOfWorkspace(wsId)
             require(com.example.data.auth.AuthorizationManager.canDeleteEntry(stored, owner, currentActorName = "", currentUid = actorUid, role = role, currentTimeMillis = operationTime)) {
-                "You cannot delete this Entry: check ownership, role and the 24-hour deadline"
+                "This entry cannot be deleted under the current workspace permissions."
             }
             val payments = paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty()
             val linked = payments.filter { com.example.data.sync.EntryDeletionPolicy.references(it, stored.id) }
@@ -2784,7 +2847,7 @@ class WorkspaceRepository(
      * NOTE: This is a cash-basis calculation. If accrual-basis balance is needed
      * (including pending receivables), a separate method should be implemented.
      */
-    suspend fun getAvailableBalance(): Double {
+    suspend fun getAvailableBalance(includeAdjustments: Boolean = true, subtractReservations: Boolean = true): Double {
         val wsId = getOrResolveWorkspaceId() ?: return 0.0
         val cash = com.example.ui.util.FinancialCalculationEngine.cashAvailableWithStage3(
             payments = paymentDao.getPaymentsForWorkspace(wsId).firstOrNull().orEmpty(),
@@ -2799,10 +2862,15 @@ class WorkspaceRepository(
         val localReserved = stage3Dao.getBorrowingRequestsOnce(wsId)
             .filter { it.status == "APPROVED_RESERVED" }
             .sumOf { it.reservedAmount }
+        val adjustment = if (includeAdjustments) currentCashAdjustment(wsId) else 0.0
         return com.example.ui.util.FinancialCalculationEngine.roundMoney(
-            cash - maxOf(_reservedCash.value, localReserved)
+            cash + adjustment - (if (subtractReservations) maxOf(_reservedCash.value, localReserved) else 0.0)
         )
     }
+
+    private suspend fun currentCashAdjustment(wsId: String): Double =
+        if (currentCapabilities(wsId).cashBalanceAdjustmentsV1)
+            cashAdjustmentRepository.readTotal(wsId, getEffectiveActorUid().orEmpty()) / 100.0 else 0.0
 
     suspend fun addWithdrawal(withdrawal: WithdrawalEntity): Long {
         val operationActorUid = getEffectiveActorUid().orEmpty()
@@ -2929,11 +2997,16 @@ class WorkspaceRepository(
         database.withTransaction {
             val wsId = _activeWorkspaceId.value.orEmpty()
             val role = requireWorkspaceActor(wsId)
-            if (role != com.example.data.auth.RoleUtils.ROLE_OWNER) throw SecurityException("Only Owner can delete customers")
+            require(com.example.data.auth.AuthorizationManager.canDeleteCustomer(isOwnerOfWorkspace(wsId), role)) { "Only active Owners or Partners can delete unused customers" }
+            if (role == com.example.data.auth.RoleUtils.ROLE_PARTNER && !currentCapabilities(wsId).trustedEmptyCustomerDeletionV1)
+                throw IllegalStateException("Partner customer deletion is awaiting secure backend activation; no customer was removed")
             val stored = customerDao.getCustomerById(_activeWorkspaceId.value.orEmpty(), customer.id) ?: throw SecurityException("Customer no longer exists")
             if (stored.workspaceId != wsId) throw SecurityException("Customer workspace mismatch")
             require(jobEntryDao.getJobsForWorkspaceOnce(wsId).none { it.customerId == stored.id } &&
                 paymentDao.getPaymentsForCustomer(_activeWorkspaceId.value.orEmpty(), stored.id).none { it.workspaceId == wsId }) { "Customer is referenced by retained financial history" }
+            require(operations.outstandingOperations(wsId).none {
+                com.example.data.sync.OperationDependencies.references(it).contains("CUSTOMER" to stored.id)
+            }) { "Customer is referenced by retained local actions; resolve those actions first" }
             customerDao.deleteCustomer(stored)
             enqueue("CUSTOMER", stored.id, stored.toFirestoreMap(), "DELETE", expectedActorUid = operationActorUid, actionTime = operationTime)
         }
@@ -3258,20 +3331,84 @@ class WorkspaceRepository(
     fun getSettlementRepaymentsFlow(workspaceId: String): Flow<List<SettlementRepaymentEntity>> =
         authorizedRecords(workspaceId, financial = true, records = stage3Dao.observeSettlementRepayments(workspaceId))
 
+
+    private val _ownerActivityChanges = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 1)
+    internal val ownerActivityChanges: kotlinx.coroutines.flow.SharedFlow<String> = _ownerActivityChanges
+
+    internal fun isCurrentOriginalOwner(key: com.example.data.sync.OwnerVisitKey): Boolean =
+        getEffectiveActorUid() == key.ownerUid && _activeWorkspaceId.value == key.workspaceId &&
+            _verifiedWorkspaceContext.value == (key.ownerUid to key.workspaceId) &&
+            (currentWorkspace.value?.takeIf { it.workspaceId == key.workspaceId }?.let { it.ownerUid == key.ownerUid }
+                ?: (context.getSharedPreferences("owner_activity_visits", Context.MODE_PRIVATE)
+                    .getLong(key.preferenceKey, 0L) > 0L)) &&
+            isOwnerOfWorkspace(key.workspaceId)
+
+    internal suspend fun refreshOwnerVisit(
+        key: com.example.data.sync.OwnerVisitKey,
+        since: Long?,
+        online: () -> Boolean
+    ): com.example.data.firebase.OwnerVisitCloud.Refresh {
+        check(isCurrentOriginalOwner(key) && online())
+        val refresh = com.example.data.firebase.OwnerVisitCloud.refresh(key, since)
+        database.withTransaction {
+            check(isCurrentOriginalOwner(key) && online())
+            val items = refresh.activities.map { (item, _) ->
+                val legacyType = if (item.eventType == com.example.data.sync.OwnerVisitActivity.OLD_ENTRY)
+                    AppNotificationEntity.EVENT_JOB_CREATED else item.eventType
+                val legacyId = item.operationId + "_OWNER_" + legacyType
+                val legacy = appNotificationDao.getById(key.workspaceId, legacyId)
+                if (legacy != null && com.example.data.sync.OwnerVisitActivity.sameOperation(item, legacy))
+                    item.copy(isRead = legacy.isRead, readAt = legacy.readAt)
+                else item
+            }
+            appNotificationDao.upsertPreservingReadState(items)
+        }
+        return refresh
+    }
+
+    private fun signalOwnerActivity(workspaceId: String) {
+        val uid = getEffectiveActorUid().orEmpty()
+        if (uid.isNotBlank() && isCurrentOriginalOwner(com.example.data.sync.OwnerVisitKey(workspaceId, uid))) {
+            _ownerActivityChanges.tryEmit(workspaceId)
+        }
+    }
+
+    private fun isCloudNotification(item: AppNotificationEntity): Boolean =
+        !item.id.startsWith(com.example.data.sync.OwnerVisitActivity.ID_PREFIX) &&
+            item.targetAudience != com.example.data.sync.OwnerVisitActivity.AUDIENCE
+
+    private fun notificationVisible(item: AppNotificationEntity, uid: String, isOwner: Boolean): Boolean {
+        if (item.actorUid == uid || (item.recipientUid.isNotBlank() && item.recipientUid != uid)) return false
+        if (item.targetAudience == com.example.data.sync.OwnerVisitActivity.AUDIENCE)
+            return isOwner && isCurrentOriginalOwner(com.example.data.sync.OwnerVisitKey(item.workspaceId, uid)) &&
+                _activeWorkspaceMembers.value.any {
+                    it.workspaceId == item.workspaceId && it.uid == item.actorUid &&
+                        it.status.equals("ACTIVE", true) && (com.example.data.auth.RoleUtils.normalizeRole(it.role) == com.example.data.auth.RoleUtils.ROLE_PARTNER)
+                }
+        if (!isOwner) return item.targetAudience == AppNotificationEntity.AUDIENCE_PARTNER_TARGETED && item.recipientUid == uid
+        // Older client-created copies lack a commit guarantee. Corroborated copies are
+        // represented by the verified local row, with the old read flag preserved.
+        return item.targetAudience != AppNotificationEntity.AUDIENCE_OWNER_ONLY ||
+            item.eventType !in com.example.data.sync.OwnerVisitActivity.eventTypes
+    }
+
     fun getVisibleNotificationsFlow(workspaceId: String, actorUid: String, isOwner: Boolean): Flow<List<AppNotificationEntity>> =
         authorizedRecords(
             workspaceId,
             financial = true,
             records = if (actorUid.isBlank()) kotlinx.coroutines.flow.flowOf(emptyList())
             else appNotificationDao.observeVisibleNotifications(workspaceId, actorUid, isOwner)
+                .map { items -> items.filter { notificationVisible(it, actorUid, isOwner) } }
         )
 
     suspend fun markNotificationRead(workspaceId: String, notificationId: String) {
         val uid = getEffectiveActorUid().orEmpty()
         if (workspaceId.isBlank() || notificationId.isBlank() || uid.isBlank()) return
         val readAt = System.currentTimeMillis()
+        val item = appNotificationDao.getById(workspaceId, notificationId) ?: return
+        if (_activeWorkspaceId.value != workspaceId || !notificationVisible(item, uid, isOwnerOfWorkspace(workspaceId))) return
         appNotificationDao.markRead(workspaceId, notificationId, readAt)
-        if (isCloudReady()) {
+        if (isCloudReady() && !notificationId.startsWith(com.example.data.sync.OwnerVisitActivity.ID_PREFIX)) {
             try {
                 firestoreRepository.markNotificationReadInCloud(workspaceId, notificationId, readAt)
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -3284,20 +3421,18 @@ class WorkspaceRepository(
 
     suspend fun markAllNotificationsRead(workspaceId: String) {
         val uid = getEffectiveActorUid().orEmpty()
-        if (workspaceId.isBlank() || uid.isBlank()) return
+        if (workspaceId.isBlank() || uid.isBlank() || _activeWorkspaceId.value != workspaceId) return
         val isOwner = isOwnerOfWorkspace(workspaceId)
         val readAt = System.currentTimeMillis()
         val unreadIds = appNotificationDao.getAllOnce(workspaceId)
-            .filter {
-                !it.isRead && it.actorUid != uid && (
-                    if (isOwner) it.targetAudience == AppNotificationEntity.AUDIENCE_OWNER_ONLY || it.recipientUid == uid || it.recipientUid.isBlank()
-                    else it.targetAudience == AppNotificationEntity.AUDIENCE_PARTNER_TARGETED && it.recipientUid == uid
-                )
-            }
+            .filter { !it.isRead && notificationVisible(it, uid, isOwner) }
             .map { it.id }
-        appNotificationDao.markAllRead(workspaceId, uid, isOwner, readAt)
+        database.withTransaction {
+            if (_activeWorkspaceId.value != workspaceId || getEffectiveActorUid() != uid) return@withTransaction
+            unreadIds.forEach { appNotificationDao.markRead(workspaceId, it, readAt) }
+        }
         if (isCloudReady()) {
-            unreadIds.forEach { notifId ->
+            unreadIds.filterNot { it.startsWith(com.example.data.sync.OwnerVisitActivity.ID_PREFIX) }.forEach { notifId ->
                 try {
                     firestoreRepository.markNotificationReadInCloud(workspaceId, notifId, readAt)
                 } catch (e: kotlinx.coroutines.CancellationException) {
@@ -3459,7 +3594,7 @@ class WorkspaceRepository(
                         payments = payments, expenses = expenses, withdrawals = withdrawals,
                         externalLoans = loans, externalLoanRepayments = loanReps, settlementRepayments = setReps,
                         scope = com.example.ui.util.FinancialScope(workspaceId = wsId), jobs = jobs
-                    )
+                    ) + currentCashAdjustment(wsId)
                 }
                 val overview = com.example.ui.util.PartnerBorrowingCalculator.calculate(
                     confirmedCash = cashAvailable,
@@ -3607,7 +3742,7 @@ class WorkspaceRepository(
                     payments = payments, expenses = expenses, withdrawals = withdrawals,
                     externalLoans = loans, externalLoanRepayments = loanReps, settlementRepayments = setReps,
                     scope = com.example.ui.util.FinancialScope(workspaceId = wsId), jobs = jobs
-                )
+                ) + currentCashAdjustment(wsId)
             }
             val overview = com.example.ui.util.PartnerBorrowingCalculator.calculate(
                 confirmedCash = cashAvailable,

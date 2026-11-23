@@ -1,5 +1,9 @@
 package com.example.ui.screens.report
 
+import com.example.ui.components.ReportDateFilterControl
+import com.example.ui.util.ReportDateFilter
+import com.example.ui.util.reportDate
+import com.example.ui.util.reportDateMatches
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,14 +68,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.app.DatePickerDialog
-import java.util.Calendar
-import com.example.ui.components.DatePreset
-import com.example.ui.components.isDateInPreset
 import com.example.ui.components.formatDate
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material.icons.filled.CalendarToday
 import com.example.data.auth.RoleUtils
 import com.example.data.entity.AppSettingsEntity
 import com.example.data.entity.JobEntryEntity
@@ -126,7 +125,7 @@ fun CollectionHistoryTab(
             customerId = j.customerId,
             customerName = j.customerName, amount = j.amountReceived,
             paymentMethod = recordedLegacyPaymentMethod(j.notes),
-            collectedAt = j.startTimeMillis.takeIf { it > 0 } ?: j.createdAt,
+            collectedAt = 0L, // Embedded legacy receipts do not have a recorded collection timestamp.
             collectedByUid = j.createdByUid, collectedByName = name,
             collectedByRole = j.createdByRole.ifBlank { role }, notes = j.notes,
             tractorId = j.tractorId, tractorLabel = j.tractorLabel, isSynced = j.isSynced, createdAt = j.createdAt)
@@ -153,8 +152,10 @@ fun CollectionHistoryTab(
 
     var selectedMethodFilter by remember { mutableStateOf("All") }
     var selectedStatusFilter by remember(settings.workspaceId) { mutableStateOf("ACTIVE") }
-    var selectedDatePreset by remember { mutableStateOf(DatePreset.ALL_TIME) }
-    var customDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var dateFilter by remember(settings.workspaceId) { mutableStateOf(ReportDateFilter()) }
+    var sortOrder by remember(settings.workspaceId) { mutableStateOf(CollectionSort.NEWEST) }
+    var sortMenuOpen by remember { mutableStateOf(false) }
+    val dateBounds = dateFilter.bounds(System.currentTimeMillis())
     var searchQuery by remember { mutableStateOf("") }
     var selectedCollectorFilter by remember { mutableStateOf<String?>(null) }
     var selectedTractorFilter by remember { mutableStateOf<String?>(null) }
@@ -175,7 +176,7 @@ fun CollectionHistoryTab(
         }.distinctBy { it.first }
     }
 
-    val filteredPayments = remember(displayPayments, selectedStatusFilter, selectedMethodFilter, selectedDatePreset, customDateMillis, searchQuery, selectedCollectorFilter, selectedTractorFilter) {
+    val filteredPayments = remember(displayPayments, selectedStatusFilter, selectedMethodFilter, dateBounds, searchQuery, selectedCollectorFilter, selectedTractorFilter) {
         displayPayments.filter { payment ->
             val matchesStatus = payment.status == selectedStatusFilter
             val matchesSearch = if (searchQuery.isBlank()) {
@@ -195,18 +196,7 @@ fun CollectionHistoryTab(
                 else -> true
             }
 
-            val matchesDate = when (selectedDatePreset) {
-                DatePreset.ALL_TIME -> true
-                DatePreset.TODAY -> isDateInPreset(payment.collectedAt, DatePreset.TODAY, timeZone = com.example.data.auth.CollectionPolicy.timeZone)
-                DatePreset.THIS_MONTH -> isDateInPreset(payment.collectedAt, DatePreset.THIS_MONTH, timeZone = com.example.data.auth.CollectionPolicy.timeZone)
-                DatePreset.CUSTOM -> {
-                    val calP = Calendar.getInstance(com.example.data.auth.CollectionPolicy.timeZone).apply { timeInMillis = payment.collectedAt }
-                    val calCustom = Calendar.getInstance(com.example.data.auth.CollectionPolicy.timeZone).apply { timeInMillis = customDateMillis }
-                    calP.get(Calendar.YEAR) == calCustom.get(Calendar.YEAR) &&
-                    calP.get(Calendar.DAY_OF_YEAR) == calCustom.get(Calendar.DAY_OF_YEAR)
-                }
-                else -> isDateInPreset(payment.collectedAt, selectedDatePreset, timeZone = com.example.data.auth.CollectionPolicy.timeZone)
-            }
+            val matchesDate = reportDateMatches(payment.collectedAt, dateBounds)
 
             val matchesCollector = if (selectedCollectorFilter == null) {
                 true
@@ -224,20 +214,9 @@ fun CollectionHistoryTab(
         }
     }
 
-    val totalCollected = filteredPayments.filter { it.status == "ACTIVE" }.sumOf { it.amount }
+    val matchingTotal = filteredPayments.sumOf { it.amount }
     val filteredGroups = filteredPayments.groupBy { it.groupKey }
-    val visibleJobHistory = jobHistory.filter { it.key in filteredGroups }.let { groups ->
-        if (searchQuery.isBlank()) groups else {
-            val key = com.example.ui.util.CustomerIdentity.searchKey(searchQuery)
-            val collator = java.text.Collator.getInstance(if (isTamil) java.util.Locale("ta", "IN") else java.util.Locale.ENGLISH)
-            groups.sortedWith(Comparator { a, b ->
-                val an = a.job?.customerName.orEmpty(); val bn = b.job?.customerName.orEmpty()
-                val rank = (if (com.example.ui.util.CustomerIdentity.searchKey(an).startsWith(key)) 0 else 1)
-                    .compareTo(if (com.example.ui.util.CustomerIdentity.searchKey(bn).startsWith(key)) 0 else 1)
-                if (rank != 0) rank else collator.compare(an, bn)
-            })
-        }
-    }
+    val visibleJobHistory = sortCollectionHistory(jobHistory, filteredGroups, sortOrder)
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("collection_history_list"),
@@ -264,14 +243,16 @@ fun CollectionHistoryTab(
                 ) {
                     Column {
                         Text(
-                            text = if (isTamil) "மொத்த வசூல் தொகை" else "Total Collected",
+                            text = if (selectedStatusFilter == "REVERSED") {
+                                if (isTamil) "திரும்பப் பெற்ற மொத்தத் தொகை" else "Total Reversed"
+                            } else if (isTamil) "மொத்த வசூல் தொகை" else "Total Collected",
                             fontSize = 12.sp,
                             color = TextSecondaryDark,
                             fontWeight = FontWeight.Medium
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = formatInr(totalCollected, settings.currency),
+                            text = formatInr(matchingTotal, settings.currency),
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
                             color = SuccessPaidGreen
@@ -316,47 +297,20 @@ fun CollectionHistoryTab(
                             modifier = Modifier.testTag("collection_filter_reversed")
                         )
                     }
-                    Text(
-                        text = if (isTamil) "தேதி வடிகட்டி:" else "Filter by Date:",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = DeepSageGreen
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf(DatePreset.ALL_TIME to "All", DatePreset.TODAY to "Today", DatePreset.THIS_MONTH to "This Month", DatePreset.CUSTOM to "Specific Date").forEach { (preset, label) ->
-                            FilterChip(
-                                selected = selectedDatePreset == preset,
-                                onClick = {
-                                    selectedDatePreset = preset
-                                    if (preset == DatePreset.CUSTOM) {
-                                        val cal = Calendar.getInstance(com.example.data.auth.CollectionPolicy.timeZone).apply { timeInMillis = customDateMillis }
-                                        DatePickerDialog(
-                                            context,
-                                            { _, y, m, d ->
-                                                val nc = Calendar.getInstance(com.example.data.auth.CollectionPolicy.timeZone).apply { set(y, m, d) }
-                                                customDateMillis = nc.timeInMillis
-                                            },
-                                            cal.get(Calendar.YEAR),
-                                            cal.get(Calendar.MONTH),
-                                            cal.get(Calendar.DAY_OF_MONTH)
-                                        ).show()
-                                    }
-                                },
-                                label = { Text(label, fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = SoftSageGreen)
-                            )
+                    ReportDateFilterControl(dateFilter, isTamil, { dateFilter = it }, displayPayments.any { it.collectedAt <= 0 })
+                    Box {
+                        androidx.compose.material3.OutlinedButton(onClick = { sortMenuOpen = true }, modifier = Modifier.testTag("collection_sort")) {
+                            Text("${if (isTamil) "வரிசைப்படுத்து" else "Sort by"}: ${sortOrder.label(isTamil)}")
                         }
-                    }
-                    if (selectedDatePreset == DatePreset.CUSTOM) {
-                        Text(
-                            text = "${if (isTamil) "தேர்ந்தெடுக்கப்பட்ட தேதி:" else "Selected Date:"} ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).apply { timeZone = com.example.data.auth.CollectionPolicy.timeZone }.format(Date(customDateMillis))}",
-                            fontSize = 11.sp,
-                            color = DeepSageGreen,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
+                            CollectionSort.entries.forEach { order ->
+                                DropdownMenuItem(
+                                    text = { Text(order.label(isTamil)) },
+                                    modifier = Modifier.testTag("collection_sort_$order"),
+                                    onClick = { sortOrder = order; sortMenuOpen = false }
+                                )
+                            }
+                        }
                     }
 
                     // Search field
@@ -675,12 +629,12 @@ internal fun authorizedCollectionSource(
     // An upgraded workspace can contain both entry-only receipts and Collections.
     // Subtract only receipts explicitly allocated to this Entry, never a different
     // customer's payment or a reversed event. Do not invent dates for missing history:
-    // the remaining legacy amount retains its original Entry date.
+    // the remaining legacy amount has no independently recorded collection date.
     val scopedLegacyJobs = reconciledLegacyReceiptJobs(workspaceId, scopedPayments, jobs)
     return AuthorizedCollectionSource(scopedPayments, scopedLegacyJobs)
 }
 
-private data class PaymentDisplayModel(
+internal data class PaymentDisplayModel(
     val id: Long,
     val groupKey: String,
     val originalAmount: Double,
@@ -728,7 +682,7 @@ private fun CollectionHistoryCard(
                     Text("${if (isTamil) "நிலை" else "Status"}: ${payment.status}")
                     Text("${if (isTamil) "வாடிக்கையாளர்" else "Customer"}: ${payment.customerName}")
                     Text("${if (isTamil) "தொகை" else "Amount"}: ${formatInr(payment.originalAmount, settings.currency)}")
-                    Text("${if (isTamil) "தேதி" else "Collected"}: ${dateFormat.format(Date(payment.collectedAt))}")
+                    Text("${if (isTamil) "தேதி" else "Collected"}: ${reportDate(payment.collectedAt, isTamil, "dd MMM yyyy, hh:mm a")}")
                     Text("${if (isTamil) "வசூல் செய்தவர்" else "Collected by"}: ${payment.collectorName}")
                     if (payment.recordedByUid.isNotBlank() && payment.recordedByUid != payment.collectorUid)
                         Text("${if (isTamil) "பதிவு செய்தவர்" else "Recorded by"}: ${payment.recordedByName}")
@@ -746,9 +700,7 @@ private fun CollectionHistoryCard(
     }
 
     if (showDeleteDialog) {
-        val dateStr = remember(payment.collectedAt) {
-            java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.getDefault()).apply { timeZone = com.example.data.auth.CollectionPolicy.timeZone }.format(java.util.Date(payment.collectedAt))
-        }
+        val dateStr = reportDate(payment.collectedAt, isTamil)
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             title = {
@@ -806,11 +758,7 @@ private fun CollectionHistoryCard(
             containerColor = Color.White
         )
     }
-    val dateTimeStr = remember(payment.collectedAt) {
-        val date = Date(payment.collectedAt)
-        val sdf = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).apply { timeZone = com.example.data.auth.CollectionPolicy.timeZone }
-        if (payment.collectedAt > 0) sdf.format(date) else "Date unavailable"
-    }
+    val dateTimeStr = reportDate(payment.collectedAt, isTamil, "dd MMM yyyy, hh:mm a")
 
     val hasPartnership = com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
     val collectorDisplay = remember(payment, workspaceMembers, partners, ownerName, isTamil, hasPartnership) {
@@ -943,9 +891,6 @@ private fun CollectionJobCard(
         com.example.ui.util.FinancialCalculationEngine.calculateSummary(listOf(it), emptyList(), emptyList(),
             com.example.ui.util.FinancialScope(workspaceId = it.workspaceId))
     } }
-    val dateFormat = remember(isTamil) { SimpleDateFormat("dd MMM yyyy", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH).apply {
-        timeZone = com.example.data.auth.CollectionPolicy.timeZone
-    } }
     val identifierTag = group.jobId?.toString() ?: events.firstOrNull()?.id?.toString() ?: group.key
 
     Card(Modifier.fillMaxWidth().testTag("collection_job_card_${group.key}"), shape = RoundedCornerShape(12.dp),
@@ -1001,16 +946,28 @@ private fun CollectionJobCard(
                 }
             }
 
-            // Created Date & Sync Status
-            if (job != null) Text(
-                text = RoleUtils.getEntryForDisplay(job, ownerName, workspaceMembers, partners, isTamil,
-                    com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers))
-                    ?: if (isTamil) "யாருக்காக: அடையாளம் கிடைக்கவில்லை" else "Entry For: Attribution unavailable",
-                fontSize = 11.sp, color = TextSecondaryDark, modifier = Modifier.testTag("collection_entry_for_$identifierTag"))
+            // Collection dates are independent of when the original job was worked.
+            if (job != null) {
+                Text(RoleUtils.getCreatedByDisplay(job, workspaceMembers, partners, isTamil),
+                    fontSize = 11.sp, color = TextSecondaryDark)
+                Text(
+                    text = RoleUtils.getEntryForDisplay(job, workspaceMembers, partners, isTamil)
+                        ?: if (isTamil) "வேலை இயக்குபவர்: அடையாளம் கிடைக்கவில்லை" else "Entry for Operator: Attribution unavailable",
+                    fontSize = 11.sp, color = TextSecondaryDark, modifier = Modifier.testTag("collection_entry_for_$identifierTag")
+                )
+            }
+            val latestCollection = events.maxOf { it.collectedAt }
             Text(
-                text = "${if (isTamil) "உருவாக்கப்பட்டது" else "Created"}: ${job?.createdAt?.takeIf { it > 0 }?.let { dateFormat.format(Date(it)) } ?: "—"}",
-                fontSize = 11.sp,
-                color = TextMutedDark
+                text = "${if (isTamil) "சமீபத்திய வசூல்" else "Latest matching collection"}: ${reportDate(latestCollection, isTamil, "dd MMM yyyy, hh:mm a")}",
+                fontSize = 11.sp, color = TextSecondaryDark
+            )
+            if (job != null) Text(
+                text = "${if (isTamil) "வேலை தேதி" else "Work date"}: ${reportDate(job.startTimeMillis, isTamil)}",
+                fontSize = 11.sp, color = TextMutedDark
+            )
+            Text(
+                text = "${if (isTamil) "பொருந்திய தொகை" else "Matching payments"}: ${formatInr(events.sumOf { it.amount }, settings.currency)}",
+                fontSize = 11.sp, color = TextSecondaryDark
             )
             if (job?.isSynced == false) {
                 Text(
@@ -1027,7 +984,7 @@ private fun CollectionJobCard(
                     Text(totals?.let { formatInr(it.totalRecorded, settings.currency) } ?: "—", fontWeight = FontWeight.Bold)
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(if (isTamil) "வசூலானது" else "Collected", fontSize = 11.sp, color = TextSecondaryDark)
+                    Text(if (isTamil) "வேலை மொத்த வசூல்" else "Job total collected", fontSize = 11.sp, color = TextSecondaryDark)
                     Text(totals?.let { formatInr(it.totalReceived, settings.currency) } ?: "—", fontWeight = FontWeight.Bold, color = SuccessPaidGreen)
                 }
                 Column(Modifier.weight(1f)) {
@@ -1072,7 +1029,7 @@ private fun CollectionJobCard(
                         fontWeight = FontWeight.SemiBold,
                         color = DeepSageGreen
                     )
-                    events.forEach { payment ->
+                    events.sortedWith(compareBy<PaymentDisplayModel> { it.collectedAt.takeIf { time -> time > 0 } ?: Long.MAX_VALUE }.thenBy { it.id }).forEach { payment ->
                         androidx.compose.runtime.key(payment.id) {
                             CollectionHistoryCard(payment, settings, workspaceMembers, partners, ownerName, isTamil, isOwner, onDeleteCollection)
                         }

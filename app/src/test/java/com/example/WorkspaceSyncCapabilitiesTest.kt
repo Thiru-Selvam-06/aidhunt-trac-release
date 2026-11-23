@@ -15,6 +15,13 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], application = android.app.Application::class)
 class WorkspaceSyncCapabilitiesTest {
+    @Test fun cashCorrectionActivationSurvivesRestartWithoutLeakingToAnotherAccount() {
+        val value=WorkspaceSyncCapabilities(cashBalanceAdjustmentsV1=true)
+        VerifiedWorkspaceCapabilityCache(context).record("cash-partner","ws-cash",value)
+        assertTrue(VerifiedWorkspaceCapabilityCache(context).restore("cash-partner","ws-cash").cashBalanceAdjustmentsV1)
+        assertFalse(VerifiedWorkspaceCapabilityCache(context).restore("other-partner","ws-cash").cashBalanceAdjustmentsV1)
+        assertFalse(VerifiedWorkspaceCapabilityCache(context).restore("cash-partner","other-workspace").cashBalanceAdjustmentsV1)
+    }
     private val context get() = ApplicationProvider.getApplicationContext<Context>()
     @Before fun resetSyntheticCache() {
         context.getSharedPreferences("verified_workspace_capabilities", Context.MODE_PRIVATE).edit().clear().commit()
@@ -40,6 +47,16 @@ class WorkspaceSyncCapabilitiesTest {
         cache.record("actor", "workspace", WorkspaceSyncCapabilities(true, true))
         cache.record("actor", "workspace", WorkspaceSyncCapabilities())
         assertEquals(WorkspaceSyncCapabilities(), VerifiedWorkspaceCapabilityCache(context).restore("actor", "workspace"))
+    }
+    @Test fun trustedUnusedCustomerDeletionNeedsAnExplicitBooleanAndRetainsActorIsolation() {
+        assertFalse(WorkspaceSyncCapabilities.fromWorkspace(mapOf("syncCapabilities" to
+            mapOf("trustedEmptyCustomerDeletionV1" to "true"))).trustedEmptyCustomerDeletionV1)
+        val enabled=WorkspaceSyncCapabilities.fromWorkspace(mapOf("syncCapabilities" to
+            mapOf("trustedEmptyCustomerDeletionV1" to true)))
+        assertTrue(enabled.trustedEmptyCustomerDeletionV1)
+        VerifiedWorkspaceCapabilityCache(context).record("partner", "ws-test", enabled)
+        assertTrue(VerifiedWorkspaceCapabilityCache(context).restore("partner", "ws-test").trustedEmptyCustomerDeletionV1)
+        assertFalse(VerifiedWorkspaceCapabilityCache(context).restore("other", "ws-test").trustedEmptyCustomerDeletionV1)
     }
     @Test fun disabledProtocolWaitIsTransientAndPreservesExactOriginalAction() {
         val basic = PendingOperationEntity("original-op", "workspace", "operator", "CUSTOMER", 9007199254740995L,

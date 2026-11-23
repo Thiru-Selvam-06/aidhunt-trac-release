@@ -1,6 +1,9 @@
 package com.example.data.firebase
 
 import com.example.data.auth.RoleUtils
+import com.google.firebase.FirebaseNetworkException
+import com.google.firebase.firestore.FirebaseFirestoreException
+import kotlinx.coroutines.TimeoutCancellationException
 
 /** Indexes suggest candidates; only a current workspace-scoped membership grants authority. */
 internal object WorkspaceDiscoveryPolicy {
@@ -20,6 +23,13 @@ internal object WorkspaceDiscoveryPolicy {
             return requested
         }
         return remembered?.takeIf { it in authorized } ?: authorized.singleOrNull()
+    }
+
+    fun mayRestoreCachedWorkspace(error: Throwable): Boolean = when (error) {
+        is TimeoutCancellationException, is FirebaseNetworkException -> true
+        is FirebaseFirestoreException -> error.code == FirebaseFirestoreException.Code.UNAVAILABLE ||
+            error.code == FirebaseFirestoreException.Code.DEADLINE_EXCEEDED
+        else -> false
     }
 
     fun role(uid: String, ws: String, data: Map<String, Any?>, ownerUid: String): String? {

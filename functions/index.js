@@ -1,12 +1,49 @@
 "use strict";
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { initializeApp } = require("firebase-admin/app");
-const { getFirestore } = require("firebase-admin/firestore");
+const { defineBoolean, defineString } = require("firebase-functions/params");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getMessaging } = require("firebase-admin/messaging");
+const { onDocumentWrittenWithAuthContext } = require("firebase-functions/v2/firestore");
+const { REGION, publishOwnerActivity } = require("./owner-activity");
+const { ownerActivitySession } = require("./owner-activity-session");
+const { ownerActivityPilotScope, SESSION_SERVICE_ACCOUNT, SENDER_SERVICE_ACCOUNT } = require("./owner-activity-pilot");
 const { getAuth } = require("firebase-admin/auth");
 const { validateInvitation } = require("./invitation-policy");
-initializeApp();
+const app = initializeApp();
 const db = getFirestore();
 db.settings({ useBigInt: true }); // Android record IDs are 63-bit Longs, beyond JavaScript's exact Number range.
+const ownerPilotEnabled = defineBoolean("OWNER_ACTIVITY_PILOT_ENABLED", { default: false });
+const ownerPilotWorkspace = defineString("OWNER_ACTIVITY_PILOT_WORKSPACE_ID", { default: "" });
+const ownerPilotUid = defineString("OWNER_ACTIVITY_PILOT_OWNER_UID", { default: "" });
+const ownerPilotOptions = { region: REGION, minInstances: 0, maxInstances: 1, concurrency: 4 };
+
+function ownerActivityScope(workspaceId, sourceProjectId) {
+  const emulator = process.env.FUNCTIONS_EMULATOR === "true";
+  const projectId = app.options.projectId ?? process.env.GCLOUD_PROJECT;
+  return ownerActivityPilotScope({ projectId, emulator, enabled: ownerPilotEnabled.value(),
+    pilotWorkspaceId: ownerPilotWorkspace.value(), pilotOwnerUid: ownerPilotUid.value() }, workspaceId, sourceProjectId);
+}
+
+for (const collection of ["entries", "entryDeletionProofs", "collections", "expenses", "cashDeleteProofs", "withdrawals"]) {
+  exports[`ownerActivity_${collection}`] = onDocumentWrittenWithAuthContext({
+    ...ownerPilotOptions, serviceAccount: SENDER_SERVICE_ACCOUNT,
+    document: `workspaces/{wsId}/${collection}/{recordId}`, retry: true
+  }, event => {
+    if (!event.project) return;
+    const scope = ownerActivityScope(event.params.wsId, event.project);
+    if (!scope) return;
+    return publishOwnerActivity({ db, event, collection, fieldValue: FieldValue, messaging: getMessaging(),
+      emulator: process.env.FUNCTIONS_EMULATOR === "true", expectedOwnerUid: scope.expectedOwnerUid });
+  });
+}
+exports.ownerActivitySession = onCall({ ...ownerPilotOptions, serviceAccount: SESSION_SERVICE_ACCOUNT }, request => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first");
+  const scope = ownerActivityScope(request.data?.workspaceId);
+  if (!scope) throw new HttpsError("permission-denied", "Owner activity pilot unavailable");
+  return ownerActivitySession(db, request, scope.expectedOwnerUid);
+});
+
 function requiredString(data, key) {
   const value = data?.[key];
   if (typeof value !== "string" || !value.trim()) throw new HttpsError("invalid-argument", `${key} is required`);
@@ -120,7 +157,6 @@ exports.deleteWorkspaceCustomer = onCall(async request => {
   const wsId = requiredString(request.data, "workspaceId");
   const id = requiredString(request.data, "customerId");
   if (!/^[0-9]{1,19}$/.test(id) || BigInt(id) > 9223372036854775807n) throw new HttpsError("invalid-argument", "Invalid Customer identity");
-  await requireOwner(request.auth?.uid, wsId);
   const operationId = requiredString(request.data, "operationId");
   const actionTime = request.data.actionTime;
   const acknowledgement = { deleted: true, workspaceId: wsId, customerId: id, operationId, actionTime };
@@ -129,12 +165,16 @@ exports.deleteWorkspaceCustomer = onCall(async request => {
     const ref = ws.collection("customers").doc(id);
     const receipt = ws.collection("customerDeleteReceipts").doc(operationId);
     const directoryRef = ws.collection("customerDirectory").doc(id);
-    const [owner, customer, prior, entries, collections, directory] = await Promise.all([
+    const [member, customer, prior, entries, collections, directory, workspace] = await Promise.all([
       tx.get(ws.collection("members").doc(request.auth.uid)), tx.get(ref), tx.get(receipt),
       tx.get(ws.collection("entries").where("customerId", "==", BigInt(id))),
-      tx.get(ws.collection("collections").where("customerId", "==", BigInt(id))), tx.get(directoryRef)
+      tx.get(ws.collection("collections").where("customerId", "==", BigInt(id))), tx.get(directoryRef), tx.get(ws)
     ]);
-    if (String(owner.get("role")).toUpperCase() !== "OWNER" || String(owner.get("status")).toUpperCase() !== "ACTIVE") throw new HttpsError("permission-denied", "Owner access changed");
+    const role = String(member.get("role")).toUpperCase();
+    const owner = role === "OWNER" && workspace.get("ownerUid") === uid;
+    const partner = role === "PARTNER" && workspace.get("syncCapabilities")?.trustedEmptyCustomerDeletionV1 === true;
+    if (!member.exists || !workspace.exists || String(member.get("status")).toUpperCase() !== "ACTIVE" || (!owner && !partner))
+      throw new HttpsError("permission-denied", "Active Owner or enabled Partner access required");
     if (prior.exists) {
       if (prior.get("actorUid") !== uid || prior.get("customerId") !== id ||
           prior.get("workspaceId") !== wsId || Number(prior.get("actionTime")) !== actionTime)

@@ -52,7 +52,8 @@ class V16ArchitectureContractTest {
         val job = entry()
         assertFalse(job.isHistorical)
         assertTrue(AuthorizationManager.canEditEntry(job, false, currentActorName = "", currentUid = "operator", currentTimeMillis = monday10 + 5 * 3600000, role = "OPERATOR"))
-        assertTrue(AuthorizationManager.canDeleteEntry(job, false, currentActorName = "", currentUid = "operator", currentTimeMillis = monday10 + 5 * 3600000, role = "OPERATOR"))
+        assertFalse(AuthorizationManager.canDeleteEntry(job, false, currentActorName = "", currentUid = "operator", currentTimeMillis = monday10 + 5 * 3600000, role = "OPERATOR"))
+        assertTrue(AuthorizationManager.canDeleteEntry(job.copy(createdByUid = "partner"), false, currentActorName = "", currentUid = "partner", currentTimeMillis = monday10 + 5 * 3600000, role = "PARTNER"))
         assertFalse(AuthorizationManager.canEditEntry(job.copy(isHistorical = true), false, currentActorName = "", currentUid = "operator", currentTimeMillis = monday10 + 5 * 3600000, role = "OPERATOR"))
     }
     @Test fun mondayOfflineActionPreservesAuthorizationAtTuesdaySync() {

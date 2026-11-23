@@ -1,5 +1,7 @@
 package com.example.ui.screens.report
 
+import com.example.ui.util.FinancialFeatureAvailability
+
 import android.app.DatePickerDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -69,6 +71,7 @@ fun ExternalLoansScreen(
     ) -> Unit
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
+    val canStartLoanTransaction = canManageLoans && FinancialFeatureAvailability.newLoanTransactionsEnabled
     var statusFilter by remember { mutableStateOf("ALL") }
     var showCreateDialog by remember { mutableStateOf(false) }
     var repaymentTargetLoan by remember { mutableStateOf<ExternalLoanEntity?>(null) }
@@ -108,12 +111,15 @@ fun ExternalLoansScreen(
                         color = Color(0xFF0F172A)
                     )
                     Text(
-                        text = if (isTamil) "அசல் & வட்டி தனித்தனியாக கண்காணிப்பு" else "Separate principal & interest tracking",
+                        text = if (FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+                            if (isTamil) "அசல் & வட்டி தனித்தனியாக கண்காணிப்பு" else "Separate principal & interest tracking"
+                        } else if (isTamil) "புதிய கடன்களும் திருப்பிச் செலுத்தல் பதிவுகளும் விரைவில்"
+                        else "New loans and repayment entries are coming soon",
                         fontSize = 11.5.sp,
                         color = Color(0xFF64748B)
                     )
                 }
-                if (canManageLoans) {
+                if (canStartLoanTransaction) {
                     Button(
                         onClick = { showCreateDialog = true },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF072D18)),
@@ -203,11 +209,13 @@ fun ExternalLoansScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF334155)
                             )
-                            Text(
-                                text = if (isTamil) "புதிய கடனைப் பதிவு செய்ய மேலே உள்ள பொத்தானைத் தட்டவும்" else "Tap Add Loan to record a business loan",
-                                fontSize = 12.sp,
-                                color = Color(0xFF64748B)
-                            )
+                            if (canStartLoanTransaction) {
+                                Text(
+                                    text = if (isTamil) "புதிய கடனைப் பதிவு செய்ய மேலே உள்ள பொத்தானைத் தட்டவும்" else "Tap Add Loan to record a business loan",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
                         }
                     }
                 }
@@ -219,7 +227,7 @@ fun ExternalLoansScreen(
                         repayments = loanRepayments,
                         currency = settings.currency,
                         isTamil = isTamil,
-                        canManageLoans = canManageLoans,
+                        canManageLoans = canStartLoanTransaction,
                         dateLabel = dateFormat.format(Date(loan.loanDateMillis)),
                         dateFormat = dateFormat,
                         onRepayClick = { repaymentTargetLoan = loan }
@@ -229,7 +237,7 @@ fun ExternalLoansScreen(
         }
     }
 
-    if (showCreateDialog) {
+    if (canStartLoanTransaction && showCreateDialog) {
         AddExternalLoanDialog(
             isTamil = isTamil,
             onDismiss = { showCreateDialog = false },
@@ -239,7 +247,7 @@ fun ExternalLoansScreen(
         )
     }
 
-    repaymentTargetLoan?.let { target ->
+    repaymentTargetLoan?.takeIf { canStartLoanTransaction }?.let { target ->
         RepayExternalLoanDialog(
             loan = target,
             currency = settings.currency,
@@ -359,8 +367,10 @@ private fun ExternalLoanCard(
                         text = if (loan.linkedExpenseId > 0L) {
                             if (isTamil) "இணைக்கப்பட்ட செலவு #${loan.linkedExpenseId}" else "Linked Expense #${loan.linkedExpenseId}"
                         } else {
-                            if (isTamil) "இணைக்கப்படவில்லை — செலவுகள் பக்கத்தில் 'கடன் நிதி' மூலம் இணைக்கலாம்"
-                            else "Unlinked — select 'Loan Funded' in Expenses to link"
+                            if (FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+                                if (isTamil) "செலவுகள் பக்கத்தில் 'கடன் நிதி' மூலம் இணைக்கலாம்"
+                                else "Select Loan Funded in Expenses to link"
+                            } else if (isTamil) "செலவு இணைக்கப்படவில்லை" else "No expense linked"
                         },
                         fontSize = 11.sp,
                         color = if (loan.linkedExpenseId > 0L) Color(0xFF15803D) else Color(0xFF1D4ED8),

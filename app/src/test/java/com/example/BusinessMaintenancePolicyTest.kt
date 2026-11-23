@@ -74,14 +74,42 @@ class BusinessMaintenancePolicyTest {
             members[1].copy(uid = "operator", role = "OPERATOR")).size)
     }
 
-    @Test fun entryForDisplayResolvesExactWorkspaceBeneficiaryNotCreatorCollectorOrDuplicateNames() {
+    @Test fun entryForDisplayKeepsActualOperatorSeparateFromTheWorkspaceBeneficiary() {
         val labels = members.map { it.copy(displayName = it.uid) }
-        val source = job(1, "partner-b", 500.0)
-        assertEquals("Entry for Operator: Partner — partner-b", RoleUtils.getEntryForDisplay(source, workspaceMembers = labels))
+        val source = job(1, "partner-b", 500.0).copy(operatorName = "partner-b")
+        assertEquals("Entry for Operator: partner-b", RoleUtils.getEntryForDisplay(source, workspaceMembers = labels))
+        val separate = source.copy(operatorName = "Tractor driver", financialAttributionUid = "partner-b")
+        assertEquals("Entry for Operator: Tractor driver", RoleUtils.getEntryForDisplay(separate, workspaceMembers = labels))
+        assertEquals("partner-b", separate.financialAttributionUid)
         assertEquals("owner", source.createdByUid)
         assertEquals("partner-b", source.entryForUid)
         assertNull(RoleUtils.getEntryForDisplay(source.copy(entryForUid = ""), workspaceMembers = labels))
-        assertFalse(RoleUtils.getEntryForDisplay(source, workspaceMembers = labels.map { it.copy(workspaceId = "foreign") })!!.contains("partner-b"))
+        assertEquals("Entry for Operator: Tractor driver",
+            RoleUtils.getEntryForDisplay(separate, workspaceMembers = labels.map { it.copy(workspaceId = "foreign") }))
+    }
+
+    @Test fun jobNamesUseSameWorkspaceUidsAndPreserveLegacyOperatorSnapshots() {
+        val owner = members.first { it.uid == "owner" }.copy(displayName = "Muniyappan")
+        val partner = members.first { it.uid == "partner-b" }.copy(displayName = "Perumal")
+        val displayedMembers = listOf(partner.copy(workspaceId = "foreign", displayName = "Not this person"), owner, partner)
+        val entry = job(1, partner.uid, 500.0).copy(addedByPartner = "muniyappan", operatorName = "perumal")
+        assertEquals("Entry by: Muniyappan", RoleUtils.getCreatedByDisplay(entry, displayedMembers))
+        assertEquals("Entry for Operator: Perumal", RoleUtils.getEntryForDisplay(entry, displayedMembers))
+        assertEquals("வேலை இயக்குபவர்: Perumal", RoleUtils.getEntryForDisplay(entry, displayedMembers, isTamil = true))
+        assertEquals("Entry for Operator: Tractor driver",
+            RoleUtils.getEntryForDisplay(entry.copy(operatorName = "Tractor driver"), displayedMembers))
+        assertEquals("Entry for Operator: perumal", RoleUtils.getEntryForDisplay(entry, displayedMembers.take(1)))
+        assertEquals(partner.uid, entry.financialAttributionUid)
+    }
+
+    @Test fun editingAJobRetainsItsLinkedLoanExpenseEvenWhenOmittedByAForm() {
+        val loanExpense = com.example.data.entity.ExpenseEntity(id = 7, workspaceId = ws, expenseType = "Diesel",
+            amount = 100.0, tractorLabel = "T", addedByPartner = "Owner", operatorName = "Driver",
+            paidBy = "Loan Funded", externalLoanId = 9, fundingSource = "EXTERNAL_LOAN")
+        val ordinary = loanExpense.copy(id = 8, paidBy = "Business Paid", externalLoanId = 0, fundingSource = "")
+        val draft = com.example.ui.viewmodel.NewEntryDraft(originalLinkedExpenses = listOf(loanExpense, ordinary))
+        assertEquals(listOf(ordinary, loanExpense), draft.retainExpenseHistory(listOf(ordinary)))
+        assertEquals(listOf(loanExpense), draft.retainExpenseHistory(listOf(loanExpense.copy(amount = 200.0))))
     }
 
     @Test fun initialCollectorUsesSelectedEligibleMemberWhileLaterCollectionPolicyRemainsSelfOnly() {

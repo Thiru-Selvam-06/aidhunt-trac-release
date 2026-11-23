@@ -9,11 +9,9 @@
         <include .../>
         <exclude .../>
         -->
+        <exclude domain="sharedpref" path="owner_activity_push.xml" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="sharedpref" path="owner_activity_push.xml" />
     </device-transfer>
-    -->
 </data-extraction-rules>

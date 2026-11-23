@@ -25,6 +25,11 @@ object JobAuditPresentation {
         SimpleDateFormat("dd MMM yyyy, hh:mm a 'IST'", if (tamil) Locale.forLanguageTag("ta-IN") else Locale.ENGLISH).apply {
             timeZone = TimeZone.getTimeZone("Asia/Kolkata")
         }.format(Date(time))
+    fun recordedTime(time: Long, tamil: Boolean = false): String = if (time <= 0) "" else
+        SimpleDateFormat("hh:mm a 'IST'", if (tamil) Locale.forLanguageTag("ta-IN") else Locale.ENGLISH).apply {
+            timeZone = TimeZone.getTimeZone("Asia/Kolkata")
+        }.format(Date(time)).replace(' ', '\u00a0')
+
     fun date(time: Long, tamil: Boolean = false): String = if (time <= 0) "—" else
         SimpleDateFormat("dd MMM yyyy", if (tamil) Locale.forLanguageTag("ta-IN") else Locale.ENGLISH).apply {
             timeZone = TimeZone.getTimeZone("Asia/Kolkata")

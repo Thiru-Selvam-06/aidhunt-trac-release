@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.Agriculture
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
@@ -49,7 +48,6 @@ import androidx.compose.material.icons.filled.PendingActions
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.ReceiptLong
-import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.ui.text.style.TextOverflow
@@ -87,6 +85,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.auth.RoleUtils
 import com.example.data.entity.AppSettingsEntity
 import com.example.data.entity.ExpenseEntity
 import com.example.data.entity.JobEntryEntity
@@ -117,6 +116,7 @@ import com.example.ui.theme.SuccessPaidGreen
 import com.example.ui.theme.SuccessPaidGreenBg
 import com.example.ui.theme.TextMutedDark
 import com.example.ui.theme.TextSecondaryDark
+import com.example.ui.util.JobAuditPresentation
 import java.util.Locale
 
 import androidx.compose.material.icons.filled.CloudDone
@@ -137,6 +137,9 @@ fun HomeScreen(
     totalCustomerDue: Double = 0.0,
     totalExpenses: Double = 0.0,
     availableBalance: Double = 0.0,
+    cashBalanceVerifying: Boolean = false,
+    displayedBalance: Double? = null,
+    balanceDisplayControls: @Composable () -> Unit = {},
     recentJobs: List<JobEntryEntity>,
     recordedJobCount: Int = recentJobs.size,
     recordedCustomerCount: Int = 0,
@@ -145,6 +148,7 @@ fun HomeScreen(
     unsyncedCount: Int = 0,
     syncMessage: String = "",
     retainedOperationWarning: String = "",
+    onOpenSyncDetails: (() -> Unit)? = null,
     retainedActions: List<com.example.data.entity.PendingOperationEntity> = emptyList(),
     isOwner: Boolean = true,
     currentUid: String = "",
@@ -340,19 +344,22 @@ fun HomeScreen(
                 }
             }
 
-            if (retainedOperationWarning.isNotBlank()) item {
-                Card(colors = CardDefaults.cardColors(containerColor = AlertDueRedBg), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                    Text(retainedOperationWarning, color = AlertDueRed, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
+            val hasReview = retainedOperationWarning.isNotBlank() || retainedActions.any { it.state == "REJECTED" }
+            val hasPending = retainedActions.any { it.state == "PENDING" }
+            if (hasReview || hasPending) item {
+                val summary = if (hasReview) {
+                    if (isTamil) "ஒத்திசைவு பதிவுகளுக்கு ஆய்வு தேவை" else "Sync items need review"
+                } else {
+                    if (isTamil) "ஒத்திசைவுக்காக காத்திருக்கும் பதிவுகள்" else "Records waiting to sync"
                 }
-            }
-
-            // Immutable rejected snapshots stay visible without contaminating confirmed balances.
-            items(retainedActions.filter { it.state in setOf("PENDING", "REJECTED") }, key = { "retained-${it.operationId}" }) { action ->
-                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = AlertDueRedBg)) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("${action.entityType}: ${com.example.ui.util.RetainedActionDetails.status(action)}", fontWeight = FontWeight.Bold)
-                        Text(com.example.ui.util.RetainedActionDetails.summary(action), fontSize = 12.sp)
-                        Text("Original local action; awaiting server confirmation or review. Details in Account → SQLite & Cloud Sync.", fontSize = 12.sp)
+                Card(colors = CardDefaults.cardColors(containerColor = if (hasReview) AlertDueRedBg else AppTheme.colors.cardBg),
+                    shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(summary, modifier = Modifier.weight(1f).padding(vertical = 10.dp), fontSize = 12.sp,
+                            color = if (hasReview) AlertDueRed else AppTheme.colors.textPrimary)
+                        if (onOpenSyncDetails != null) TextButton(onClick = onOpenSyncDetails) {
+                            Text(if (isTamil) "விவரங்கள்" else "Details")
+                        }
                     }
                 }
             }
@@ -382,7 +389,7 @@ fun HomeScreen(
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                             Text(
-                                text = if (isTamil) "கையில் ரொக்கம்" else "Cash in hand",
+                                text = if (displayedBalance != null) (if (isTamil) "திருத்தப்பட்ட காட்சி மட்டும்" else "Edited display only") else (if (isTamil) "கையில் ரொக்கம்" else "Cash in hand"),
                                 fontSize = if (responsive.isSmallPhone) 10.5.sp else 11.sp,
                                 color = AppTheme.colors.textMuted,
                                 maxLines = 1,
@@ -392,13 +399,14 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = formatInr(availableBalance, settings.currency),
+                                text = if (cashBalanceVerifying) (if (isTamil) "சரிபார்க்கிறது…" else "Verifying…") else formatInr(displayedBalance ?: availableBalance, settings.currency),
                                 fontSize = if (responsive.isSmallPhone) 16.sp else if (responsive.isLargePhone) 20.sp else 18.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (availableBalance < 0) AlertDueRed else DeepSageGreen,
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
+                            balanceDisplayControls()
                             if (availableBalance < 0) {
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
@@ -670,7 +678,6 @@ fun JobEntryItemCard(
     onShareWhatsApp: () -> Unit,
     onSharePdf: () -> Unit
 ) {
-    val responsive = com.example.ui.theme.rememberResponsiveDimensions()
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     val isPaid = (job.amountReceived >= job.totalAmount && job.pendingAmount <= 0.0) || job.pendingAmount <= 0.0
     val archived = workspaceMembers.any { it.workspaceId == job.workspaceId && it.uid in setOf(job.createdByUid, job.entryForUid, job.financialAttributionUid) && it.status.equals("removed", true) }
@@ -696,205 +703,98 @@ fun JobEntryItemCard(
             .clickable(onClick = onClick)
             .testTag("job_item_${job.id}")
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top
+        val workType = when {
+            job.workType.isNotBlank() -> com.example.ui.util.Localization.getWorkTypeDisplayName(job.workType, isTamil)
+            job.tractorLabel.isNotBlank() -> job.tractorLabel
+            else -> if (isTamil) "வேலை" else "Work"
+        }
+        val displayAmount = if (job.totalAmount > 0.0) job.totalAmount else job.amountReceived
+        val workDate = JobAuditPresentation.date(job.startTimeMillis, isTamil)
+        val recordedDate = JobAuditPresentation.date(job.createdAt, isTamil)
+        val recordedTime = JobAuditPresentation.recordedTime(job.createdAt, isTamil)
+        val creator = RoleUtils.getCreatedByDisplay(job, workspaceMembers, partners, isTamil)
+        val operator = RoleUtils.getEntryForDisplay(job, workspaceMembers, partners, isTamil)
+        val differentOperator = operator != null && (
+            job.entryForUid != job.createdByUid ||
+                RoleUtils.getEntryForName(job, workspaceMembers, partners) !=
+                RoleUtils.getCreatedByName(job, workspaceMembers, partners, isTamil)
+            )
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
-            // Left Column: Avatar + Customer Details (Name, Work Type, Date & Duration)
             Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.Top
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // 1. Customer Initials / Avatar Circle
                 Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(avatarColor.bg),
+                    modifier = Modifier.size(36.dp).clip(CircleShape).background(avatarColor.bg),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = initials,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = avatarColor.text
-                    )
+                    Text(initials, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = avatarColor.text)
                 }
-
-                // 2. Details: Name, Machinery/Work Type, Date & Duration
-                Column(
+                Text(
+                    text = job.customerName.ifBlank { if (isTamil) "வாடிக்கையாளர்" else "Customer" },
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
-                    // Customer Name
-                    Text(
-                        text = job.customerName.ifBlank { if (isTamil) "வாடிக்கையாளர்" else "Customer" },
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF111827),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    // Machinery / Work Type
-                    val machineryText = if (job.workType.isNotBlank()) {
-                        com.example.ui.util.Localization.getWorkTypeDisplayName(job.workType, isTamil)
-                    } else if (job.tractorLabel.isNotBlank()) {
-                        job.tractorLabel
-                    } else {
-                        if (isTamil) "வேலை" else "Work"
-                    }
-                    Text(
-                        text = machineryText,
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF15803D),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // Date & Duration Row
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // Date with Calendar Icon
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.DateRange,
-                                contentDescription = null,
-                                tint = Color(0xFF6B7280),
-                                modifier = Modifier.size(13.5.dp)
-                            )
-                            Text(
-                                text = if (job.isHistorical) com.example.ui.util.JobAuditPresentation.date(job.startTimeMillis, isTamil) else com.example.ui.util.JobAuditPresentation.instant(job.createdAt, isTamil),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Normal,
-                                color = Color(0xFF4B5563)
-                            )
-                        }
-
-                        // Duration with Clock Icon
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Schedule,
-                                contentDescription = null,
-                                tint = Color(0xFF6B7280),
-                                modifier = Modifier.size(13.5.dp)
-                            )
-                            Text(
-                                text = com.example.ui.util.WorkBillingCalculator.formatDuration(job.durationMinutes),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Normal,
-                                color = Color(0xFF4B5563)
-                            )
-                        }
-                    }
-                    Text(com.example.data.auth.RoleUtils.getCreatedByDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil,
-                        com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers)),
-                        fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Right Column: Amount on top, Status Badge & Chevron right underneath
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Amount on the right
-                val displayAmount = if (job.totalAmount > 0.0) job.totalAmount else job.amountReceived
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF111827)
+                )
                 Text(
                     text = formatInr(displayAmount, settings.currency),
-                    fontSize = 17.5.sp,
+                    modifier = Modifier.widthIn(max = 112.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF111827),
-                    maxLines = 1
+                    color = Color(0xFF111827)
                 )
-
-                // Paid/Due Status Badge & Right-facing Chevron
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    when {
-                        isPaid -> {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFFDCFCE7)
-                            ) {
-                                Text(
-                                    text = if (isTamil) "செலுத்தப்பட்டது" else "Paid",
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF15803D)
-                                )
-                            }
-                        }
-                        isOldAndDue -> {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFF7F1D1D),
-                                border = BorderStroke(1.dp, Color(0xFFF59E0B))
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFFFCD34D))
-                                    )
-                                    Text(
-                                        text = if (isTamil) "பாக்கி" else "Due",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFFEF08A)
-                                    )
-                                }
-                            }
-                        }
-                        else -> {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFFFFE2E2)
-                            ) {
-                                Text(
-                                    text = if (isTamil) "பாக்கி" else "Due",
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFDC2626)
-                                )
-                            }
-                        }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = if (isTamil) "விவரங்களைப் பார்க்கவும்" else "View details",
+                    tint = Color(0xFF6B7280),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(workType, modifier = Modifier.weight(1f, fill = false), fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold, color = Color(0xFF15803D))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = when {
+                        isPaid -> Color(0xFFDCFCE7)
+                        isOldAndDue -> Color(0xFF7F1D1D)
+                        else -> Color(0xFFFFE2E2)
                     }
-
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = "View Details",
-                        tint = Color(0xFF6B7280),
-                        modifier = Modifier.size(18.dp)
+                ) {
+                    Text(
+                        text = if (isPaid) {
+                            if (isTamil) "செலுத்தப்பட்டது" else "Paid"
+                        } else {
+                            if (isTamil) "பாக்கி" else "Due"
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = when {
+                            isPaid -> Color(0xFF15803D)
+                            isOldAndDue -> Color(0xFFFEF08A)
+                            else -> Color(0xFFDC2626)
+                        }
                     )
                 }
             }
+            val showSeparateRecording = job.isHistorical || workDate != recordedDate
+            Text(
+                if (!showSeparateRecording && recordedTime.isNotEmpty()) "$workDate · $recordedTime" else workDate,
+                color = Color(0xFF4B5563), fontSize = 12.sp
+            )
+            if (showSeparateRecording && recordedTime.isNotEmpty()) {
+                val recordedLabel = if (isTamil) "பதிவு செய்த நேரம்" else "Recorded"
+                Text("$recordedLabel: $recordedDate · $recordedTime", color = Color(0xFF4B5563), fontSize = 12.sp)
+            }
+            val duration = com.example.ui.util.WorkBillingCalculator.formatDuration(job.durationMinutes)
+            Text("$duration · $creator", color = Color(0xFF4B5563), fontSize = 12.sp)
+            if (differentOperator) Text(operator.orEmpty(), color = Color(0xFF4B5563), fontSize = 12.sp)
         }
     }
 }
@@ -1212,11 +1112,8 @@ fun CustomerSummaryPopup(
 
                     // 4. TRACTOR / OPERATOR: Compact Surface
                     val hasPartnership = com.example.ui.util.rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
-                    val (cRole, cName) = com.example.data.auth.RoleUtils.resolveCreatorRoleAndName(job, settings.ownerName, workspaceMembers, partners)
-                    val createdByText = com.example.data.auth.RecordIdentityPolicy.savedCreatorLabel(
-                        com.example.data.auth.RoleUtils.formatRoleAndName(com.example.ui.util.businessDisplayRole(cRole, hasPartnership), cName, isTamil), job.createdByUid, isTamil)
-                    val entryForDisplay = com.example.data.auth.RoleUtils.getEntryForDisplay(job, settings.ownerName, workspaceMembers, partners, isTamil,
-                        hasPartnership)
+                    val createdByText = RoleUtils.getCreatedByName(job, workspaceMembers, partners, isTamil)
+                    val entryForName = RoleUtils.getEntryForName(job, workspaceMembers, partners)
                     val editedByDisplayModal = com.example.data.auth.RoleUtils.getEditedByDisplay(job, isTamil, hasPartnership)
 
                     Surface(
@@ -1261,13 +1158,11 @@ fun CustomerSummaryPopup(
                                         text = createdByText,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = Color(0xFF111827),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        color = Color(0xFF111827)
                                     )
                                 }
                             }
-                            if (entryForDisplay != null) {
+                            if (entryForName != null) {
                                 Divider(color = Color(0xFFE5E7EB), thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
                                 Row(
                                     modifier = Modifier
@@ -1278,16 +1173,17 @@ fun CustomerSummaryPopup(
                                 ) {
                                     Text(
                                         text = if (isTamil) "வேலை இயக்குபவர்" else "Entry for Operator",
+                                        modifier = Modifier.weight(1f),
                                         fontSize = 11.sp,
                                         color = Color(0xFF6B7280)
                                     )
                                     Text(
-                                        text = entryForDisplay.removePrefix(if (isTamil) "வேலை இயக்குபவர்: " else "Entry for Operator: "),
+                                        text = entryForName,
+                                        modifier = Modifier.weight(1f),
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
                                         fontSize = 12.5.sp,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = Color(0xFF111827),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        color = Color(0xFF111827)
                                     )
                                 }
                             }

@@ -1,5 +1,11 @@
 
 package com.example.ui.screens.report
+
+import com.example.ui.components.ReportDateFilterControl
+import com.example.ui.util.ReportDateFilter
+import com.example.ui.util.reportDate
+import com.example.ui.util.reportDateMatches
+import com.example.ui.util.FinancialFeatureAvailability
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.ExperimentalFoundationApi
 import android.app.DatePickerDialog
@@ -129,17 +135,6 @@ fun getLocalizedPaymentMode(mode: String, isTamil: Boolean): String {
         else -> mode
     }
 }
-fun getLocalizedDatePreset(preset: DatePreset, isTamil: Boolean): String {
-    if (!isTamil) return preset.label
-    return when (preset) {
-        DatePreset.TODAY -> "இன்று"
-        DatePreset.THIS_WEEK -> "இந்த வாரம்"
-        DatePreset.THIS_MONTH -> "இந்த மாதம்"
-        DatePreset.THIS_YEAR -> "இந்த ஆண்டு"
-        DatePreset.CUSTOM -> "தேதி வரம்பு"
-        DatePreset.ALL_TIME -> "முழுவதும்"
-    }
-}
 val ExpenseTypes = com.example.data.expense.ExpenseCategories.builtIns
 val PaymentModes = listOf(
     "Cash",
@@ -197,14 +192,6 @@ enum class ExpenseScreenView {
     ADD_EXPENSE,
     EDIT_EXPENSE,
     EXPENSE_DETAILS
-}
-enum class DatePreset(val label: String) {
-    TODAY("Today"),
-    THIS_WEEK("This Week"),
-    THIS_MONTH("This Month"),
-    ALL_TIME("All Time"),
-    THIS_YEAR("This Year"),
-    CUSTOM("Custom range")
 }
 @Composable
 fun ExpensesTab(
@@ -355,13 +342,15 @@ fun ExpensesTab(
             }
             ExpenseScreenView.EXPENSE_DETAILS -> {
                 activeExpense?.let { selected -> expenses.find { it.workspaceId == selected.workspaceId && it.id == selected.id } }?.let { expense ->
-                    val canEdit = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canEditExpense(
+                    val canEdit = FinancialFeatureAvailability.canChangeExpense(expense) &&
+                        !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canEditExpense(
                         expense = expense,
                         isOwner = isOwner,
                         currentActorName = effectiveActorName,
                         currentUid = effectiveUid, role = com.example.data.auth.RoleUtils.normalizeRole(workspaceMembers.firstOrNull { it.uid == effectiveUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true) }?.role)
                     )
-                    val canDelete = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canDeleteExpense(
+                    val canDelete = FinancialFeatureAvailability.canChangeExpense(expense) &&
+                        !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canDeleteExpense(
                         expense = expense,
                         isOwner = isOwner,
                         currentActorName = effectiveActorName,
@@ -419,13 +408,11 @@ fun ExpenseReportListScreen(
     val coroutineScope = rememberCoroutineScope()
     val searchRequester = remember { BringIntoViewRequester() }
     var searchQuery by remember { mutableStateOf("") }
-    var selectedDatePreset by remember { mutableStateOf(DatePreset.ALL_TIME) }
-    var customStartDate by remember { mutableLongStateOf(com.example.data.expense.ExpenseDateRange.startOfDay(System.currentTimeMillis())) }
-    var customEndDate by remember { mutableLongStateOf(com.example.data.expense.ExpenseDateRange.endOfDay(System.currentTimeMillis())) }
+    var dateFilter by remember(settings.workspaceId) { mutableStateOf(ReportDateFilter()) }
+    val dateBounds = dateFilter.bounds(System.currentTimeMillis())
     var selectedOperatorFilter by remember { mutableStateOf("All") }
     var selectedTractorFilter by remember { mutableStateOf("All") }
     var selectedTypeFilter by remember { mutableStateOf("All") }
-    var isPresetMenuOpen by remember { mutableStateOf(false) }
     var isOperatorMenuOpen by remember { mutableStateOf(false) }
     var isTractorMenuOpen by remember { mutableStateOf(false) }
     var isTypeMenuOpen by remember { mutableStateOf(false) }
@@ -468,10 +455,7 @@ fun ExpenseReportListScreen(
         val matchesType = selectedTypeFilter == "All" ||
                 exp.expenseType.equals(selectedTypeFilter, ignoreCase = true)
         // Date filter
-        val matchesDate = com.example.data.expense.ExpenseDateRange.contains(
-            if (exp.dateTimestamp > 0) exp.dateTimestamp else exp.createdAt,
-            com.example.data.expense.ExpenseDateRange.Period.valueOf(selectedDatePreset.name),
-            System.currentTimeMillis(), customStartDate, customEndDate)
+        val matchesDate = reportDateMatches(exp.dateTimestamp, dateBounds)
         matchesSearch && matchesOperator && matchesTractor && matchesType && matchesDate
     }
     val totalAmount = filteredExpenses.sumOf { it.amount }
@@ -479,9 +463,6 @@ fun ExpenseReportListScreen(
     val avgAmount = if (totalCount > 0) totalAmount / totalCount else 0.0
     val lowestAmount = filteredExpenses.minOfOrNull { it.amount } ?: 0.0
     val highestAmount = filteredExpenses.maxOfOrNull { it.amount } ?: 0.0
-    val dateFormat = remember { SimpleDateFormat("dd/MM/yy", Locale.getDefault()).apply {
-        timeZone = java.util.TimeZone.getTimeZone("Asia/Kolkata")
-    } }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -533,6 +514,7 @@ fun ExpenseReportListScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .testTag("expense_report_list")
                 .background(Color(0xFFF9FAFB)),
             contentPadding = PaddingValues(
                 start = 16.dp,
@@ -542,146 +524,10 @@ fun ExpenseReportListScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Date Range Selector Row (Preset + From Date + - + To Date + Calendar Icon)
             item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                // Preset Dropdown Chip
-                Box {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF072D18),
-                        modifier = Modifier
-                            .clickable { isPresetMenuOpen = true }
-                            .height(46.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 10.dp)
-                        ) {
-                            Text(
-                                text = getLocalizedDatePreset(selectedDatePreset, isTamil),
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Icon(
-                                imageVector = Icons.Default.KeyboardArrowDown,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                    DropdownMenu(
-                        expanded = isPresetMenuOpen,
-                        onDismissRequest = { isPresetMenuOpen = false }
-                    ) {
-                        DatePreset.values().forEach { preset ->
-                            DropdownMenuItem(
-                                text = { Text(getLocalizedDatePreset(preset, isTamil)) },
-                                onClick = {
-                                    selectedDatePreset = preset
-                                    isPresetMenuOpen = false
-                                }
-                            )
-                        }
-                    }
-                }
-                // From Date Box (Clickable to pick start date)
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color.White,
-                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFFE5E7EB))),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(46.dp)
-                        .clickable {
-                            showDatePicker(context, customStartDate) { picked ->
-                                customStartDate = picked
-                                selectedDatePreset = DatePreset.CUSTOM
-                            }
-                        }
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = dateFormat.format(Date(customStartDate)),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF374151),
-                            textAlign = TextAlign.Center,
-                            lineHeight = 13.sp
-                        )
-                    }
-                }
-                Text(
-                    text = "-",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF6B7280)
-                )
-                // To Date Box (Clickable to pick end date)
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color.White,
-                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFFE5E7EB))),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(46.dp)
-                        .clickable {
-                            showDatePicker(context, customEndDate) { picked ->
-                                customEndDate = com.example.data.expense.ExpenseDateRange.endOfDay(picked)
-                                selectedDatePreset = DatePreset.CUSTOM
-                            }
-                        }
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = dateFormat.format(Date(customEndDate)),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF374151),
-                            textAlign = TextAlign.Center,
-                            lineHeight = 13.sp
-                        )
-                    }
-                }
-                // Calendar Picker Icon
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color.White,
-                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFFE5E7EB))),
-                    modifier = Modifier
-                        .size(46.dp)
-                        .clickable {
-                            showDatePicker(context, customStartDate) { picked ->
-                                customStartDate = picked
-                                customEndDate = com.example.data.expense.ExpenseDateRange.endOfDay(picked)
-                                selectedDatePreset = DatePreset.CUSTOM
-                            }
-                        }
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.CalendarToday,
-                            contentDescription = "Pick Date",
-                            tint = Color(0xFF4B5563),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
+                ReportDateFilterControl(dateFilter, isTamil, { dateFilter = it }, expenses.any { it.dateTimestamp <= 0 },
+                    showExtraPeriods = true)
             }
-        }
         // 3 Filter Dropdowns Row: Operator, Tractor, Expense Type
         item {
             Row(
@@ -893,13 +739,15 @@ fun ExpenseReportListScreen(
             }
         } else {
             items(filteredExpenses, key = { it.id }) { expense ->
-                val canEdit = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canEditExpense(
+                val canEdit = FinancialFeatureAvailability.canChangeExpense(expense) &&
+                        !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canEditExpense(
                     expense = expense,
                     isOwner = isOwner,
                     currentActorName = actorName,
                     currentUid = currentUid, role = com.example.data.auth.RoleUtils.normalizeRole(workspaceMembers.firstOrNull { it.uid == currentUid && it.workspaceId == settings.workspaceId && it.status.equals("active", true) }?.role)
                 )
-                val canDelete = !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canDeleteExpense(
+                val canDelete = FinancialFeatureAvailability.canChangeExpense(expense) &&
+                        !com.example.data.auth.ArchivedRecordAuthorization.isReadOnly(expense.workspaceId, expense.createdByUid, expense.expenseForUid, workspaceMembers) && com.example.data.auth.AuthorizationManager.canDeleteExpense(
                     expense = expense,
                     isOwner = isOwner,
                     currentActorName = actorName,
@@ -1145,7 +993,6 @@ fun ExpenseListItemRow(
 ) {
     var isMenuExpanded by remember { mutableStateOf(false) }
     val visualConfig = getExpenseVisualConfig(expense.expenseType)
-    val itemDateFormat = remember(isTamil) { SimpleDateFormat("dd MMM yyyy, hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH) }
 
     val linkedJob = jobs.find { it.workspaceId == expense.workspaceId && it.id == expense.relatedJobId }
     val linkedCustomerName = linkedJob?.customerName?.ifBlank { null }
@@ -1310,7 +1157,7 @@ fun ExpenseListItemRow(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = itemDateFormat.format(Date(expense.dateTimestamp)),
+                    text = reportDate(expense.dateTimestamp, isTamil, "dd MMM yyyy, hh:mm a"),
                     fontSize = 10.sp,
                     color = Color(0xFF6B7280)
                 )
@@ -1404,7 +1251,7 @@ fun AddOrEditExpenseScreen(
     val selectedLoan = availableDirectLoans.firstOrNull { it.id == selectedExternalLoanId }
     val parsedAmt = com.example.data.expense.ExpenseAmountInput.parseForRecord(amountText, originalAmount)
     val isLoanFundingMode = selectedWhoPaid == "Loan Funded"
-    val isLoanSelectionValid = !isLoanFundingMode || (selectedLoan != null && parsedAmt != null && parsedAmt > 0.0 && parsedAmt <= selectedLoan.principalAmount + 0.001)
+    val isLoanSelectionValid = !isLoanFundingMode || (FinancialFeatureAvailability.newLoanTransactionsEnabled && selectedLoan != null && parsedAmt != null && parsedAmt > 0.0 && parsedAmt <= selectedLoan.principalAmount + 0.001)
     val isAmountValid = parsedAmt != null && (!isLoanFundingMode || selectedLoan == null || parsedAmt <= selectedLoan.principalAmount + 0.001)
     val formDateFormat = remember(isTamil) { SimpleDateFormat("dd/MM/yyyy  hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH) }
     fun doSave() {
@@ -1546,7 +1393,7 @@ fun AddOrEditExpenseScreen(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Default.CalendarToday,
                         label = if (isTamil) "தேதி & நேரம்*" else "Date & Time*",
-                        value = formDateFormat.format(Date(selectedTimestamp)),
+                        value = if (selectedTimestamp > 0L) formDateFormat.format(Date(selectedTimestamp)) else reportDate(0L, isTamil),
                         isDropdown = false,
                         onClick = {
                             showDateTimePicker(context, selectedTimestamp) { pickedTime ->
@@ -1751,39 +1598,41 @@ fun AddOrEditExpenseScreen(
                             }
                         }
 
-                        val isLoanOption = selectedWhoPaid == "Loan Funded"
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                width = if (isLoanOption) 1.5.dp else 1.dp,
-                                color = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFFCBD5E1)
-                            ),
-                            color = if (isLoanOption) Color(0xFFF0FDF4) else Color.White,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(52.dp)
-                                .clickable { selectedWhoPaid = "Loan Funded" }
-                                .testTag("who_paid_loan_funded")
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
+                        if (FinancialFeatureAvailability.newLoanTransactionsEnabled) {
+                            val isLoanOption = selectedWhoPaid == "Loan Funded"
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = if (isLoanOption) 1.5.dp else 1.dp,
+                                    color = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFFCBD5E1)
+                                ),
+                                color = if (isLoanOption) Color(0xFFF0FDF4) else Color.White,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(52.dp)
+                                    .clickable { selectedWhoPaid = "Loan Funded" }
+                                    .testTag("who_paid_loan_funded")
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Payments,
-                                    contentDescription = null,
-                                    tint = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFF64748B),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = if (isTamil) "கடன் நிதி" else "Loan Funded",
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 12.sp,
-                                    maxLines = 1,
-                                    color = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFF334155)
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Payments,
+                                        contentDescription = null,
+                                        tint = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFF64748B),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (isTamil) "கடன் நிதி" else "Loan Funded",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        color = if (isLoanOption) Color(0xFF0F9D58) else Color(0xFF334155)
+                                    )
+                                }
                             }
                         }
                     }
@@ -1938,7 +1787,6 @@ fun ExpenseDetailsScreen(
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     val visualConfig = getExpenseVisualConfig(expense.expenseType)
-    val detailsDateFormat = remember(isTamil) { SimpleDateFormat("dd MMM yyyy, hh:mm a", if (isTamil) Locale("ta", "IN") else Locale.ENGLISH) }
 
     val linkedJob = jobs.find { it.workspaceId == expense.workspaceId && it.id == expense.relatedJobId }
     val linkedCustomerName = linkedJob?.customerName?.ifBlank { null }
@@ -2109,7 +1957,7 @@ fun ExpenseDetailsScreen(
                             modifier = Modifier.weight(1f),
                             icon = Icons.Default.CalendarToday,
                             label = if (isTamil) "தேதி & நேரம்" else "Date & Time",
-                            value = detailsDateFormat.format(Date(expense.dateTimestamp))
+                            value = reportDate(expense.dateTimestamp, isTamil, "dd MMM yyyy, hh:mm a")
                         )
                         DetailInfoItem(
                             modifier = Modifier.weight(1f),
@@ -2179,7 +2027,7 @@ fun ExpenseDetailsScreen(
                             modifier = Modifier.weight(1f),
                             icon = Icons.Default.Schedule,
                             label = if (isTamil) "உருவாக்கப்பட்ட நேரம்" else "Created At",
-                            value = detailsDateFormat.format(Date(expense.createdAt))
+                            value = reportDate(expense.createdAt, isTamil, "dd MMM yyyy, hh:mm a")
                         )
                     }
                 }

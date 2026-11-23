@@ -85,7 +85,11 @@ fun BusinessOverviewScreen(
     onEditJob: ((JobEntryEntity) -> Unit)? = null,
     onDeleteJob: ((JobEntryEntity) -> Unit)? = null,
     isOwner: Boolean = false,
-    currentUid: String = ""
+    currentUid: String = "",
+    displayedBalance: Double? = null,
+    cashAdjustments: List<com.example.data.firebase.CashBalanceEdit> = emptyList(),
+    cashBalanceVerifying: Boolean = false,
+    balanceDisplayControls: @Composable () -> Unit = {}
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     val hasPartnership = rememberBusinessPartnership(settings.workspaceId, workspaceMembers)
@@ -126,8 +130,8 @@ fun BusinessOverviewScreen(
     }
 
     // ─── REAL DATA from FinancialCalculationEngine ───
-    val summary = remember(jobs, expenses, withdrawals, payments, scope) {
-        FinancialCalculationEngine.calculateSummary(jobs, expenses, withdrawals, scope, payments)
+    val summary = remember(jobs, expenses, withdrawals, payments, scope, cashAdjustments) {
+        FinancialCalculationEngine.calculateSummary(jobs, expenses, withdrawals, scope, payments, cashAdjustments)
     }
 
     val partnerBreakdowns = remember(jobs, expenses, withdrawals, partners, workspaceMembers, scope, hasPartnership) {
@@ -395,7 +399,7 @@ fun BusinessOverviewScreen(
                         // Card 4: Available Business Balance — from FinancialCalculationEngine (received - expenses - withdrawals)
                         OverviewSummaryCard(
                             title = if (isTamil) "கிடைக்கும் இருப்பு" else "Available Business\nBalance",
-                            amount = formatInr(summary.availableBalance, settings.currency),
+                            amount = if (cashBalanceVerifying) (if (isTamil) "சரிபார்க்கிறது…" else "Verifying…") else formatInr(summary.availableBalance, settings.currency),
                             subtitle = null,
                             icon = Icons.Default.AccountBalanceWallet,
                             iconBgColor = Color(0xFF9333EA),
@@ -404,6 +408,8 @@ fun BusinessOverviewScreen(
                             modifier = Modifier.weight(1f)
                         )
                     }
+
+                    if (selectedMode == FinancialScopeMode.OVERALL) balanceDisplayControls()
 
                     // Row 3: Expenses & Partner Withdrawals — clickable action cards
                     Row(

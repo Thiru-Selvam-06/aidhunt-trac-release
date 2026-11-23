@@ -55,13 +55,13 @@ object AuthorizationManager {
 
     /**
      * CAN CREATE OLD / HISTORICAL ENTRY:
-     * - Strictly OWNER-ONLY workspace authority capability.
-     * - Partners and Operators are permanently denied.
-     * - Requires account to be ACTIVE (not suspended/expired).
-     * - Does not depend on generic subordinate access-control permissions or partner page locks.
+     * - Available to the workspace Owner and active Partners.
+     * - Operators are excluded. Repository and Rules checks enforce active membership.
      */
     fun canCreateOldEntry(isOwner: Boolean, role: String = ""): Boolean {
-        return isOwner && (role.isBlank() || RoleUtils.normalizeRole(role) == RoleUtils.ROLE_OWNER)
+        val normalized = RoleUtils.normalizeRole(role)
+        return if (isOwner) role.isBlank() || normalized == RoleUtils.ROLE_OWNER
+        else normalized == RoleUtils.ROLE_PARTNER
     }
 
     /**
@@ -69,8 +69,8 @@ object AuthorizationManager {
      * - Requires account to be ACTIVE.
      * - OWNER: Can delete ANY entry (own or others') without 24-hour restriction.
      *   Owner deletion does not depend on Partner permissions or generic access control.
-     * - PARTNER: Can delete ONLY their own UID-attributed entry AND ONLY within 24 HOURS of immutable creation timestamp,
-     *   provided platform permission canDeleteEntry == true.
+     * - PARTNER: Shared job deletion is staged behind the matching Rules rollout.
+     *   Until activated, retain existing own ordinary entry/24-hour eligibility.
      * - OPERATOR: MUST NOT delete entries under any circumstances.
      */
     fun canDeleteEntry(
@@ -79,23 +79,26 @@ object AuthorizationManager {
         currentActorName: String,
         currentUid: String = "",
         currentTimeMillis: Long = System.currentTimeMillis(),
-        role: String = ""
+        role: String = "",
+        sharedPartnerDeletion: Boolean = com.example.BuildConfig.SHARED_PARTNER_JOB_DELETION
     ): Boolean {
         val normalized = RoleUtils.normalizeRole(role)
         if (isOwner && (role.isBlank() || normalized == RoleUtils.ROLE_OWNER)) return true
-        if (normalized !in setOf(RoleUtils.ROLE_PARTNER, RoleUtils.ROLE_OPERATOR) || job.isHistorical) return false
+        if (normalized != RoleUtils.ROLE_PARTNER || currentUid.isBlank()) return false
+        if (sharedPartnerDeletion) return job.createdByUid.isNotBlank()
+        if (job.isHistorical) return false
         return currentUid.isNotBlank() && job.createdByUid == currentUid && within24Hours(job.createdAt, currentTimeMillis)
     }
 
     /**
      * CUSTOMER DELETE RULES:
      * - Requires account to be ACTIVE.
-     * - Full privilege for Owner only. Partner/Operator have NO privilege to delete a customer.
+     * - Owners and Partners may request deletion of an unused profile.
+     * - Retained financial references are checked locally and by the trusted server.
      */
-    fun canDeleteCustomer(
-        isOwner: Boolean
-    ): Boolean {
-        return isOwner
+    fun canDeleteCustomer(isOwner: Boolean, role: String = ""): Boolean {
+        val normalized = RoleUtils.normalizeRole(role)
+        return (isOwner && (role.isBlank() || normalized == RoleUtils.ROLE_OWNER)) || normalized == RoleUtils.ROLE_PARTNER
     }
 
     /**

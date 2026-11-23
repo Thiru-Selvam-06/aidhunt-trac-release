@@ -168,6 +168,46 @@ class RoomScopeTest {
             assertNotNull(reopened.jobEntryDao().getJobById("b", 1))
         } finally { reopened.close(); context.deleteDatabase(name) }
     }
+
+    @Test fun releaseUpgradeKeepsLedgerAndPendingAndRejectedOperations() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "phase52-upgrade-" + java.util.UUID.randomUUID() + ".db"
+        val job = entry("business")
+        val pending = PendingOperationEntity("original-pending", "business", "actor", "JOB",
+            job.id, "UPSERT", 1, 5000L, """{"amount":100,"actor":"actor"}""")
+        val rejected = pending.copy(operationId = "original-rejected", sequence = 2, attempts = 2,
+            state = "REJECTED", failureReason = "Original authorization response")
+        try {
+            val previous = Room.databaseBuilder(context, AppDatabase::class.java, name).build()
+            try {
+                previous.jobEntryDao().insertJob(job)
+                previous.pendingOperationDao().insert(pending)
+                previous.pendingOperationDao().insert(rejected)
+                // The 23 to 24 migration adds only the notification table. Reconstruct
+                // version 23 to check the real migration on a populated file.
+                val sqlite = previous.openHelper.writableDatabase
+                sqlite.execSQL("DROP TABLE app_notifications")
+                sqlite.version = 23
+            } finally {
+                previous.close()
+            }
+            val updated = Room.databaseBuilder(context, AppDatabase::class.java, name)
+                .addMigrations(AppDatabase.MIGRATION_23_24).build()
+            try {
+                assertEquals(job, updated.jobEntryDao().getJobById("business", job.id))
+                assertEquals(pending, updated.pendingOperationDao().getOperation(pending.operationId))
+                assertEquals(rejected, updated.pendingOperationDao().getOperation(rejected.operationId))
+                assertTrue(updated.appNotificationDao().getAllOnce("business").isEmpty())
+                assertEquals(24, updated.openHelper.readableDatabase.version)
+            } finally {
+                updated.close()
+            }
+        } finally {
+            context.deleteDatabase(name)
+        }
+        Unit
+    }
+
     @Test fun deletionRetryInvalidatesOnlyItsOwnRejectedDelete() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
