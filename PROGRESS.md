@@ -1,14 +1,5 @@
 # AIDHUNT TRAC — Development Progress & Final Reconciliation Log
 
-## Latest UI changes reverted at user request — 23 November 2026
-
-- User explicitly requested undoing the latest UI changes and publishing to GitHub. Reverted only commit `8efdba6d8d8f114343696cabf766d1abf05bd99d` using a history-preserving revert; no reset or force push.
-- Before adding this progress checkpoint, the entire proposed Git tree matched baseline `924a6d00f2ea90ee533fa7eaf6808e670073fda6` exactly. MainActivity, cash editor, reports, common components, app version, tests, mandatory instrumentation plan and inventories are restored to their pre-UI state. All earlier fixes remain.
-- Source version is restored to 1.0.18/code19. The previously delivered 1.0.19 UI APK is superseded by this decision; it is not the rollback build. No replacement APK was built or installed in this rollback task. Do not attempt a lower-version installation by uninstalling or clearing data.
-- Verification: exact baseline tree comparison PASS before this documentation addition; final staged diff/heuristic publication guard required before commit/push. No fresh build or test execution is claimed for this exact source rollback. Earlier baseline evidence remains historical evidence only.
-- No Firebase Rules, backend, configuration, billing, customer data, historical records, pending operations or installed app were changed. The previous seven-receipt correction must never be repeated.
-- Next action: commit the scoped revert and this checkpoint, push `codex/responsive-ui-polish` to the verified origin `Thiru-Selvam-06/aidhunt-trac-release`, then verify its remote SHA. No main merge or deployment. If authentication is unavailable, keep the rollback committed locally and report the actual blocker.
-
 ## COMPLETE: seven legacy receipts and signed1.0.18 Owner cash alerts
 
 - Financial user-approved correction completed/verified:7 dated Cash receipts representing existing16900 plus1 protected audit created atomically; all original jobs,94 old receipts, expenses, withdrawal and unrelated records untouched. User confirmed actual payment times equal TRAC-recorded timestamps and collector Muniyappan. User manually reversed their separate4500 balance adjustment first; its audit is preserved. Received180100/Net18430 unchanged; dated180100/undated0/cash5786.67. Full IDs/dates in protected-release/legacy-confirmation-20261122/OWNER-CORRECTED-RECEIPTS.md; do NOT reapply migration. Original phase6 evidence unchanged.
