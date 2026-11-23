@@ -68,9 +68,10 @@ class CashBalanceDeviceTest {
         compose.setContent { MyApplicationTheme { CashBalanceEditor(ready().copy(totalAdjustmentPaise=371383,revision=1,confirmed=false,edits=listOf(edit)),
             1286.67,true,false,true,{}, {_,_,_,_,_,_->fail("Offline correction")}) } }
         compose.onNodeWithTag("cash_balance_save").assertIsNotEnabled()
+        compose.onNodeWithText("காரணம் (கட்டாயம்)").assertExists()
+        compose.onNodeWithTag("cash_balance_content").performScrollToNode(hasText("Original user reason", substring = true))
         compose.onNodeWithText("Perumal",substring=true).assertExists()
         compose.onNodeWithText("Original user reason",substring=true).assertExists()
-        compose.onNodeWithText("காரணம் (கட்டாயம்)").assertExists()
     }
     @Test fun changingCashRequiresReviewBeforeSaving() {
         val base=androidx.compose.runtime.mutableStateOf(1286.67)
@@ -83,7 +84,7 @@ class CashBalanceDeviceTest {
         compose.onNodeWithTag("cash_balance_save").assertIsNotEnabled()
         compose.onNodeWithText("The balance changed. Close and reopen to review the latest amount.").assertExists()
     }
-    @Test fun failedSaveKeepsTheDialogAndOriginalLogicalOperation() {
+    @Test fun failedSaveKeepsThePageAndOriginalLogicalOperation() {
         val ids=mutableListOf<String>();var dismissed=false
         compose.setContent { MyApplicationTheme { CashBalanceEditor(ready(),1286.67,false,true,true,{dismissed=true},
             {_,_,_,_,id,done->ids.add(id);done("Authorization denied; original balance retained")}) } }

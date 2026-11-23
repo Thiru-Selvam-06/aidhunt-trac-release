@@ -9,6 +9,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import com.example.ui.components.ReportMetrics
+import com.example.ui.components.ReportMetric
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -230,17 +234,12 @@ fun CollectionHistoryTab(
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = SageCardBg),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Column {
                         Text(
                             text = if (selectedStatusFilter == "REVERSED") {
@@ -658,6 +657,7 @@ internal data class PaymentDisplayModel(
     val recordedByUid: String = ""
 )
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CollectionHistoryCard(
     payment: PaymentDisplayModel,
@@ -778,15 +778,14 @@ private fun CollectionHistoryCard(
                 .testTag("collection_history_card_${payment.id}").padding(vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+                Text(if (payment.isSynced) (if (isTamil) "வசூல்" else "Payment") else
+                    (if (isTamil) "ஒத்திசைவு நிலுவையில்" else "Pending sync"), fontSize = 12.sp, color = TextSecondaryDark)
             // Top Row: Customer Name, Amount & (Owner) Delete button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(if (payment.isSynced) (if (isTamil) "வசூல்" else "Payment") else
-                    (if (isTamil) "ஒத்திசைவு நிலுவையில்" else "Pending sync"), fontSize = 12.sp, color = TextSecondaryDark,
-                    modifier = Modifier.weight(1f))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -806,7 +805,7 @@ private fun CollectionHistoryCard(
                         IconButton(
                             onClick = { showDeleteDialog = true },
                             modifier = Modifier
-                                .size(32.dp)
+                                .size(48.dp)
                                 .testTag("reverse_collection_${payment.id}")
                         ) {
                             Icon(
@@ -821,11 +820,8 @@ private fun CollectionHistoryCard(
             }
 
             // Middle Row: Payment Method Chip & Date/Time
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            FlowRow(modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Surface(
                     shape = RoundedCornerShape(6.dp),
                     color = SoftSageGreen
@@ -893,10 +889,10 @@ private fun CollectionJobCard(
     } }
     val identifierTag = group.jobId?.toString() ?: events.firstOrNull()?.id?.toString() ?: group.key
 
-    Card(Modifier.fillMaxWidth().testTag("collection_job_card_${group.key}"), shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = SageCardBg),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Card(Modifier.fillMaxWidth().testTag("collection_job_card_${group.key}"), shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFE2E8F0))) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // Compact Header Row: Customer Name & Work Type + Expand/Collapse Control
             Row(
                 modifier = Modifier
@@ -905,7 +901,7 @@ private fun CollectionJobCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f, fill = false)) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = job?.customerName?.ifBlank { null } ?: events.first().customerName,
                         fontSize = 15.sp,
@@ -934,7 +930,7 @@ private fun CollectionJobCard(
                     IconButton(
                         onClick = { isExpanded = !isExpanded },
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(48.dp)
                             .testTag("expand_job_card_$identifierTag")
                     ) {
                         Icon(
@@ -977,21 +973,12 @@ private fun CollectionJobCard(
                 )
             }
 
-            // Summary Totals: Billed, Collected, Outstanding (always visible in compact state)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Column(Modifier.weight(1f)) {
-                    Text(if (isTamil) "மொத்தம்" else "Billed", fontSize = 11.sp, color = TextSecondaryDark)
-                    Text(totals?.let { formatInr(it.totalRecorded, settings.currency) } ?: "—", fontWeight = FontWeight.Bold)
-                }
-                Column(Modifier.weight(1f)) {
-                    Text(if (isTamil) "வேலை மொத்த வசூல்" else "Job total collected", fontSize = 11.sp, color = TextSecondaryDark)
-                    Text(totals?.let { formatInr(it.totalReceived, settings.currency) } ?: "—", fontWeight = FontWeight.Bold, color = SuccessPaidGreen)
-                }
-                Column(Modifier.weight(1f)) {
-                    Text(if (isTamil) "நிலுவை" else "Outstanding", fontSize = 11.sp, color = TextSecondaryDark)
-                    Text(totals?.let { formatInr(it.totalDue, settings.currency) } ?: "—", fontWeight = FontWeight.Bold, color = com.example.ui.theme.AlertDueRed)
-                }
-            }
+            ReportMetrics(listOf(
+                ReportMetric(if (isTamil) "மொத்தம்" else "Billed", totals?.let { formatInr(it.totalRecorded, settings.currency) } ?: "—", tag = "collection_billed_$identifierTag"),
+                ReportMetric(if (isTamil) "வேலை மொத்த வசூல்" else "Job total collected", totals?.let { formatInr(it.totalReceived, settings.currency) } ?: "—", tag = "collection_received_$identifierTag"),
+                ReportMetric(if (isTamil) "நிலுவை" else "Outstanding", totals?.let { formatInr(it.totalDue, settings.currency) } ?: "—",
+                    color = com.example.ui.theme.AlertDueRed, background = androidx.compose.ui.graphics.Color(0xFFFEF2F2), tag = "collection_due_$identifierTag")
+            ))
             if (job == null) {
                 Text(
                     text = if (isTamil) "வேலை விவரங்கள் கிடைக்கவில்லை; வசூல் வரலாறு தக்கவைக்கப்பட்டுள்ளது." else
