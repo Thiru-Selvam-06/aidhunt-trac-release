@@ -155,6 +155,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 
+// Track process session start time to strictly identify genuinely newly created jobs in this session
+private val appSessionStartTime = System.currentTimeMillis()
+private val sessionAnimatedJobIds = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -279,30 +283,7 @@ fun HomeScreen(
          .take(20)
     }
 
-    // Track job IDs to animate newly created entries during the current session
-    var knownJobIds by remember { mutableStateOf<Set<Long>?>(null) }
-    var newlyCreatedJobIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var animatedJobIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
-
-    androidx.compose.runtime.LaunchedEffect(displayJobs) {
-        val currentIds = displayJobs.map { it.id }.toSet()
-        val prev = knownJobIds
-        val now = System.currentTimeMillis()
-        if (prev == null) {
-            val freshJobs = displayJobs.filter { (now - it.createdAt) in 0..20_000L }.map { it.id }.toSet()
-            if (freshJobs.isNotEmpty()) {
-                newlyCreatedJobIds = newlyCreatedJobIds + freshJobs
-            }
-            knownJobIds = currentIds
-        } else {
-            val added = currentIds - prev
-            val genuinelyNew = displayJobs.filter { it.id in added && (now - it.createdAt) in 0..20_000L }.map { it.id }.toSet()
-            if (genuinelyNew.isNotEmpty()) {
-                newlyCreatedJobIds = newlyCreatedJobIds + genuinelyNew
-            }
-            knownJobIds = currentIds
-        }
-    }
+    var animatedJobIds by remember { mutableStateOf(sessionAnimatedJobIds.toSet()) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -673,7 +654,7 @@ fun HomeScreen(
                 }
             } else {
                 items(displayJobs, key = { it.id }) { job ->
-                    val isNewlyCreated = job.id in newlyCreatedJobIds && job.id !in animatedJobIds
+                    val isNewlyCreated = job.createdAt >= appSessionStartTime && job.id !in animatedJobIds
                     JobEntryItemCard(
                         job = job,
                         settings = settings,
@@ -681,8 +662,8 @@ fun HomeScreen(
                         partners = partners,
                         isNewlyCreated = isNewlyCreated,
                         onAnimationComplete = { completedId ->
+                            sessionAnimatedJobIds.add(completedId)
                             animatedJobIds = animatedJobIds + completedId
-                            newlyCreatedJobIds = newlyCreatedJobIds - completedId
                         },
                         onClick = { selectedJob = job },
                         onShareWhatsApp = {
