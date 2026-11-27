@@ -11,12 +11,19 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Context
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import com.example.ui.utils.trackFocusedField
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.animation.Crossfade
@@ -64,6 +71,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterAlt
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.MonetizationOn
@@ -85,13 +93,17 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Agriculture
+import androidx.compose.material.icons.outlined.LocalOffer
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import com.example.R
@@ -107,6 +119,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -124,6 +137,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -141,6 +156,12 @@ import com.example.data.entity.JobEntryEntity
 import com.example.data.entity.PartnerEntity
 import com.example.data.entity.TractorEntity
 import com.example.pdf.PdfGeneratorHelper
+import com.example.ui.components.ExpenseAmountPill
+import com.example.ui.components.ExpenseBottomRightWaveAccent
+import com.example.ui.components.ExpenseDetailFieldRow
+import com.example.ui.components.ExpensePaymentSourceBadges
+import com.example.ui.components.ExpenseReferenceCard
+import com.example.ui.components.ExpenseSummaryBottomWaveAccent
 import com.example.ui.components.buildExpenseWhatsAppMessage
 import com.example.ui.components.formatInr
 import com.example.ui.components.sendWhatsAppMessage
@@ -435,7 +456,8 @@ fun ExpensesTab(
     onAddExpenseCategory: ((String, (String) -> Unit, (String) -> Unit) -> Unit)? = null,
     onAddExpenseConfirmed: ((ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null,
     onUpdateExpenseWithBase: ((ExpenseEntity, ExpenseEntity, () -> Unit, (String) -> Unit) -> Unit)? = null,
-    externalLoans: List<com.example.data.entity.ExternalLoanEntity> = emptyList()
+    externalLoans: List<com.example.data.entity.ExternalLoanEntity> = emptyList(),
+    onSubViewActiveChanged: (Boolean) -> Unit = {}
 ) {
     var currentView by remember { mutableStateOf(ExpenseScreenView.REPORT_LIST) }
     var activeExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
@@ -443,6 +465,13 @@ fun ExpensesTab(
     var expenseSaveFailed by remember { mutableStateOf(false) }
     val effectiveActorName = actorName.ifBlank { settings.activePartnerName.ifBlank { settings.ownerName } }
     val effectiveUid = if (currentUid.isNotBlank()) currentUid else (com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "")
+
+    LaunchedEffect(currentView) {
+        onSubViewActiveChanged(currentView != ExpenseScreenView.REPORT_LIST)
+    }
+    DisposableEffect(Unit) {
+        onDispose { onSubViewActiveChanged(false) }
+    }
 
     // Intercept back button when in subview
     BackHandler(enabled = currentView != ExpenseScreenView.REPORT_LIST) {
@@ -1447,6 +1476,7 @@ fun StatCard(
 /* =========================================================================================
    Expense List Item Row
    ========================================================================================= */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExpenseListItemRow(
     expense: ExpenseEntity,
@@ -1469,168 +1499,239 @@ fun ExpenseListItemRow(
         ?: if (expense.description.startsWith("Expense for ") && expense.description.contains("'s job")) {
             expense.description.removePrefix("Expense for ").substringBefore("'s job")
         } else null
+    val hasDisplayDescription = expense.description.isNotBlank() &&
+        (linkedCustomerName == null || !expense.description.startsWith("Expense for "))
 
     Card(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = if (isArchived) Color(0xFFE9E9E9) else Color.White),
-        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFFE5E7EB))),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
             .testTag("expense_item_${expense.id}")
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            // Left Category Rounded Square Icon Box
-            Box(
+        Box(modifier = Modifier.fillMaxWidth()) {
+            ExpenseBottomRightWaveAccent(
+                modifier = Modifier.matchParentSize(),
+                waveColor = if (isArchived) Color(0xFFD1D5DB).copy(alpha = 0.45f) else Color(0xFFDCFCE7).copy(alpha = 0.72f)
+            )
+            Row(
                 modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(visualConfig.bgColor),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = visualConfig.icon,
-                    contentDescription = getLocalizedExpenseType(expense.expenseType, isTamil),
-                    tint = visualConfig.tintColor,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-            // Middle Info Column (Expense Type, Customer/Job, Tractor, Operator, Description)
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = getLocalizedExpenseType(expense.expenseType, isTamil),
-                    fontSize = 14.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF111827)
-                )
-                if (linkedCustomerName != null) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = if (isTamil) "வாடிக்கையாளர்: $linkedCustomerName" else "For: $linkedCustomerName",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF15803D),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                if (expense.tractorLabel.isNotBlank()) {
-                    Text(
-                        text = expense.tractorLabel,
-                        fontSize = 11.5.sp,
-                        color = Color(0xFF4B5563),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                val opName = when {
-                    expense.fundingSource.equals("EXTERNAL_LOAN", true) || expense.paidBy.trim().equals("Loan Funded", true) ->
-                        if (isTamil) "கடன் நிதி · நேரடி விநியோகஸ்தர்" else "Loan Funded · Direct to Supplier"
-                    expense.paidBy.trim().equals("Business Paid", true) ->
-                        if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid · Shared expense"
-                    else -> expense.paidByPartner.ifBlank { if (isTamil) "செலுத்தியவர் விவரம் இல்லை" else "Payer unavailable" }
-                }
-                if (opName.isNotBlank()) {
-                    Text(
-                        text = opName,
-                        fontSize = 11.sp,
-                        color = Color(0xFF6B7280),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                if (expense.description.isNotBlank() && (linkedCustomerName == null || !expense.description.startsWith("Expense for "))) {
-                    Text(
-                        text = expense.description,
-                        fontSize = 10.5.sp,
-                        color = Color(0xFF9CA3AF),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            // Right Column: Amount + 3-dots Menu + Date
-            Column(
-                horizontalAlignment = Alignment.End
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                // Left Category Rounded Mint-Green Square Icon Box
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFFDCFCE7)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = formatInr(expense.amount, currency),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFDC2626)
+                    Icon(
+                        imageVector = visualConfig.icon,
+                        contentDescription = getLocalizedExpenseType(expense.expenseType, isTamil),
+                        tint = Color(0xFF16A34A),
+                        modifier = Modifier.size(24.dp)
                     )
-                    Box {
-                        IconButton(
-                            onClick = { isMenuExpanded = true },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "Options",
-                                tint = Color(0xFF9CA3AF),
-                                modifier = Modifier.size(16.dp)
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                // Content Column with subtle thin vertical divider on the left
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .drawBehind {
+                            val strokePx = 1.dp.toPx()
+                            val insetY = 2.dp.toPx()
+                            drawLine(
+                                color = Color(0xFFE2E8F0),
+                                start = Offset(0f, insetY),
+                                end = Offset(0f, size.height - insetY),
+                                strokeWidth = strokePx
                             )
                         }
-                        DropdownMenu(
-                            expanded = isMenuExpanded,
-                            onDismissRequest = { isMenuExpanded = false }
+                        .padding(start = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    // Header row: Category (+ linked customer / tractor) on left, Amount Pill + Overflow Menu on right
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            DropdownMenuItem(
-                                leadingIcon = { Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = Color(0xFF072D18)) },
-                                text = { Text(if (isTamil) "விவரங்களைக் காண்க" else "View Details") },
-                                onClick = {
-                                    isMenuExpanded = false
-                                    onClick()
-                                }
+                            Text(
+                                text = getLocalizedExpenseType(expense.expenseType, isTamil),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF0F172A),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            if (canEdit) {
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF2563EB)) },
-                                    text = { Text(if (isTamil) "செலவைத் திருத்து" else "Edit Expense") },
-                                    onClick = {
-                                        isMenuExpanded = false
-                                        onEdit()
-                                    }
+                            if (linkedCustomerName != null) {
+                                Text(
+                                    text = if (isTamil) "வாடிக்கையாளர்: $linkedCustomerName" else "For: $linkedCustomerName",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF15803D),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            DropdownMenuItem(
-                                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF16A34A)) },
-                                text = { Text(if (isTamil) "வாட்ஸ்அப்பில் பகிர்க" else "Share WhatsApp") },
-                                onClick = {
-                                    isMenuExpanded = false
-                                    onShare()
+                            if (expense.tractorLabel.isNotBlank()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Agriculture,
+                                        contentDescription = null,
+                                        tint = Color(0xFF64748B),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = expense.tractorLabel,
+                                        fontSize = 13.sp,
+                                        color = Color(0xFF475569),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            ExpenseAmountPill(
+                                amountText = formatInr(expense.amount, currency),
+                                fontSizeSp = 15f
                             )
-                            if (canDelete) {
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
-                                    text = { Text(if (isTamil) "நீக்கு" else "Delete", color = Color(0xFFDC2626)) },
-                                    onClick = {
-                                        isMenuExpanded = false
-                                        onDelete()
+                            Box {
+                                IconButton(
+                                    onClick = { isMenuExpanded = true },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .testTag("btn_expense_menu_${expense.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.MoreVert,
+                                        contentDescription = "Options",
+                                        tint = Color(0xFF64748B),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = isMenuExpanded,
+                                    onDismissRequest = { isMenuExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = Color(0xFF072D18)) },
+                                        text = { Text(if (isTamil) "விவரங்களைக் காண்க" else "View Details") },
+                                        onClick = {
+                                            isMenuExpanded = false
+                                            onClick()
+                                        }
+                                    )
+                                    if (canEdit) {
+                                        DropdownMenuItem(
+                                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF2563EB)) },
+                                            text = { Text(if (isTamil) "செலவைத் திருத்து" else "Edit Expense") },
+                                            onClick = {
+                                                isMenuExpanded = false
+                                                onEdit()
+                                            }
+                                        )
                                     }
-                                )
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF16A34A)) },
+                                        text = { Text(if (isTamil) "வாட்ஸ்அப்பில் பகிர்க" else "Share WhatsApp") },
+                                        onClick = {
+                                            isMenuExpanded = false
+                                            onShare()
+                                        }
+                                    )
+                                    if (canDelete) {
+                                        DropdownMenuItem(
+                                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
+                                            text = { Text(if (isTamil) "நீக்கு" else "Delete", color = Color(0xFFDC2626)) },
+                                            onClick = {
+                                                isMenuExpanded = false
+                                                onDelete()
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
+
+                    // Payment detail badges + Formatted Date & Time (wraps cleanly on narrow screens / Tamil / high fontScale)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        ExpensePaymentSourceBadges(
+                            paidBy = expense.paidBy,
+                            paidByPartner = expense.paidByPartner,
+                            fundingSource = expense.fundingSource,
+                            isTamil = isTamil,
+                            modifier = Modifier.align(Alignment.CenterVertically)
+                        )
+                        Row(
+                            modifier = Modifier.align(Alignment.CenterVertically),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CalendarToday,
+                                contentDescription = null,
+                                tint = Color(0xFF64748B),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = reportDate(expense.dateTimestamp, isTamil, "dd MMM yyyy, hh:mm a"),
+                                fontSize = 11.5.sp,
+                                color = Color(0xFF64748B),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    // Description row (preserves empty-value & auto-generated customer-note suppression)
+                    if (hasDisplayDescription) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.LocalOffer,
+                                contentDescription = null,
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = expense.description,
+                                fontSize = 12.sp,
+                                color = Color(0xFF64748B),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = reportDate(expense.dateTimestamp, isTamil, "dd MMM yyyy, hh:mm a"),
-                    fontSize = 10.sp,
-                    color = Color(0xFF6B7280)
-                )
             }
         }
     }
@@ -1801,6 +1902,7 @@ fun AddOrEditExpenseScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .statusBarsPadding()
                     .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -2251,9 +2353,11 @@ fun ExpenseDetailsScreen(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     canEdit: Boolean = true,
-    canDelete: Boolean = true
+    canDelete: Boolean = true,
+    paymentMethod: String? = null
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     val visualConfig = getExpenseVisualConfig(expense.expenseType)
@@ -2263,25 +2367,51 @@ fun ExpenseDetailsScreen(
         ?: if (expense.description.startsWith("Expense for ") && expense.description.contains("'s job")) {
             expense.description.removePrefix("Expense for ").substringBefore("'s job")
         } else null
+    val isLoanFunded = expense.fundingSource.equals("EXTERNAL_LOAN", ignoreCase = true) ||
+        expense.paidBy.trim().equals("Loan Funded", ignoreCase = true)
+    val isBusinessPaid = expense.paidBy.trim().equals("Business Paid", ignoreCase = true)
+    val paidByValue = when {
+        isLoanFunded ->
+            if (isTamil) "கடன் நிதி · நேரடி விநியோகஸ்தர் (#${expense.externalLoanId})" else "Loan Funded · Direct to Supplier (#${expense.externalLoanId})"
+        isBusinessPaid ->
+            if (isTamil) "வணிகம் செலுத்தியது · பகிரப்பட்ட செலவு" else "Business Paid · Shared expense"
+        else -> expense.paidByPartner.ifBlank { if (isTamil) "நான் செலுத்தினேன்" else "I Paid" }
+    }
+    val paidByIcon = when {
+        isLoanFunded -> Icons.Default.Payments
+        isBusinessPaid -> Icons.Default.Groups
+        else -> Icons.Default.Person
+    }
+    val validPaymentMethod = paymentMethod?.takeIf { it.isNotBlank() }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF9FAFB))
+            .background(Color(0xFFF6F8F6))
     ) {
-        // Top Green Header
+        // Consolidated Single Dark Forest-Green Header
         Surface(
-            color = Color(0xFF072D18), // Consistent Dark Green Header
-            modifier = Modifier.fillMaxWidth()
+            color = Color(0xFF072D18),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("expense_details_header")
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .statusBarsPadding()
                     .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onBack) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.testTag("btn_back_expense_details")
+                    ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = if (isTamil) "பின்விளக்கம்" else "Back",
@@ -2293,16 +2423,18 @@ fun ExpenseDetailsScreen(
                         text = if (isTamil) "செலவு விவரங்கள்" else "Expense Details",
                         color = Color.White,
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                // Top Right Edit & Share Icons
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
                         onClick = {
                             val shareText = buildExpenseWhatsAppMessage(expense, settings.businessName, isTamil)
                             sendWhatsAppMessage(context, null, shareText)
-                        }
+                        },
+                        modifier = Modifier.testTag("btn_share_expense_top")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Share,
@@ -2325,193 +2457,239 @@ fun ExpenseDetailsScreen(
                 }
             }
         }
-        // Details Body
+
+        // Scrollable Details Body
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text(
-                text = "${if (isTamil) "செலவு எண்" else "Expense ID"}: ${expense.id}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("expense_record_identity")
-            )
-            // Header Card with Category, Description, and Amount
+            // 1. Top Summary Card
             Card(
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFFE5E7EB))),
-                modifier = Modifier.fillMaxWidth()
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF4FBF6)),
+                border = BorderStroke(1.dp, Color(0xFFD1FAE5)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("expense_summary_card")
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    ExpenseSummaryBottomWaveAccent(
+                        modifier = Modifier.matchParentSize()
+                    )
                     Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.weight(1f)
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(visualConfig.bgColor),
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFFDCFCE7)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = visualConfig.icon,
-                                contentDescription = null,
-                                tint = visualConfig.tintColor,
-                                modifier = Modifier.size(24.dp)
+                                contentDescription = getLocalizedExpenseType(expense.expenseType, isTamil),
+                                tint = Color(0xFF16A34A),
+                                modifier = Modifier.size(28.dp)
                             )
                         }
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
                             Text(
                                 text = getLocalizedExpenseType(expense.expenseType, isTamil),
-                                fontSize = 16.sp,
+                                fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF111827)
+                                color = Color(0xFF0F172A)
                             )
-                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = if (expense.description.isNotBlank()) expense.description else (if (isTamil) "விவரங்கள் எதுவும் வழங்கப்படவில்லை" else "No description provided"),
-                                fontSize = 12.5.sp,
-                                color = Color(0xFF6B7280),
+                                text = if (expense.description.isNotBlank()) expense.description
+                                else (if (isTamil) "விவரங்கள் எதுவும் வழங்கப்படவில்லை" else "No description provided"),
+                                fontSize = 13.sp,
+                                color = Color(0xFF475569),
                                 maxLines = 3,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            if (expense.tractorLabel.isNotBlank()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Agriculture,
+                                        contentDescription = null,
+                                        tint = Color(0xFF64748B),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = "${if (isTamil) "டிராக்டர்" else "Tractor"}: ${expense.tractorLabel}",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color(0xFF475569),
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = formatInr(expense.amount, settings.currency),
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFDC2626)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = getLocalizedPaymentMode("Cash", isTamil),
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF16A34A)
-                        )
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            ExpenseAmountPill(
+                                amountText = formatInr(expense.amount, settings.currency),
+                                fontSizeSp = 17f
+                            )
+                            if (validPaymentMethod != null) {
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = Color(0xFFDCFCE7),
+                                    modifier = Modifier.testTag("expense_payment_method_badge")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Payments,
+                                            contentDescription = null,
+                                            tint = Color(0xFF15803D),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = getLocalizedPaymentMode(validPaymentMethod, isTamil),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFF15803D),
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
-            // 6 Grid Details Cards
+
+            // 2. Compact Expense Reference Card (Visual Shortening + Full-ID Clipboard Copy)
+            val copiedToastText = if (isTamil) "செலவு எண் நகலெடுக்கப்பட்டது" else "Expense ID copied"
+            ExpenseReferenceCard(
+                expenseId = expense.id,
+                isTamil = isTamil,
+                onCopy = {
+                    clipboardManager.setText(AnnotatedString(expense.id.toString()))
+                    Toast.makeText(context, copiedToastText, Toast.LENGTH_SHORT).show()
+                }
+            )
+
+            // 3. Structured Expense Details Information Card
             Card(
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
-                border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFFE5E7EB))),
-                modifier = Modifier.fillMaxWidth()
+                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("expense_details_info_card")
             ) {
-                Column(
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                        .padding(16.dp)
                 ) {
-                    // Row 1: Date & Time & Operator
-                    Row(
+                    val fontScale = LocalDensity.current.fontScale
+                    val stackPairs = maxWidth < 290.dp || fontScale >= 1.2f
+
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        DetailInfoItem(
-                            modifier = Modifier.weight(1f),
-                            icon = Icons.Default.CalendarToday,
-                            label = if (isTamil) "தேதி & நேரம்" else "Date & Time",
-                            value = reportDate(expense.dateTimestamp, isTamil, "dd MMM yyyy, hh:mm a")
+                        // Pair 1: Date & Time | Operator
+                        ExpenseResponsiveFieldPair(
+                            stackVertically = stackPairs,
+                            leftIcon = Icons.Default.CalendarToday,
+                            leftLabel = if (isTamil) "தேதி & நேரம்" else "Date & Time",
+                            leftValue = reportDate(expense.dateTimestamp, isTamil, "dd MMM yyyy, hh:mm a"),
+                            rightIcon = Icons.Default.Person,
+                            rightLabel = if (isTamil) "இயக்குநர்" else "Operator",
+                            rightValue = expense.operatorName.ifBlank { if (isTamil) "பதிவு செய்யப்படவில்லை" else "Not recorded" }
                         )
-                        DetailInfoItem(
-                            modifier = Modifier.weight(1f),
-                            icon = Icons.Default.Person,
-                            label = if (isTamil) "இயக்குநர்" else "Operator",
-                            value = expense.operatorName.ifBlank { if (isTamil) "பதிவு செய்யப்படவில்லை" else "Not recorded" }
+                        HorizontalDivider(color = Color(0xFFF1F5F9), thickness = 1.dp)
+
+                        // Pair 2: Tractor (Chassis No.) | Expense Type
+                        ExpenseResponsiveFieldPair(
+                            stackVertically = stackPairs,
+                            leftIcon = Icons.Default.Agriculture,
+                            leftLabel = if (isTamil) "டிராக்டர் (சேஸ் எண்)" else "Tractor (Chassis No.)",
+                            leftValue = expense.tractorLabel.ifBlank { if (isTamil) "பதிவு செய்யப்படவில்லை" else "Not recorded" },
+                            rightIcon = Icons.Default.Tag,
+                            rightLabel = if (isTamil) "செலவு வகை" else "Expense Type",
+                            rightValue = getLocalizedExpenseType(expense.expenseType, isTamil)
                         )
-                    }
-                    Divider(color = Color(0xFFF3F4F6), thickness = 1.dp)
-                    // Row 2: Tractor & Expense Type
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        DetailInfoItem(
-                            modifier = Modifier.weight(1f),
-                            icon = Icons.Default.DirectionsCar,
-                            label = if (isTamil) "டிராக்டர் (சேஸ் எண்)" else "Tractor (Chassis No.)",
-                            value = expense.tractorLabel
-                        )
-                        DetailInfoItem(
-                            modifier = Modifier.weight(1f),
-                            icon = Icons.Default.Tag,
-                            label = if (isTamil) "செலவு வகை" else "Expense Type",
-                            value = getLocalizedExpenseType(expense.expenseType, isTamil)
-                        )
-                    }
-                    if (linkedCustomerName != null) {
-                        Divider(color = Color(0xFFF3F4F6), thickness = 1.dp)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            DetailInfoItem(
-                                modifier = Modifier.fillMaxWidth(),
+
+                        // Conditional Full-Width Row: Related Customer / Job
+                        if (linkedCustomerName != null) {
+                            HorizontalDivider(color = Color(0xFFF1F5F9), thickness = 1.dp)
+                            ExpenseDetailFieldRow(
                                 icon = Icons.Default.Person,
                                 label = if (isTamil) "தொடர்புடைய வாடிக்கையாளர் / வேலை" else "Related Customer / Job",
-                                value = linkedCustomerName
+                                value = linkedCustomerName,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
-                    }
-                    Divider(color = Color(0xFFF3F4F6), thickness = 1.dp)
-                    // Row 3: Added By & Created At
-                    DetailInfoItem(
-                        modifier = Modifier.fillMaxWidth(),
-                        icon = Icons.Default.Person,
-                        label = if (isTamil) "செலுத்தியவர்" else "Paid By",
-                        value = when {
-                            expense.fundingSource.equals("EXTERNAL_LOAN", true) || expense.paidBy.trim().equals("Loan Funded", true) ->
-                                if (isTamil) "கடன் நிதி · நேரடி விநியோகஸ்தர் (#${expense.externalLoanId})" else "Loan Funded · Direct to Supplier (#${expense.externalLoanId})"
-                            expense.paidBy.trim().equals("Business Paid", true) ->
-                                if (isTamil) "வணிகம் செலுத்தியது" else "Business Paid · Shared expense"
-                            else -> expense.paidByPartner.ifBlank { "I Paid" }
-                        }
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        DetailInfoItem(
-                            modifier = Modifier.weight(1f),
-                            icon = Icons.Default.Person,
-                            label = if (isTamil) "சேர்த்தவர்" else "Added By",
-                            value = com.example.data.auth.RecordIdentityPolicy.savedCreatorLabel(expense.addedByPartner, expense.createdByUid, isTamil)
+
+                        HorizontalDivider(color = Color(0xFFF1F5F9), thickness = 1.dp)
+
+                        // Full-Width Row: Paid By
+                        ExpenseDetailFieldRow(
+                            icon = paidByIcon,
+                            label = if (isTamil) "செலுத்தியவர்" else "Paid By",
+                            value = paidByValue,
+                            modifier = Modifier.fillMaxWidth()
                         )
-                        DetailInfoItem(
-                            modifier = Modifier.weight(1f),
-                            icon = Icons.Default.Schedule,
-                            label = if (isTamil) "உருவாக்கப்பட்ட நேரம்" else "Created At",
-                            value = reportDate(expense.createdAt, isTamil, "dd MMM yyyy, hh:mm a")
+
+                        HorizontalDivider(color = Color(0xFFF1F5F9), thickness = 1.dp)
+
+                        // Pair 3: Added By | Created At
+                        ExpenseResponsiveFieldPair(
+                            stackVertically = stackPairs,
+                            leftIcon = Icons.Default.Person,
+                            leftLabel = if (isTamil) "சேர்த்தவர்" else "Added By",
+                            leftValue = com.example.data.auth.RecordIdentityPolicy.savedCreatorLabel(
+                                expense.addedByPartner,
+                                expense.createdByUid,
+                                isTamil
+                            ),
+                            rightIcon = Icons.Default.Schedule,
+                            rightLabel = if (isTamil) "உருவாக்கப்பட்ட நேரம்" else "Created At",
+                            rightValue = reportDate(expense.createdAt, isTamil, "dd MMM yyyy, hh:mm a")
                         )
                     }
                 }
             }
-            Spacer(modifier = Modifier.weight(1f))
-            // Delete Expense Button
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // 4. Delete Expense Button
             if (canDelete) {
                 OutlinedButton(
                     onClick = { showDeleteConfirmDialog = true },
-                    shape = RoundedCornerShape(10.dp),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(Color(0xFFDC2626))),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = Color(0xFFFEF2F2)),
+                    border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .heightIn(min = 50.dp)
                         .testTag("btn_delete_expense_details")
                 ) {
                     Icon(
@@ -2525,10 +2703,11 @@ fun ExpenseDetailsScreen(
                         text = if (isTamil) "செலவை நீக்கு" else "Delete Expense",
                         color = Color(0xFFDC2626),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
+                        fontSize = 14.5.sp
                     )
                 }
             }
+            Spacer(modifier = Modifier.height(8.dp))
         }
     }
     // Confirmation Alert
@@ -2559,6 +2738,65 @@ fun ExpenseDetailsScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun ExpenseResponsiveFieldPair(
+    stackVertically: Boolean,
+    leftIcon: ImageVector,
+    leftLabel: String,
+    leftValue: String,
+    rightIcon: ImageVector,
+    rightLabel: String,
+    rightValue: String
+) {
+    if (stackVertically) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ExpenseDetailFieldRow(
+                icon = leftIcon,
+                label = leftLabel,
+                value = leftValue,
+                modifier = Modifier.fillMaxWidth()
+            )
+            HorizontalDivider(color = Color(0xFFF1F5F9), thickness = 1.dp)
+            ExpenseDetailFieldRow(
+                icon = rightIcon,
+                label = rightLabel,
+                value = rightValue,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    } else {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ExpenseDetailFieldRow(
+                icon = leftIcon,
+                label = leftLabel,
+                value = leftValue,
+                modifier = Modifier.weight(1f)
+            )
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .fillMaxHeight()
+                    .background(Color(0xFFF1F5F9))
+            )
+            ExpenseDetailFieldRow(
+                icon = rightIcon,
+                label = rightLabel,
+                value = rightValue,
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 /* =========================================================================================

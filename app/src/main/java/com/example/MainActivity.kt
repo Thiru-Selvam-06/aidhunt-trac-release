@@ -247,9 +247,9 @@ internal fun MainAppContent(
                     onBackAction = null
                 }
                 ReportSubPage.EXPENSES -> {
-                    topBarTitle = if (isTamil) "டிராக்டர் செலவுகள்" else "Fleet Expenses"
-                    showBackButton = false
-                    onBackAction = null
+                    topBarTitle = if (isTamil) "டிராக்டர் செலவுகள்" else "Expenses"
+                    showBackButton = true
+                    onBackAction = { viewModel.setReportSubPage(ReportSubPage.MENU) }
                 }
                 ReportSubPage.BALANCE_SHEET -> {
                     topBarTitle = if (isTamil) "இருப்புநிலை அறிக்கை" else "Balance Sheet"
@@ -617,45 +617,57 @@ internal fun MainAppContent(
                 )
             }
 
+            var isExpenseSubViewActive by remember { mutableStateOf(false) }
+            androidx.compose.runtime.LaunchedEffect(currentTab, currentReportSubPage) {
+                if (currentTab != BottomTab.REPORT || currentReportSubPage != ReportSubPage.EXPENSES) {
+                    isExpenseSubViewActive = false
+                }
+            }
+            val hideTopHeaderForExpenseSubView = currentTab == BottomTab.REPORT &&
+                currentReportSubPage == ReportSubPage.EXPENSES &&
+                isExpenseSubViewActive
+
             Scaffold(
                 topBar = {
-                    AppTopHeader(
-                        title = topBarTitle,
-                        showBack = showBackButton,
-                        onBackClick = onBackAction,
-                        settings = settings,
-                        partners = partners,
-                        isSyncing = isSyncing,
-                        isOnline = isOnline,
-                        totalUnsyncedCount = totalUnsyncedCount,
-                        rejectedOperationCount = rejectedOperationCount,
-                        blockedOperationCount = blockedOperationCount,
-                        cloudConnectionState = cloudConnectionState,
-                        onSyncClick = {
-                            when (com.example.ui.util.cloudStatusAction(rejectedOperationCount, cloudConnectionState)) {
-                                com.example.ui.util.CloudStatusAction.OPEN_RETAINED_ACTIONS -> {
-                                    viewModel.setBottomTab(BottomTab.ACCOUNT)
-                                    viewModel.setAccountSubPage(AccountSubPage.SQLITE_SYNC_STATUS)
+                    if (!hideTopHeaderForExpenseSubView) {
+                        AppTopHeader(
+                            title = topBarTitle,
+                            showBack = showBackButton,
+                            onBackClick = onBackAction,
+                            settings = settings,
+                            partners = partners,
+                            isSyncing = isSyncing,
+                            isOnline = isOnline,
+                            totalUnsyncedCount = totalUnsyncedCount,
+                            rejectedOperationCount = rejectedOperationCount,
+                            blockedOperationCount = blockedOperationCount,
+                            cloudConnectionState = cloudConnectionState,
+                            onSyncClick = {
+                                when (com.example.ui.util.cloudStatusAction(rejectedOperationCount, cloudConnectionState)) {
+                                    com.example.ui.util.CloudStatusAction.OPEN_RETAINED_ACTIONS -> {
+                                        viewModel.setBottomTab(BottomTab.ACCOUNT)
+                                        viewModel.setAccountSubPage(AccountSubPage.SQLITE_SYNC_STATUS)
+                                    }
+                                    com.example.ui.util.CloudStatusAction.RETRY_LISTENERS_AND_QUEUE -> {
+                                        viewModel.retryCloudListeners()
+                                        viewModel.pushUnsyncedToCloud()
+                                    }
+                                    com.example.ui.util.CloudStatusAction.SYNC_QUEUE -> viewModel.pushUnsyncedToCloud()
                                 }
-                                com.example.ui.util.CloudStatusAction.RETRY_LISTENERS_AND_QUEUE -> {
-                                    viewModel.retryCloudListeners()
-                                    viewModel.pushUnsyncedToCloud()
-                                }
-                                com.example.ui.util.CloudStatusAction.SYNC_QUEUE -> viewModel.pushUnsyncedToCloud()
-                            }
-                        },
-                        onPartnerSelected = { partner ->
-                            viewModel.setActivePartner(partner)
-                            onShowToast(if (isTamil) "பங்குதாரர் மாற்றப்பட்டது: ${partner.name}" else "Switched to ${partner.name}")
-                        },
-                        rightActionIcon = rightActionIcon,
-                        onRightActionClick = onRightActionClick,
-                        isDarkGreenStyle = true,
-                        showNotificationBell = currentUserRole == com.example.data.auth.RoleUtils.ROLE_OWNER ||
-                            currentUserRole == com.example.data.auth.RoleUtils.ROLE_PARTNER,
-                        notificationUnreadCount = unreadNotificationCount,
-                        onNotificationBellClick = { showNotificationsSheet = true }
-                    )
+                            },
+                            onPartnerSelected = { partner ->
+                                viewModel.setActivePartner(partner)
+                                onShowToast(if (isTamil) "பங்குதாரர் மாற்றப்பட்டது: ${partner.name}" else "Switched to ${partner.name}")
+                            },
+                            rightActionIcon = rightActionIcon,
+                            onRightActionClick = onRightActionClick,
+                            isDarkGreenStyle = true,
+                            showNotificationBell = currentUserRole == com.example.data.auth.RoleUtils.ROLE_OWNER ||
+                                currentUserRole == com.example.data.auth.RoleUtils.ROLE_PARTNER,
+                            notificationUnreadCount = unreadNotificationCount,
+                            onNotificationBellClick = { showNotificationsSheet = true }
+                        )
+                    }
                 },
                 bottomBar = {
                     AppBottomNav(
@@ -681,11 +693,16 @@ internal fun MainAppContent(
                     )
                 }
             ) { innerPadding ->
+                val contentPadding = if (hideTopHeaderForExpenseSubView) {
+                    androidx.compose.foundation.layout.PaddingValues(bottom = innerPadding.calculateBottomPadding())
+                } else {
+                    innerPadding
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(innerPadding)
-                        .consumeWindowInsets(innerPadding)
+                        .padding(contentPadding)
+                        .consumeWindowInsets(contentPadding)
                         .imePadding()
                 ) {
                     Crossfade(targetState = currentTab, label = "tab_crossfade") { tab ->
@@ -754,6 +771,7 @@ internal fun MainAppContent(
 
                             BottomTab.REPORT -> {
                                 ReportScreen(
+                                    onExpenseSubViewActiveChanged = { isExpenseSubViewActive = it },
                                     cashAdjustments = displayState.edits,
                                     cashBalanceVerifying = displayState.enabled && !displayState.loaded,
                                     balanceDisplayControls = displayControls,

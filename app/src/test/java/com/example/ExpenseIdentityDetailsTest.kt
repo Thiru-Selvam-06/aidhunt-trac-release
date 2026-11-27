@@ -1,11 +1,15 @@
 package com.example
 
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.test.core.app.ApplicationProvider
 import com.example.data.entity.AppSettingsEntity
 import com.example.data.entity.ExpenseEntity
 import com.example.ui.screens.report.ExpenseDetailsScreen
 import com.example.ui.theme.MyApplicationTheme
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,7 +30,14 @@ class ExpenseIdentityDetailsTest {
                 onBack = {}, onEdit = {}, onDelete = {})
         } }
         compose.onNodeWithText("Owner (creator identity missing)").assertExists()
-        compose.onNodeWithText("Expense ID: 9007199254740995").assertExists()
+        compose.onNodeWithText("Expense Reference").assertExists()
+        compose.onNodeWithTag("expense_record_identity").assertTextEquals("900719...40995")
+        compose.onNodeWithTag("btn_copy_expense_id").performClick()
+        compose.runOnIdle {
+            val clipboard = ApplicationProvider.getApplicationContext<Context>()
+                .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            assertEquals("9007199254740995", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        }
     }
     @Test fun currentAccountNameIsNeverSubstitutedForMissingRecordCreator() {
         compose.setContent { MyApplicationTheme {
