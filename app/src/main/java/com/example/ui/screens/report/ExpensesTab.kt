@@ -224,7 +224,6 @@ data class ExpenseCategoryTileData(
 
 data class CategoryTileStyle(
     val icon: ImageVector,
-    val iconBg: Color,
     val iconTint: Color,
     val pillBg: Color,
     val pillText: Color,
@@ -237,7 +236,6 @@ fun getCategoryTileStyle(key: String): CategoryTileStyle {
     return when {
         k == "diesel" -> CategoryTileStyle(
             icon = Icons.Default.LocalGasStation,
-            iconBg = Color.Transparent,
             iconTint = Color(0xFF16A34A),
             pillBg = Color(0xFF16A34A),
             pillText = Color.White,
@@ -246,7 +244,6 @@ fun getCategoryTileStyle(key: String): CategoryTileStyle {
         )
         k == "petrol" -> CategoryTileStyle(
             icon = Icons.Default.Opacity,
-            iconBg = Color.Transparent,
             iconTint = Color(0xFFD97706),
             pillBg = Color(0xFFFEF3C7),
             pillText = Color(0xFF0F172A),
@@ -255,7 +252,6 @@ fun getCategoryTileStyle(key: String): CategoryTileStyle {
         )
         k in setOf("repair", "puncture") -> CategoryTileStyle(
             icon = Icons.Default.Build,
-            iconBg = Color.Transparent,
             iconTint = Color(0xFFA855F7),
             pillBg = Color(0xFFF3E8FF),
             pillText = Color(0xFF0F172A),
@@ -264,7 +260,6 @@ fun getCategoryTileStyle(key: String): CategoryTileStyle {
         )
         k in setOf("service", "maintenance", "oil change", "oil") -> CategoryTileStyle(
             icon = Icons.Default.Settings,
-            iconBg = Color.Transparent,
             iconTint = Color(0xFF0284C7),
             pillBg = Color(0xFFDBEAFE),
             pillText = Color(0xFF0F172A),
@@ -273,7 +268,6 @@ fun getCategoryTileStyle(key: String): CategoryTileStyle {
         )
         k in setOf("parts", "spare parts") -> CategoryTileStyle(
             icon = Icons.Default.Inventory2,
-            iconBg = Color.Transparent,
             iconTint = Color(0xFFF97316),
             pillBg = Color(0xFFFEF3C7),
             pillText = Color(0xFF0F172A),
@@ -282,7 +276,6 @@ fun getCategoryTileStyle(key: String): CategoryTileStyle {
         )
         k == "driver bata" -> CategoryTileStyle(
             icon = Icons.Default.Person,
-            iconBg = Color.Transparent,
             iconTint = Color(0xFF6366F1),
             pillBg = Color(0xFFEDE9FE),
             pillText = Color(0xFF0F172A),
@@ -291,7 +284,6 @@ fun getCategoryTileStyle(key: String): CategoryTileStyle {
         )
         else -> CategoryTileStyle(
             icon = Icons.Default.MoreHoriz,
-            iconBg = Color.Transparent,
             iconTint = Color(0xFF475569),
             pillBg = Color(0xFFF1F5F9),
             pillText = Color(0xFF0F172A),
@@ -305,6 +297,7 @@ fun getCategoryTileStyle(key: String): CategoryTileStyle {
 fun ExpenseCategoryTileItem(
     tile: ExpenseCategoryTileData,
     tileWidth: androidx.compose.ui.unit.Dp,
+    tileHeight: androidx.compose.ui.unit.Dp,
     isTamil: Boolean,
     currencySymbol: String
 ) {
@@ -325,30 +318,33 @@ fun ExpenseCategoryTileItem(
     Box(
         modifier = Modifier
             .width(tileWidth)
-            .height(118.dp)
+            .height(tileHeight)
             .clip(RoundedCornerShape(14.dp))
-            .background(tileStyle.baseBg)
             .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(14.dp))
     ) {
-        // Dynamic wave fill from the bottom (animated upward)
-        val currentFill = animatedFill.value
-        if (currentFill > 0f) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
+        // Canvas drawing: Layer A (Base pastel background) & Layer B (Wave percentage fill)
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            // Layer A — Base: very light pastel category colour
+            drawRect(color = tileStyle.baseBg)
+
+            // Layer B — Dynamic wave fill rising from bottom
+            val currentFill = animatedFill.value
+            if (currentFill > 0f) {
                 if (currentFill >= 1f) {
                     drawRect(color = tileStyle.fillBg)
                 } else {
-                    val waveAmplitude = 3.5.dp.toPx()
+                    val waveAmplitude = (size.height * 0.045f).coerceIn(3.dp.toPx(), 4.5.dp.toPx())
                     val waveStartY = size.height * (1f - currentFill)
                     val wavePath = Path().apply {
                         moveTo(0f, waveStartY)
                         cubicTo(
                             size.width * 0.22f, waveStartY - waveAmplitude,
-                            size.width * 0.35f, waveStartY + waveAmplitude,
-                            size.width * 0.52f, waveStartY
+                            size.width * 0.38f, waveStartY + waveAmplitude,
+                            size.width * 0.54f, waveStartY
                         )
                         cubicTo(
                             size.width * 0.72f, waveStartY + waveAmplitude,
-                            size.width * 0.84f, waveStartY - waveAmplitude,
+                            size.width * 0.86f, waveStartY - waveAmplitude,
                             size.width, waveStartY
                         )
                         lineTo(size.width, size.height)
@@ -360,11 +356,11 @@ fun ExpenseCategoryTileItem(
             }
         }
 
-        // Foreground card details
+        // Layer C — Foreground card details
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 7.dp, vertical = 8.dp),
+                .padding(horizontal = 6.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
@@ -372,33 +368,22 @@ fun ExpenseCategoryTileItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .then(
-                            if (tileStyle.iconBg != Color.Transparent) {
-                                Modifier.clip(RoundedCornerShape(7.dp)).background(tileStyle.iconBg)
-                            } else Modifier
-                        ),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Icon(
-                        imageVector = tileStyle.icon,
-                        contentDescription = null,
-                        tint = tileStyle.iconTint,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+                Icon(
+                    imageVector = tileStyle.icon,
+                    contentDescription = null,
+                    tint = tileStyle.iconTint,
+                    modifier = Modifier.size(20.dp)
+                )
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = tileStyle.pillBg
                 ) {
                     Text(
                         text = "${tile.percentage}%",
-                        fontSize = 11.sp,
+                        fontSize = 10.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = tileStyle.pillText,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
                     )
                 }
             }
@@ -406,16 +391,16 @@ fun ExpenseCategoryTileItem(
             Column {
                 Text(
                     text = ExpenseCategories.label(tile.name, isTamil),
-                    fontSize = 12.sp,
+                    fontSize = 11.5.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF0F172A),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(1.dp))
                 Text(
                     text = formatInr(tile.amount, currencySymbol),
-                    fontSize = 12.5.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFF0F172A),
                     maxLines = 1,
@@ -425,6 +410,7 @@ fun ExpenseCategoryTileItem(
         }
     }
 }
+
 enum class ExpenseScreenView {
     REPORT_LIST,
     ADD_EXPENSE,
@@ -708,6 +694,7 @@ fun ExpenseReportListScreen(
     val availableWidth = screenWidth - 32.dp
     val tileSpacing = 8.dp
     val tileWidth = ((availableWidth - (tileSpacing * 4)) / 4.35f).coerceAtLeast(68.dp)
+    val tileHeight = (tileWidth / 0.94f).coerceAtLeast(72.dp)
 
     val analytics = remember(filteredExpenses) { ExpenseAnalytics.from(filteredExpenses) }
     val totalCharged = analytics.charged
@@ -1157,6 +1144,7 @@ fun ExpenseReportListScreen(
                             ExpenseCategoryTileItem(
                                 tile = tile,
                                 tileWidth = tileWidth,
+                                tileHeight = tileHeight,
                                 isTamil = isTamil,
                                 currencySymbol = settings.currency
                             )
