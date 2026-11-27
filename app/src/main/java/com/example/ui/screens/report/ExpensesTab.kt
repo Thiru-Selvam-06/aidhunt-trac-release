@@ -20,6 +20,12 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.Path
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -72,6 +78,27 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.Tag
+import androidx.compose.material.icons.filled.Assignment
+import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Agriculture
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
+import com.example.R
+import com.example.ui.util.ReportPeriod
+import com.example.data.expense.ExpenseAnalytics
+import com.example.data.expense.ExpenseCategories
+import kotlin.math.roundToInt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -187,6 +214,217 @@ fun getExpenseVisualConfig(type: String): ExpenseVisualConfig {
         )
     }
 }
+
+data class ExpenseCategoryTileData(
+    val key: String,
+    val name: String,
+    val amount: Double,
+    val percentage: Int
+)
+
+data class CategoryTileStyle(
+    val icon: ImageVector,
+    val iconBg: Color,
+    val iconTint: Color,
+    val pillBg: Color,
+    val pillText: Color,
+    val baseBg: Color,
+    val fillBg: Color
+)
+
+fun getCategoryTileStyle(key: String): CategoryTileStyle {
+    val k = ExpenseCategories.key(key)
+    return when {
+        k == "diesel" -> CategoryTileStyle(
+            icon = Icons.Default.LocalGasStation,
+            iconBg = Color.Transparent,
+            iconTint = Color(0xFF16A34A),
+            pillBg = Color(0xFF16A34A),
+            pillText = Color.White,
+            baseBg = Color(0xFFE8F9EE),
+            fillBg = Color(0xFFA7F3D0)
+        )
+        k == "petrol" -> CategoryTileStyle(
+            icon = Icons.Default.Opacity,
+            iconBg = Color.Transparent,
+            iconTint = Color(0xFFD97706),
+            pillBg = Color(0xFFFEF3C7),
+            pillText = Color(0xFF0F172A),
+            baseBg = Color(0xFFFFFBEB),
+            fillBg = Color(0xFFFDE68A)
+        )
+        k in setOf("repair", "puncture") -> CategoryTileStyle(
+            icon = Icons.Default.Build,
+            iconBg = Color.Transparent,
+            iconTint = Color(0xFFA855F7),
+            pillBg = Color(0xFFF3E8FF),
+            pillText = Color(0xFF0F172A),
+            baseBg = Color(0xFFFAF5FF),
+            fillBg = Color(0xFFE9D5FF)
+        )
+        k in setOf("service", "maintenance", "oil change", "oil") -> CategoryTileStyle(
+            icon = Icons.Default.Settings,
+            iconBg = Color.Transparent,
+            iconTint = Color(0xFF0284C7),
+            pillBg = Color(0xFFDBEAFE),
+            pillText = Color(0xFF0F172A),
+            baseBg = Color(0xFFF0F9FF),
+            fillBg = Color(0xFFBFDBFE)
+        )
+        k in setOf("parts", "spare parts") -> CategoryTileStyle(
+            icon = Icons.Default.Inventory2,
+            iconBg = Color.Transparent,
+            iconTint = Color(0xFFF97316),
+            pillBg = Color(0xFFFEF3C7),
+            pillText = Color(0xFF0F172A),
+            baseBg = Color(0xFFFFFBEB),
+            fillBg = Color(0xFFFED7AA)
+        )
+        k == "driver bata" -> CategoryTileStyle(
+            icon = Icons.Default.Person,
+            iconBg = Color.Transparent,
+            iconTint = Color(0xFF6366F1),
+            pillBg = Color(0xFFEDE9FE),
+            pillText = Color(0xFF0F172A),
+            baseBg = Color(0xFFF5F3FF),
+            fillBg = Color(0xFFDDD6FE)
+        )
+        else -> CategoryTileStyle(
+            icon = Icons.Default.MoreHoriz,
+            iconBg = Color.Transparent,
+            iconTint = Color(0xFF475569),
+            pillBg = Color(0xFFF1F5F9),
+            pillText = Color(0xFF0F172A),
+            baseBg = Color(0xFFF8FAFC),
+            fillBg = Color(0xFFE2E8F0)
+        )
+    }
+}
+
+@Composable
+fun ExpenseCategoryTileItem(
+    tile: ExpenseCategoryTileData,
+    tileWidth: androidx.compose.ui.unit.Dp,
+    isTamil: Boolean,
+    currencySymbol: String
+) {
+    val tileStyle = getCategoryTileStyle(tile.key)
+    val targetFraction = (tile.percentage / 100f).coerceIn(0f, 1f)
+    val animatedFill = remember { Animatable(0f) }
+
+    LaunchedEffect(targetFraction) {
+        animatedFill.animateTo(
+            targetValue = targetFraction,
+            animationSpec = tween(
+                durationMillis = 700,
+                easing = FastOutSlowInEasing
+            )
+        )
+    }
+
+    Box(
+        modifier = Modifier
+            .width(tileWidth)
+            .height(118.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(tileStyle.baseBg)
+            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(14.dp))
+    ) {
+        // Dynamic wave fill from the bottom (animated upward)
+        val currentFill = animatedFill.value
+        if (currentFill > 0f) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                if (currentFill >= 1f) {
+                    drawRect(color = tileStyle.fillBg)
+                } else {
+                    val waveAmplitude = 3.5.dp.toPx()
+                    val waveStartY = size.height * (1f - currentFill)
+                    val wavePath = Path().apply {
+                        moveTo(0f, waveStartY)
+                        cubicTo(
+                            size.width * 0.22f, waveStartY - waveAmplitude,
+                            size.width * 0.35f, waveStartY + waveAmplitude,
+                            size.width * 0.52f, waveStartY
+                        )
+                        cubicTo(
+                            size.width * 0.72f, waveStartY + waveAmplitude,
+                            size.width * 0.84f, waveStartY - waveAmplitude,
+                            size.width, waveStartY
+                        )
+                        lineTo(size.width, size.height)
+                        lineTo(0f, size.height)
+                        close()
+                    }
+                    drawPath(path = wavePath, color = tileStyle.fillBg)
+                }
+            }
+        }
+
+        // Foreground card details
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 7.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .then(
+                            if (tileStyle.iconBg != Color.Transparent) {
+                                Modifier.clip(RoundedCornerShape(7.dp)).background(tileStyle.iconBg)
+                            } else Modifier
+                        ),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Icon(
+                        imageVector = tileStyle.icon,
+                        contentDescription = null,
+                        tint = tileStyle.iconTint,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = tileStyle.pillBg
+                ) {
+                    Text(
+                        text = "${tile.percentage}%",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = tileStyle.pillText,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Column {
+                Text(
+                    text = ExpenseCategories.label(tile.name, isTamil),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF0F172A),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = formatInr(tile.amount, currencySymbol),
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFF0F172A),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
 enum class ExpenseScreenView {
     REPORT_LIST,
     ADD_EXPENSE,
@@ -234,6 +472,7 @@ fun ExpensesTab(
         when (viewState) {
             ExpenseScreenView.REPORT_LIST -> {
                 ExpenseReportListScreen(
+                    customExpenseCategories = customExpenseCategories,
                     workspaceMembers = workspaceMembers,
                     settings = settings,
                     expenses = expenses,
@@ -401,7 +640,8 @@ fun ExpenseReportListScreen(
     isOwner: Boolean = false,
     actorName: String = "",
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
-    currentUid: String = ""
+    currentUid: String = "",
+    customExpenseCategories: List<String> = emptyList()
 ) {
     val context = LocalContext.current
     val isTamil = settings.language.equals("TA", ignoreCase = true)
@@ -463,54 +703,58 @@ fun ExpenseReportListScreen(
     val avgAmount = if (totalCount > 0) totalAmount / totalCount else 0.0
     val lowestAmount = filteredExpenses.minOfOrNull { it.amount } ?: 0.0
     val highestAmount = filteredExpenses.maxOfOrNull { it.amount } ?: 0.0
+
+    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
+    val availableWidth = screenWidth - 32.dp
+    val tileSpacing = 8.dp
+    val tileWidth = ((availableWidth - (tileSpacing * 4)) / 4.35f).coerceAtLeast(68.dp)
+
+    val analytics = remember(filteredExpenses) { ExpenseAnalytics.from(filteredExpenses) }
+    val totalCharged = analytics.charged
+    val categoryTiles = remember(analytics, customExpenseCategories, expenses) {
+        val activeKeys = analytics.categories.map { it.key }.toSet()
+        val activeList = analytics.categories.map { dist ->
+            val pct = if (totalCharged > 0) ((dist.charged / totalCharged) * 100.0).roundToInt() else 0
+            ExpenseCategoryTileData(
+                key = dist.key,
+                name = dist.name,
+                amount = dist.charged,
+                percentage = pct
+            )
+        }
+        val allChoices = ExpenseCategories.choices(customExpenseCategories, expenses.map { it.expenseType })
+        val remaining = allChoices
+            .filter { ExpenseCategories.key(it) !in activeKeys }
+            .map { name ->
+                ExpenseCategoryTileData(
+                    key = ExpenseCategories.key(name),
+                    name = name,
+                    amount = 0.0,
+                    percentage = 0
+                )
+            }
+        val combined = activeList + remaining
+        if (combined.isNotEmpty()) combined else {
+            ExpenseCategories.builtIns.take(6).map { name ->
+                ExpenseCategoryTileData(
+                    key = ExpenseCategories.key(name),
+                    name = name,
+                    amount = 0.0,
+                    percentage = 0
+                )
+            }
+        }
+    }
+    val categoryScrollState = rememberLazyListState()
+    var isBreakdownExpanded by remember { mutableStateOf(false) }
+    var isDateMenuOpen by remember { mutableStateOf(false) }
+    var dateDialogPeriod by remember { mutableStateOf<ReportPeriod?>(null) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFFF9FAFB))
     ) {
-        // Static Top Action Header outside LazyColumn
-        Surface(
-            color = Color(0xFFF9FAFB),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (isTamil) "செலவு அறிக்கை" else "Expense Report",
-                    fontSize = 19.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF111827)
-                )
-                // Add Expense Button
-                Button(
-                    onClick = onOpenAddExpense,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF072D18)),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                    modifier = Modifier.testTag("btn_add_expense_top")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (isTamil) "செலவு சேர்க்க" else "Add Expense",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    )
-                }
-            }
-        }
-
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -519,185 +763,488 @@ fun ExpenseReportListScreen(
             contentPadding = PaddingValues(
                 start = 16.dp,
                 end = 16.dp,
-                top = 4.dp,
+                top = 10.dp,
                 bottom = 100.dp
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // 1. Expense Report Hero Banner Card
             item {
-                ReportDateFilterControl(dateFilter, isTamil, { dateFilter = it }, expenses.any { it.dateTimestamp <= 0 },
-                    showExtraPeriods = true)
-            }
-        // 3 Filter Dropdowns Row: Operator, Tractor, Expense Type
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                // 1. Operator Filter
-                FilterDropdownButton(
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Default.Person,
-                    iconTint = Color(0xFF16A34A),
-                    label = if (isTamil) "இயக்குநர்" else "Operator",
-                    selectedValue = if (selectedOperatorFilter == "All") (if (isTamil) "அனைத்தும்" else "All") else selectedOperatorFilter,
-                    isOpen = isOperatorMenuOpen,
-                    onToggle = { isOperatorMenuOpen = !isOperatorMenuOpen },
-                    onDismiss = { isOperatorMenuOpen = false }
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FDF4)),
+                    border = BorderStroke(1.dp, Color(0xFFDCFCE7)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(96.dp)
                 ) {
-                    DropdownMenuItem(
-                        text = { Text(if (isTamil) "அனைத்து இயக்குநர்கள்" else "All Operators", fontWeight = if (selectedOperatorFilter == "All") FontWeight.Bold else FontWeight.Normal) },
-                        onClick = {
-                            selectedOperatorFilter = "All"
-                            isOperatorMenuOpen = false
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        // Tractor illustration on the right
+                        Image(
+                            painter = painterResource(id = R.drawable.default_workspace_banner),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            alignment = Alignment.CenterEnd,
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .width(160.dp)
+                                .align(Alignment.CenterEnd)
+                                .alpha(0.95f)
+                        )
+                        // Soft fade gradient
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.horizontalGradient(
+                                        colors = listOf(
+                                            Color(0xFFF0FDF4),
+                                            Color(0xFFF0FDF4).copy(alpha = 0.95f),
+                                            Color(0xFFF0FDF4).copy(alpha = 0.6f),
+                                            Color.Transparent
+                                        ),
+                                        startX = 0f,
+                                        endX = 650f
+                                    )
+                                )
+                        )
+                        // Header content
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFDCFCE7)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Assignment,
+                                    contentDescription = null,
+                                    tint = Color(0xFF15803D),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column {
+                                Text(
+                                    text = if (isTamil) "செலவு அறிக்கை" else "Expense Report",
+                                    fontSize = 17.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0F172A)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = if (isTamil) "டிராக்டர் செலவுகளைக் கண்காணிக்கவும்" else "Track and manage all fleet expenses",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
                         }
+                    }
+                }
+            }
+
+            // 2. 3 Stat Cards: Total Expenses, Total Entries, Avg. per Entry
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Card 1: Total Expenses
+                    StatCard(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.AccountBalanceWallet,
+                        iconBg = Color(0xFFDCFCE7),
+                        iconColor = Color(0xFF16A34A),
+                        containerBg = Color(0xFFF0FDF4),
+                        borderColor = Color(0xFFBBF7D0),
+                        title = if (isTamil) "மொத்த செலவுகள்" else "Total Expenses",
+                        value = formatInr(totalAmount, settings.currency)
                     )
-                    availableOperators.forEach { opName ->
+                    // Card 2: Total Entries
+                    StatCard(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.AutoMirrored.Filled.FormatListBulleted,
+                        iconBg = Color(0xFFDBEAFE),
+                        iconColor = Color(0xFF4F46E5),
+                        containerBg = Color(0xFFEFF6FF),
+                        borderColor = Color(0xFFBFDBFE),
+                        title = if (isTamil) "மொத்த பதிவுகள்" else "Total Entries",
+                        value = "$totalCount"
+                    )
+                    // Card 3: Avg. per Entry
+                    StatCard(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.MonetizationOn,
+                        iconBg = Color(0xFFFEF3C7),
+                        iconColor = Color(0xFFD97706),
+                        containerBg = Color(0xFFFFFBEB),
+                        borderColor = Color(0xFFFDE68A),
+                        title = if (isTamil) "சராசரி செலவு" else "Avg. per Entry",
+                        value = formatInr(avgAmount, settings.currency)
+                    )
+                }
+            }
+
+            // 3. Filter Row: Date Filter Pill + Operator, Tractor, Expense Type
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 1. Date Filter Pill
+                    Box(modifier = Modifier.weight(1.15f)) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFFDCFCE7),
+                            border = BorderStroke(1.dp, Color(0xFFBBF7D0)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { isDateMenuOpen = true }
+                                .testTag("report_date_filter")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CalendarToday,
+                                    contentDescription = null,
+                                    tint = Color(0xFF15803D),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = dateFilter.selectionLabel(isTamil),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0F172A),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    tint = Color(0xFF15803D),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = isDateMenuOpen,
+                            onDismissRequest = { isDateMenuOpen = false }
+                        ) {
+                            ReportPeriod.entries.forEach { period ->
+                                DropdownMenuItem(
+                                    text = { Text(period.label(isTamil)) },
+                                    modifier = Modifier.testTag("report_period_$period"),
+                                    onClick = {
+                                        isDateMenuOpen = false
+                                        when (period) {
+                                            ReportPeriod.SPECIFIC_DATE -> {
+                                                val cal = Calendar.getInstance().apply {
+                                                    timeInMillis = if (dateFilter.from > 0) dateFilter.from else System.currentTimeMillis()
+                                                }
+                                                android.app.DatePickerDialog(
+                                                    context,
+                                                    { _, y, m, d ->
+                                                        val chosen = Calendar.getInstance().apply {
+                                                            set(y, m, d, 0, 0, 0)
+                                                            set(Calendar.MILLISECOND, 0)
+                                                        }.timeInMillis
+                                                        dateFilter = ReportDateFilter(period, chosen)
+                                                    },
+                                                    cal.get(Calendar.YEAR),
+                                                    cal.get(Calendar.MONTH),
+                                                    cal.get(Calendar.DAY_OF_MONTH)
+                                                ).show()
+                                            }
+                                            ReportPeriod.MONTH_YEAR, ReportPeriod.CUSTOM_RANGE -> {
+                                                dateDialogPeriod = period
+                                            }
+                                            else -> {
+                                                dateFilter = ReportDateFilter(period)
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // 2. Operator Filter
+                    FilterDropdownButton(
+                        modifier = Modifier.weight(0.95f),
+                        icon = Icons.Default.Person,
+                        iconTint = Color(0xFF16A34A),
+                        label = if (isTamil) "இயக்குநர்" else "Operator",
+                        selectedValue = if (selectedOperatorFilter == "All") (if (isTamil) "அனைத்தும்" else "All") else selectedOperatorFilter,
+                        isOpen = isOperatorMenuOpen,
+                        onToggle = { isOperatorMenuOpen = !isOperatorMenuOpen },
+                        onDismiss = { isOperatorMenuOpen = false }
+                    ) {
                         DropdownMenuItem(
-                            text = { Text(opName) },
+                            text = { Text(if (isTamil) "அனைத்து இயக்குநர்கள்" else "All Operators", fontWeight = if (selectedOperatorFilter == "All") FontWeight.Bold else FontWeight.Normal) },
                             onClick = {
-                                selectedOperatorFilter = opName
+                                selectedOperatorFilter = "All"
                                 isOperatorMenuOpen = false
                             }
                         )
-                    }
-                }
-                // 2. Tractor Filter
-                FilterDropdownButton(
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Default.DirectionsCar,
-                    iconTint = Color(0xFF16A34A),
-                    label = if (isTamil) "டிராக்டர்" else "Tractor",
-                    selectedValue = if (selectedTractorFilter == "All") (if (isTamil) "அனைத்தும்" else "All") else selectedTractorFilter,
-                    isOpen = isTractorMenuOpen,
-                    onToggle = { isTractorMenuOpen = !isTractorMenuOpen },
-                    onDismiss = { isTractorMenuOpen = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(if (isTamil) "அனைத்து டிராக்டர்கள்" else "All Fleet", fontWeight = if (selectedTractorFilter == "All") FontWeight.Bold else FontWeight.Normal) },
-                        onClick = {
-                            selectedTractorFilter = "All"
-                            isTractorMenuOpen = false
-                        }
-                    )
-                    tractors.forEach { tractor ->
-                        DropdownMenuItem(
-                            text = { Text(tractor.label) },
-                            onClick = {
-                                selectedTractorFilter = tractor.label
-                                isTractorMenuOpen = false
-                            }
-                        )
-                    }
-                }
-                // 3. Expense Type Filter
-                FilterDropdownButton(
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Default.Tag,
-                    iconTint = Color(0xFF16A34A),
-                    label = if (isTamil) "வகை" else "Type",
-                    selectedValue = if (selectedTypeFilter == "All") (if (isTamil) "அனைத்தும்" else "All") else getLocalizedExpenseType(selectedTypeFilter, isTamil),
-                    isOpen = isTypeMenuOpen,
-                    onToggle = { isTypeMenuOpen = !isTypeMenuOpen },
-                    onDismiss = { isTypeMenuOpen = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(if (isTamil) "அனைத்து வகைகள்" else "All Types", fontWeight = if (selectedTypeFilter == "All") FontWeight.Bold else FontWeight.Normal) },
-                        onClick = {
-                            selectedTypeFilter = "All"
-                            isTypeMenuOpen = false
-                        }
-                    )
-                    com.example.data.expense.ExpenseCategories.choices(emptyList(), expenses.map { it.expenseType }).forEach { type ->
-                        DropdownMenuItem(
-                            text = { Text(getLocalizedExpenseType(type, isTamil)) },
-                            onClick = {
-                                selectedTypeFilter = type
-                                isTypeMenuOpen = false
-                            }
-                        )
-                    }
-                }
-            }
-        }
-        // Search Description Field
-        item {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text(if (isTamil) "விவரம், வகை, இயக்குநர் மூலம் தேடுக..." else "Search description, type, operator...", fontSize = 13.sp, color = Color(0xFF9CA3AF)) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null,
-                        tint = Color(0xFF9CA3AF),
-                        modifier = Modifier.size(20.dp)
-                    )
-                },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = if (isTamil) "அழி" else "Clear",
-                                tint = Color(0xFF9CA3AF),
-                                modifier = Modifier.size(18.dp)
+                        availableOperators.forEach { opName ->
+                            DropdownMenuItem(
+                                text = { Text(opName) },
+                                onClick = {
+                                    selectedOperatorFilter = opName
+                                    isOperatorMenuOpen = false
+                                }
                             )
                         }
                     }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(10.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF072D18),
-                    unfocusedBorderColor = Color(0xFFE5E7EB),
-                    focusedContainerColor = Color.White,
-                    unfocusedContainerColor = Color.White
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .trackFocusedField(searchRequester, coroutineScope)
-                    .testTag("expense_search_bar")
-            )
-        }
-        // 3 Stat Cards: Total Expenses, Total Entries, Avg. per Entry
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Min),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Card 1: Total Expenses
-                StatCard(
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Default.ArrowDownward,
-                    iconBg = Color(0xFFDCFCE7),
-                    iconColor = Color(0xFF16A34A),
-                    title = if (isTamil) "மொத்த செலவுகள்" else "Total Expenses",
-                    value = formatInr(totalAmount, settings.currency)
-                )
-                // Card 2: Total Entries
-                StatCard(
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.AutoMirrored.Filled.FormatListBulleted,
-                    iconBg = Color(0xFFE0E7FF),
-                    iconColor = Color(0xFF4F46E5),
-                    title = if (isTamil) "மொத்த பதிவுகள்" else "Total Entries",
-                    value = "$totalCount"
-                )
-                // Card 3: Avg. per Entry
-                StatCard(
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Default.MonetizationOn,
-                    iconBg = Color(0xFFFEF3C7),
-                    iconColor = Color(0xFFD97706),
-                    title = if (isTamil) "சராசரி செலவு" else "Avg. per Entry",
-                    value = formatInr(avgAmount, settings.currency)
+
+                    // 3. Tractor Filter
+                    FilterDropdownButton(
+                        modifier = Modifier.weight(0.95f),
+                        icon = Icons.Default.Agriculture,
+                        iconTint = Color(0xFF16A34A),
+                        label = if (isTamil) "டிராக்டர்" else "Tractor",
+                        selectedValue = if (selectedTractorFilter == "All") (if (isTamil) "அனைத்தும்" else "All") else selectedTractorFilter,
+                        isOpen = isTractorMenuOpen,
+                        onToggle = { isTractorMenuOpen = !isTractorMenuOpen },
+                        onDismiss = { isTractorMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(if (isTamil) "அனைத்து டிராக்டர்கள்" else "All Fleet", fontWeight = if (selectedTractorFilter == "All") FontWeight.Bold else FontWeight.Normal) },
+                            onClick = {
+                                selectedTractorFilter = "All"
+                                isTractorMenuOpen = false
+                            }
+                        )
+                        tractors.forEach { tractor ->
+                            DropdownMenuItem(
+                                text = { Text(tractor.label) },
+                                onClick = {
+                                    selectedTractorFilter = tractor.label
+                                    isTractorMenuOpen = false
+                                }
+                            )
+                        }
+                    }
+
+                    // 4. Expense Type Filter
+                    FilterDropdownButton(
+                        modifier = Modifier.weight(0.95f),
+                        icon = Icons.Default.Tag,
+                        iconTint = Color(0xFF16A34A),
+                        label = if (isTamil) "வகை" else "Type",
+                        selectedValue = if (selectedTypeFilter == "All") (if (isTamil) "அனைத்தும்" else "All") else getLocalizedExpenseType(selectedTypeFilter, isTamil),
+                        isOpen = isTypeMenuOpen,
+                        onToggle = { isTypeMenuOpen = !isTypeMenuOpen },
+                        onDismiss = { isTypeMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(if (isTamil) "அனைத்து வகைகள்" else "All Types", fontWeight = if (selectedTypeFilter == "All") FontWeight.Bold else FontWeight.Normal) },
+                            onClick = {
+                                selectedTypeFilter = "All"
+                                isTypeMenuOpen = false
+                            }
+                        )
+                        com.example.data.expense.ExpenseCategories.choices(emptyList(), expenses.map { it.expenseType }).forEach { type ->
+                            DropdownMenuItem(
+                                text = { Text(getLocalizedExpenseType(type, isTamil)) },
+                                onClick = {
+                                    selectedTypeFilter = type
+                                    isTypeMenuOpen = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 4. Search Description Field
+            item {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text(if (isTamil) "விவரம், வகை, இயக்குநர் மூலம் தேடுக..." else "Search description, type, operator...", fontSize = 13.sp, color = Color(0xFF9CA3AF)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = Color(0xFF9CA3AF),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = if (isTamil) "அழி" else "Clear",
+                                    tint = Color(0xFF9CA3AF),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF072D18),
+                        unfocusedBorderColor = Color(0xFFE5E7EB),
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .trackFocusedField(searchRequester, coroutineScope)
+                        .testTag("expense_search_bar")
                 )
             }
-        }
-        item { com.example.ui.components.ExpenseAnalyticsCard(filteredExpenses, isTamil) }
+
+            // 5. Expense Breakdown — Compact 4-Tile Row with Dynamic Vertical Fill
+            item {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp, bottom = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable { isBreakdownExpanded = !isBreakdownExpanded }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PieChart,
+                                contentDescription = null,
+                                tint = Color(0xFF15803D),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (isTamil) "செலவுப் பகுப்பாய்வு" else "Expense Breakdown",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF0F172A)
+                            )
+                        }
+                        Text(
+                            text = "${if (isTamil) "மொத்தம்: " else "Total: "}${formatInr(totalAmount, settings.currency)}",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0F172A)
+                        )
+                    }
+
+                    // Horizontal 4-tile view with partial 5th tile affordance
+                    LazyRow(
+                        state = categoryScrollState,
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(tileSpacing)
+                    ) {
+                        items(categoryTiles, key = { it.key }) { tile ->
+                            ExpenseCategoryTileItem(
+                                tile = tile,
+                                tileWidth = tileWidth,
+                                isTamil = isTamil,
+                                currencySymbol = settings.currency
+                            )
+                        }
+                    }
+
+                    // Pager indicator dots
+                    if (categoryTiles.size > 4) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val isSecondPage = categoryScrollState.firstVisibleItemIndex > 1
+                            Box(
+                                modifier = Modifier
+                                    .size(width = if (!isSecondPage) 16.dp else 6.dp, height = 6.dp)
+                                    .clip(CircleShape)
+                                    .background(if (!isSecondPage) Color(0xFF072D18) else Color(0xFFCBD5E1))
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(width = if (isSecondPage) 16.dp else 6.dp, height = 6.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isSecondPage) Color(0xFF072D18) else Color(0xFFCBD5E1))
+                            )
+                        }
+                    }
+
+                    // Optional deep analytics breakdown
+                    if (isBreakdownExpanded) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        com.example.ui.components.ExpenseAnalyticsCard(filteredExpenses, isTamil)
+                    }
+                }
+            }
+
+            // 6. Expense Entries Section Header
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp, bottom = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.FormatListBulleted,
+                            contentDescription = null,
+                            tint = Color(0xFF15803D),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isTamil) "செலவுப் பதிவுகள்" else "Expense Entries",
+                            fontSize = 16.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0F172A)
+                        )
+                    }
+
+                    Button(
+                        onClick = onOpenAddExpense,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF072D18)),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 7.dp),
+                        modifier = Modifier.testTag("btn_add_expense_top")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (isTamil) "செலவு சேர்க்க" else "Add Expense",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
         // Expense List Items or Empty State
         if (filteredExpenses.isEmpty()) {
             item {
@@ -828,6 +1375,21 @@ fun ExpenseReportListScreen(
             }
         }
     }
+
+    dateDialogPeriod?.let { period ->
+        val initial = remember(dateFilter, period) {
+            dateFilter.takeIf { it.period == period } ?: ReportDateFilter(period, System.currentTimeMillis())
+        }
+        com.example.ui.components.ReportPeriodDialog(
+            initial = initial,
+            isTamil = isTamil,
+            onDismiss = { dateDialogPeriod = null },
+            onApply = {
+                dateFilter = it
+                dateDialogPeriod = null
+            }
+        )
+    }
 }
 }
 /* =========================================================================================
@@ -917,29 +1479,31 @@ fun StatCard(
     icon: ImageVector,
     iconBg: Color,
     iconColor: Color,
+    containerBg: Color = Color.White,
+    borderColor: Color = Color(0xFFE5E7EB),
     title: String,
     value: String
 ) {
     Card(
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(Color(0xFFE5E7EB))),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = containerBg),
+        border = BorderStroke(1.dp, borderColor),
         modifier = modifier.fillMaxHeight()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+                .padding(horizontal = 10.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Box(
                     modifier = Modifier
-                        .size(18.dp)
+                        .size(24.dp)
                         .clip(CircleShape)
                         .background(iconBg),
                     contentAlignment = Alignment.Center
@@ -948,26 +1512,25 @@ fun StatCard(
                         imageVector = icon,
                         contentDescription = null,
                         tint = iconColor,
-                        modifier = Modifier.size(11.dp)
+                        modifier = Modifier.size(13.dp)
                     )
                 }
                 Text(
                     text = title,
-                    fontSize = 10.sp,
-                    color = Color(0xFF4B5563),
+                    fontSize = 11.sp,
+                    color = Color(0xFF475569),
                     fontWeight = FontWeight.Medium,
-                    maxLines = 2,
-                    lineHeight = 12.sp,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
             }
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = value,
-                fontSize = 12.5.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF111827),
+                color = Color(0xFF0F172A),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
