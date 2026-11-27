@@ -287,17 +287,18 @@ fun HomeScreen(
     androidx.compose.runtime.LaunchedEffect(displayJobs) {
         val currentIds = displayJobs.map { it.id }.toSet()
         val prev = knownJobIds
+        val now = System.currentTimeMillis()
         if (prev == null) {
-            val now = System.currentTimeMillis()
-            val freshJobs = displayJobs.filter { (now - it.createdAt) in 0..15_000L }.map { it.id }.toSet()
+            val freshJobs = displayJobs.filter { (now - it.createdAt) in 0..20_000L }.map { it.id }.toSet()
             if (freshJobs.isNotEmpty()) {
                 newlyCreatedJobIds = newlyCreatedJobIds + freshJobs
             }
             knownJobIds = currentIds
         } else {
             val added = currentIds - prev
-            if (added.isNotEmpty()) {
-                newlyCreatedJobIds = newlyCreatedJobIds + added
+            val genuinelyNew = displayJobs.filter { it.id in added && (now - it.createdAt) in 0..20_000L }.map { it.id }.toSet()
+            if (genuinelyNew.isNotEmpty()) {
+                newlyCreatedJobIds = newlyCreatedJobIds + genuinelyNew
             }
             knownJobIds = currentIds
         }
@@ -672,7 +673,7 @@ fun HomeScreen(
                 }
             } else {
                 items(displayJobs, key = { it.id }) { job ->
-                    val isNewlyCreated = (job.id in newlyCreatedJobIds || (System.currentTimeMillis() - job.createdAt in 0..15_000L)) && job.id !in animatedJobIds
+                    val isNewlyCreated = job.id in newlyCreatedJobIds && job.id !in animatedJobIds
                     JobEntryItemCard(
                         job = job,
                         settings = settings,
