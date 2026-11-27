@@ -1033,22 +1033,24 @@ fun JobEntryItemCard(
                 RoleUtils.getCreatedByName(job, workspaceMembers, partners, isTamil)
             )
 
-        Box(
-            modifier = Modifier.fillMaxWidth()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
         ) {
             // Left vertical accent indicator bar
             Box(
                 modifier = Modifier
                     .width(5.dp)
-                    .matchParentSize()
+                    .fillMaxHeight()
                     .background(accentColor)
             )
 
             // Card content
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
+                    .weight(1f)
+                    .padding(start = 12.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
             ) {
                 // 1. Customer Identity Row: Initials Avatar + Customer Name + Amount Badge + Chevron
                 Row(
