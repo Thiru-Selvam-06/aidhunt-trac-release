@@ -1,7 +1,13 @@
 package com.example.ui.screens.home
 
 import android.content.Context
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -9,11 +15,14 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,6 +38,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.res.painterResource
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccessTime
@@ -36,20 +46,29 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Agriculture
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.HourglassEmpty
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Money
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.PendingActions
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -62,6 +81,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
@@ -75,16 +95,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.data.auth.RoleUtils
 import com.example.data.entity.AppSettingsEntity
 import com.example.data.entity.ExpenseEntity
@@ -117,6 +140,11 @@ import com.example.ui.theme.SuccessPaidGreenBg
 import com.example.ui.theme.TextMutedDark
 import com.example.ui.theme.TextSecondaryDark
 import com.example.ui.util.JobAuditPresentation
+import com.example.ui.util.WorkspaceBannerStorage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Locale
 
 import androidx.compose.material.icons.filled.CloudDone
@@ -126,6 +154,10 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+
+// Track process session start time to strictly identify genuinely newly created jobs in this session
+private val appSessionStartTime = System.currentTimeMillis()
+private val sessionAnimatedJobIds = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -166,6 +198,37 @@ fun HomeScreen(
     var selectedJob by remember { mutableStateOf<JobEntryEntity?>(null) }
     var jobToDelete by remember { mutableStateOf<JobEntryEntity?>(null) }
     val isTamil = settings.language.equals("TA", ignoreCase = true)
+
+    // ---- Workspace Banner (local-only, never uploaded) ----
+    val workspaceId = settings.workspaceId
+    var bannerFile by remember(workspaceId) {
+        mutableStateOf<File?>(WorkspaceBannerStorage.loadBanner(context, workspaceId))
+    }
+    var showBannerSheet by remember { mutableStateOf(false) }
+    val bannerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val bannerScope = rememberCoroutineScope()
+
+    val pickBannerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            bannerScope.launch {
+                val saved = withContext(Dispatchers.IO) {
+                    WorkspaceBannerStorage.saveBanner(context, workspaceId, uri)
+                }
+                if (saved != null) {
+                    bannerFile = saved
+                } else {
+                    Toast.makeText(
+                        context,
+                        if (isTamil) "பேனர் புகைப்படம் சேமிக்கவில்லை" else "Banner update failed",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
+    // -------------------------------------------------------
 
     var pendingPdfJob by remember { mutableStateOf<JobEntryEntity?>(null) }
     val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -220,6 +283,8 @@ fun HomeScreen(
          .take(20)
     }
 
+    var animatedJobIds by remember { mutableStateOf(sessionAnimatedJobIds.toSet()) }
+
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -231,71 +296,158 @@ fun HomeScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(if (responsive.isSmallPhone) 10.dp else 14.dp)
         ) {
-            // 1. Redesigned Business / Profile Card (Matching navigation bar color, white text, white avatar shape)
+            // 1. Redesigned Workspace Banner Card (Design C)
             item {
+                val displayName = settings.businessName.ifBlank { "AIDHUNT Agri & Tractor Services" }
+                val currentAuthUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+                val currentMember = workspaceMembers.find {
+                    (currentUid.isNotBlank() && it.uid == currentUid) ||
+                    (currentAuthUser?.uid != null && it.uid == currentAuthUser.uid) ||
+                    (currentAuthUser?.phoneNumber != null && it.phoneNumber == currentAuthUser.phoneNumber)
+                }
+                val loggedInRole = when {
+                    isOwner -> com.example.ui.util.businessRoleDisplayName("Owner", settings.workspaceId, workspaceMembers, isTamil)
+                    authenticatedUserRole.equals("operator", ignoreCase = true) || currentMember?.role.equals("operator", ignoreCase = true) -> if (isTamil) "இயக்குநர்" else "Operator"
+                    else -> if (isTamil) "பங்குதாரர்" else "Partner"
+                }
+                val loggedInName = if (isOwner) {
+                    authenticatedUserName.ifBlank { settings.ownerName.ifBlank { settings.activePartnerName.ifBlank { "Owner" } } }
+                } else {
+                    authenticatedUserName.ifBlank {
+                        currentMember?.displayName?.takeIf { it.isNotBlank() }
+                            ?: settings.activePartnerName.takeIf { it.isNotBlank() && !it.equals(settings.ownerName, ignoreCase = true) }
+                    }
+                }
+                val initial = displayName.trim().take(1).uppercase(Locale.getDefault())
+                    .ifBlank { "A" }
+
                 Card(
                     shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF072D18)),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("home_business_profile_card")
                 ) {
-                    Row(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(if (responsive.isSmallPhone) 12.dp else 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(if (responsive.isSmallPhone) 12.dp else 16.dp)
+                            .height(if (responsive.isSmallPhone) 130.dp else 150.dp)
                     ) {
-                        val currentAuthUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
-                        val currentMember = workspaceMembers.find {
-                            (currentUid.isNotBlank() && it.uid == currentUid) ||
-                            (currentAuthUser?.uid != null && it.uid == currentAuthUser.uid) ||
-                            (currentAuthUser?.phoneNumber != null && it.phoneNumber == currentAuthUser.phoneNumber)
-                        }
-                        val loggedInRole = when {
-                            isOwner -> com.example.ui.util.businessRoleDisplayName("Owner", settings.workspaceId, workspaceMembers, isTamil)
-                            authenticatedUserRole.equals("operator", ignoreCase = true) || currentMember?.role.equals("operator", ignoreCase = true) -> if (isTamil) "இயக்குநர்" else "Operator"
-                            else -> if (isTamil) "பங்குதாரர்" else "Partner"
-                        }
-                        val loggedInName = if (isOwner) {
-                            authenticatedUserName.ifBlank { settings.ownerName.ifBlank { settings.activePartnerName.ifBlank { "Owner" } } }
+                        // Background: custom banner image OR gradient fallback
+                        if (bannerFile != null) {
+                            AsyncImage(
+                                model = bannerFile,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(18.dp))
+                            )
+                            // Gradient scrim for text readability
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            colors = listOf(
+                                                Color(0xCC072D18),
+                                                Color(0x44072D18),
+                                                Color(0x00072D18)
+                                            )
+                                        )
+                                    )
+                            )
                         } else {
-                            authenticatedUserName.ifBlank {
-                                currentMember?.displayName?.takeIf { it.isNotBlank() }
-                                    ?: settings.activePartnerName.takeIf { it.isNotBlank() && !it.equals(settings.ownerName, ignoreCase = true) }
-                                    ?: currentAuthUser?.displayName?.takeIf { it.isNotBlank() }
-                                    ?: (if (isTamil) "பங்குதாரர்" else "Partner")
+                            // Default bundled tractor landscape banner (Design C)
+                            Image(
+                                painter = painterResource(id = com.example.R.drawable.default_workspace_banner),
+                                contentDescription = "Default Tractor Banner",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(18.dp))
+                            )
+                            // Subtle dark gradient scrim behind workspace text for legibility
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            colors = listOf(
+                                                Color(0xCC072D18),
+                                                Color(0x44072D18),
+                                                Color(0x00072D18)
+                                            )
+                                        )
+                                    )
+                            )
+                        }
+
+                        // Workspace avatar + name + owner overlay (bottom-left)
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(
+                                    start = if (responsive.isSmallPhone) 12.dp else 16.dp,
+                                    bottom = if (responsive.isSmallPhone) 12.dp else 14.dp,
+                                    end = 48.dp
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(
+                                if (responsive.isSmallPhone) 10.dp else 12.dp
+                            )
+                        ) {
+                            // Circular workspace avatar
+                            com.example.ui.components.PartnerAvatarImage(
+                                photoUri = settings.profilePhotoUri,
+                                name = displayName,
+                                size = if (responsive.isSmallPhone) 48.dp else 54.dp,
+                                fallbackBgColor = Color.White,
+                                fallbackTextColor = Color(0xFF072D18),
+                                modifier = Modifier.testTag("home_partner_avatar")
+                            )
+                            Column {
+                                Text(
+                                    text = displayName,
+                                    fontSize = if (responsive.isSmallPhone) 17.sp else 19.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "$loggedInRole: $loggedInName",
+                                    fontSize = if (responsive.isSmallPhone) 12.sp else 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color.White.copy(alpha = 0.88f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
 
-                        com.example.ui.components.PartnerAvatarImage(
-                            photoUri = settings.profilePhotoUri,
-                            name = if (settings.businessName.isNotBlank()) settings.businessName else loggedInName,
-                            size = if (responsive.isSmallPhone) 50.dp else if (responsive.isLargePhone) 64.dp else 56.dp,
-                            fallbackBgColor = Color.White,
-                            fallbackTextColor = Color(0xFF072D18),
-                            modifier = Modifier.testTag("home_partner_avatar")
-                        )
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = settings.businessName.ifBlank { "AIDHUNT Agri & Tractor Services" },
-                                fontSize = if (responsive.isSmallPhone) 17.sp else if (responsive.isLargePhone) 21.sp else 18.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "$loggedInRole: $loggedInName",
-                                fontSize = if (responsive.isSmallPhone) 12.5.sp else 13.5.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color.White.copy(alpha = 0.88f),
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        // Camera/edit icon button (top-right corner)
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(
+                                    top = if (responsive.isSmallPhone) 10.dp else 12.dp,
+                                    end = if (responsive.isSmallPhone) 10.dp else 12.dp
+                                )
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.90f))
+                                .clickable { showBannerSheet = true }
+                                .testTag("home_banner_edit_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = if (isTamil) "பேனரை மாற்று" else "Change banner",
+                                tint = Color(0xFF072D18),
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -423,28 +575,44 @@ fun HomeScreen(
                 }
             }
 
-            // 4. Recent Job Entries Header
+            // 4. Today's Job Entries Header Row — matches approved reference
             item {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 6.dp),
+                        .padding(top = 8.dp, bottom = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = if (isTamil) "சமீபத்திய வேலைப் பதிவுகள்" else "Today’s Job Entries",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = AppTheme.colors.textPrimary
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.EventAvailable,
+                            contentDescription = null,
+                            tint = Color(0xFF15803D),
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isTamil) "இன்றைய வேலைப் பதிவுகள்" else "Today's Job Entries",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0F172A)
+                        )
+                    }
 
-                    Text(
-                        text = if (isTamil) "${displayJobs.size} பதிவுகள்" else "${displayJobs.size} Entries",
-                        fontSize = 12.sp,
-                        color = SageAccent,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFDCFCE7),
+                        modifier = Modifier.testTag("home_today_entries_count_badge")
+                    ) {
+                        Text(
+                            text = if (isTamil) "${displayJobs.size} பதிவுகள்" else "${displayJobs.size} Entries",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF15803D),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
                 }
             }
 
@@ -486,11 +654,17 @@ fun HomeScreen(
                 }
             } else {
                 items(displayJobs, key = { it.id }) { job ->
+                    val isNewlyCreated = job.createdAt >= appSessionStartTime && job.id !in animatedJobIds
                     JobEntryItemCard(
                         job = job,
                         settings = settings,
                         workspaceMembers = workspaceMembers,
                         partners = partners,
+                        isNewlyCreated = isNewlyCreated,
+                        onAnimationComplete = { completedId ->
+                            sessionAnimatedJobIds.add(completedId)
+                            animatedJobIds = animatedJobIds + completedId
+                        },
                         onClick = { selectedJob = job },
                         onShareWhatsApp = {
                             val msg = buildJobWhatsAppMessage(job, settings.businessName, isTamil)
@@ -538,6 +712,99 @@ fun HomeScreen(
                     color = Color.White,
                     fontSize = if (responsive.isSmallPhone) 13.sp else 14.sp
                 )
+            }
+        }
+    }
+
+    // ---- Change Workspace Banner Bottom Sheet ----
+    if (showBannerSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showBannerSheet = false },
+            sheetState = bannerSheetState,
+            containerColor = Color.White,
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 32.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isTamil) "பணியிட பேனரை மாற்று" else "Change Workspace Banner",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        color = Color(0xFF1A1A1A)
+                    )
+                    IconButton(
+                        onClick = { showBannerSheet = false },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = if (isTamil) "மூடு" else "Close",
+                            tint = Color(0xFF555555)
+                        )
+                    }
+                }
+                Divider(color = Color(0xFFEEEEEE))
+
+                // Option: Choose from Gallery (always shown)
+                BannerSheetOption(
+                    icon = Icons.Default.Image,
+                    iconBg = Color(0xFFE8F5E9),
+                    iconTint = Color(0xFF2E7D32),
+                    title = if (isTamil) "கேலரியிலிருந்து தேர்ந்தெடு" else "Choose from Gallery",
+                    subtitle = if (isTamil) "உங்கள் தொலைபேசியிலிருந்து படம் தேர்ந்தெடுக்கவும்" else "Select an image from your phone",
+                    onClick = {
+                        showBannerSheet = false
+                        pickBannerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    }
+                )
+
+                // Option: Change Banner (only shown when a custom banner exists)
+                if (bannerFile != null) {
+                    BannerSheetOption(
+                        icon = Icons.Default.Edit,
+                        iconBg = Color(0xFFE8F5E9),
+                        iconTint = Color(0xFF2E7D32),
+                        title = if (isTamil) "பேனரை மாற்று" else "Change Banner",
+                        subtitle = if (isTamil) "புதிய படத்துடன் மாற்றவும்" else "Replace with a new image",
+                        onClick = {
+                            showBannerSheet = false
+                            pickBannerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        }
+                    )
+
+                    BannerSheetOption(
+                        icon = Icons.Default.Delete,
+                        iconBg = Color(0xFFFCE8E8),
+                        iconTint = Color(0xFFD32F2F),
+                        title = if (isTamil) "பேனரை நீக்கு" else "Remove Banner",
+                        subtitle = if (isTamil) "இயல்புநிலை பச்சை பேனர் மீட்டமை" else "Restore default green banner",
+                        titleColor = Color(0xFFD32F2F),
+                        onClick = {
+                            showBannerSheet = false
+                            bannerScope.launch(Dispatchers.IO) {
+                                WorkspaceBannerStorage.removeBanner(context, workspaceId)
+                                withContext(Dispatchers.Main) {
+                                    bannerFile = null
+                                }
+                            }
+                        }
+                    )
+                }
             }
         }
     }
@@ -668,12 +935,15 @@ private fun isJobHistorical(job: JobEntryEntity): Boolean {
     return isExplicitOld
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun JobEntryItemCard(
     job: JobEntryEntity,
     settings: AppSettingsEntity,
     workspaceMembers: List<com.example.data.firebase.WorkspaceMember> = emptyList(),
     partners: List<com.example.data.entity.PartnerEntity> = emptyList(),
+    isNewlyCreated: Boolean = false,
+    onAnimationComplete: (Long) -> Unit = {},
     onClick: () -> Unit,
     onShareWhatsApp: () -> Unit,
     onSharePdf: () -> Unit
@@ -683,21 +953,45 @@ fun JobEntryItemCard(
     val archived = workspaceMembers.any { it.workspaceId == job.workspaceId && it.uid in setOf(job.createdByUid, job.entryForUid, job.financialAttributionUid) && it.status.equals("removed", true) }
     val isHistorical = isJobHistorical(job)
     val isOldAndDue = isHistorical && !isPaid
-    val avatarColor = getCustomerAvatarColor(job.customerName)
     val initials = getCustomerInitials(job.customerName)
 
-    // Status priority: PAID -> Green, OLD + DUE -> Dark Red + Yellow, DUE -> Red
-    val (cardBg, cardBorder) = when {
-        isPaid -> Pair(Color(0xFFF2FBF5), Color(0xFFCBEAD7))                  // PAID -> GREEN
-        isOldAndDue -> Pair(Color(0xFFFFF7F5), Color(0xFFF59E0B))             // OLD + DUE -> DARK RED + YELLOW
-        else -> Pair(Color(0xFFFFF5F5), Color(0xFFFFD4D4))                     // DUE -> RED
+    // Visual Semantics matching approved Design C / Today's Job Entry:
+    // DUE -> Soft rose/pink card (#FFF5F6), rose border (#FECDD3), red indicator bar (#F43F5E)
+    // PAID -> Soft mint-green card (#F0FDF4), mint border (#BBF7D0), green indicator bar (#16A34A)
+    // OLD + DUE -> Soft amber card (#FFFBEB), amber border (#FDE68A), amber indicator bar (#F59E0B)
+    val (cardBg, cardBorder, accentColor) = when {
+        archived -> Triple(Color(0xFFF1F5F9), Color(0xFFCBD5E1), Color(0xFF94A3B8))
+        isPaid -> Triple(Color(0xFFF0FDF4), Color(0xFFBBF7D0), Color(0xFF16A34A))
+        isOldAndDue -> Triple(Color(0xFFFFFBEB), Color(0xFFFDE68A), Color(0xFFF59E0B))
+        else -> Triple(Color(0xFFFFF5F6), Color(0xFFFECDD3), Color(0xFFF43F5E))
     }
 
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = if (archived) Color(0xFFE9E9E9) else cardBg),
-        border = BorderStroke(1.dp, cardBorder),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    // New Job Entry Color Transition Animation:
+    // When newly created, starts with the strong red highlight (#FF1456)
+    // and smoothly transitions over exactly 1000 ms to the standard pastel card background (cardBg)
+    val highlightRed = Color(0xFFFF1456)
+    val animatedBg = remember(job.id, isNewlyCreated) {
+        Animatable(if (isNewlyCreated) highlightRed else cardBg)
+    }
+
+    androidx.compose.runtime.LaunchedEffect(job.id, isNewlyCreated) {
+        if (isNewlyCreated) {
+            animatedBg.animateTo(
+                targetValue = cardBg,
+                animationSpec = tween(
+                    durationMillis = 1000,
+                    easing = FastOutSlowInEasing
+                )
+            )
+            onAnimationComplete(job.id)
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = if (isNewlyCreated) animatedBg.value else cardBg,
+        border = BorderStroke(1.2.dp, cardBorder),
+        shadowElevation = 0.dp,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
@@ -719,82 +1013,267 @@ fun JobEntryItemCard(
                 RoleUtils.getEntryForName(job, workspaceMembers, partners) !=
                 RoleUtils.getCreatedByName(job, workspaceMembers, partners, isTamil)
             )
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp)
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            // Left vertical accent indicator bar
+            Box(
+                modifier = Modifier
+                    .width(5.dp)
+                    .fillMaxHeight()
+                    .background(accentColor)
+            )
+
+            // Card content
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
             ) {
-                Box(
-                    modifier = Modifier.size(36.dp).clip(CircleShape).background(avatarColor.bg),
-                    contentAlignment = Alignment.Center
+                // 1. Customer Identity Row: Initials Avatar + Customer Name + Amount Badge + Chevron
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(initials, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = avatarColor.text)
-                }
-                Text(
-                    text = job.customerName.ifBlank { if (isTamil) "வாடிக்கையாளர்" else "Customer" },
-                    modifier = Modifier.weight(1f),
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF111827)
-                )
-                Text(
-                    text = formatInr(displayAmount, settings.currency),
-                    modifier = Modifier.widthIn(max = 112.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF111827)
-                )
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = if (isTamil) "விவரங்களைப் பார்க்கவும்" else "View details",
-                    tint = Color(0xFF6B7280),
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(workType, modifier = Modifier.weight(1f, fill = false), fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold, color = Color(0xFF15803D))
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = when {
-                        isPaid -> Color(0xFFDCFCE7)
-                        isOldAndDue -> Color(0xFF7F1D1D)
-                        else -> Color(0xFFFFE2E2)
-                    }
-                ) {
-                    Text(
-                        text = if (isPaid) {
-                            if (isTamil) "செலுத்தப்பட்டது" else "Paid"
-                        } else {
-                            if (isTamil) "பாக்கி" else "Due"
-                        },
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = when {
-                            isPaid -> Color(0xFF15803D)
-                            isOldAndDue -> Color(0xFFFEF08A)
-                            else -> Color(0xFFDC2626)
+                    // Avatar & Customer Name
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFDCFCE7)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = initials,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF15803D)
+                            )
                         }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Text(
+                            text = job.customerName.ifBlank { if (isTamil) "வாடிக்கையாளர்" else "Customer" },
+                            modifier = Modifier.weight(1f),
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0F172A)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // Amount Badge + Right Chevron
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color(0xFFDCFCE7)
+                        ) {
+                            Text(
+                                text = formatInr(displayAmount, settings.currency),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF0F172A),
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = if (isTamil) "விவரங்களைப் பார்க்கவும்" else "View details",
+                            tint = Color(0xFF475569),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 2. Work Type & Payment Status Badges Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Work type badge (Tractor icon + Work Type name)
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFDCFCE7)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Agriculture,
+                                contentDescription = null,
+                                tint = Color(0xFF15803D),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = workType,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF15803D)
+                            )
+                        }
+                    }
+
+                    // Payment status badge
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = when {
+                            isPaid -> Color(0xFFDCFCE7)
+                            isOldAndDue -> Color(0xFFFEF3C7)
+                            else -> Color(0xFFFFE4E6)
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = when {
+                                    isPaid -> Icons.Default.CheckCircle
+                                    else -> Icons.Default.WarningAmber
+                                },
+                                contentDescription = null,
+                                tint = when {
+                                    isPaid -> Color(0xFF15803D)
+                                    isOldAndDue -> Color(0xFFB45309)
+                                    else -> Color(0xFF991B1B)
+                                },
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = when {
+                                    isPaid -> if (isTamil) "செலுத்தப்பட்டது" else "Paid"
+                                    else -> if (isTamil) "பாக்கி" else "Due"
+                                },
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = when {
+                                    isPaid -> Color(0xFF15803D)
+                                    isOldAndDue -> Color(0xFFB45309)
+                                    else -> Color(0xFF991B1B)
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // 3. Subtle Horizontal Divider
+                HorizontalDivider(
+                    color = Color(0xFFE2E8F0).copy(alpha = 0.8f),
+                    thickness = 1.dp
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 4. Metadata Row with Distinct Icons and Separators
+                val showSeparateRecording = job.isHistorical || workDate != recordedDate
+                val dateTimeText = if (!showSeparateRecording && recordedTime.isNotEmpty()) "$workDate · $recordedTime" else workDate
+
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Date & Time
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.CalendarToday,
+                            contentDescription = null,
+                            tint = Color(0xFF15803D),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = dateTimeText,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF0F172A)
+                        )
+                    }
+
+                    Text("|", color = Color(0xFFCBD5E1), fontSize = 13.sp)
+
+                    // Duration
+                    val duration = com.example.ui.util.WorkBillingCalculator.formatDuration(job.durationMinutes)
+                    if (duration.isNotBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.HourglassEmpty,
+                                contentDescription = null,
+                                tint = Color(0xFF15803D),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = duration,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFF0F172A)
+                            )
+                        }
+
+                        Text("|", color = Color(0xFFCBD5E1), fontSize = 13.sp)
+                    }
+
+                    // Entry Owner / Creator
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.PersonOutline,
+                            contentDescription = null,
+                            tint = Color(0xFF15803D),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = creator.ifBlank { operator.orEmpty().ifBlank { "—" } },
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF0F172A)
+                        )
+                    }
+                }
+
+                // Operator attribution if different from creator
+                if (differentOperator && !operator.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = operator,
+                        fontSize = 11.5.sp,
+                        color = Color(0xFF64748B)
+                    )
+                }
+
+                // Separate recording date if historical or different
+                if (showSeparateRecording && recordedDate.isNotEmpty()) {
+                    val recordedLabel = if (isTamil) "பதிவு செய்த நேரம்" else "Recorded"
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (recordedTime.isNotEmpty()) "$recordedLabel: $recordedDate · $recordedTime" else "$recordedLabel: $recordedDate",
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B)
                     )
                 }
             }
-            val showSeparateRecording = job.isHistorical || workDate != recordedDate
-            Text(
-                if (!showSeparateRecording && recordedTime.isNotEmpty()) "$workDate · $recordedTime" else workDate,
-                color = Color(0xFF4B5563), fontSize = 12.sp
-            )
-            if (showSeparateRecording && recordedTime.isNotEmpty()) {
-                val recordedLabel = if (isTamil) "பதிவு செய்த நேரம்" else "Recorded"
-                Text("$recordedLabel: $recordedDate · $recordedTime", color = Color(0xFF4B5563), fontSize = 12.sp)
-            }
-            val duration = com.example.ui.util.WorkBillingCalculator.formatDuration(job.durationMinutes)
-            Text("$duration · $creator", color = Color(0xFF4B5563), fontSize = 12.sp)
-            if (differentOperator) Text(operator.orEmpty(), color = Color(0xFF4B5563), fontSize = 12.sp)
         }
     }
 }
@@ -1541,5 +2020,63 @@ fun CustomerSummaryPopup(
                 }
             }
         }
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Banner bottom-sheet row option
+// ---------------------------------------------------------------------------
+@Composable
+private fun BannerSheetOption(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconBg: Color,
+    iconTint: Color,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    titleColor: Color = Color(0xFF1A1A1A)
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(iconBg),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = titleColor
+            )
+            Text(
+                text = subtitle,
+                fontSize = 12.sp,
+                color = Color(0xFF777777)
+            )
+        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = Color(0xFFAAAAAA),
+            modifier = Modifier.size(20.dp)
+        )
     }
 }

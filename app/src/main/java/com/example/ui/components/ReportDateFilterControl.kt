@@ -98,7 +98,7 @@ internal fun ReportDateFilterControl(
 }
 
 @Composable
-private fun ReportPeriodDialog(
+internal fun ReportPeriodDialog(
     initial: ReportDateFilter,
     isTamil: Boolean,
     onDismiss: () -> Unit,

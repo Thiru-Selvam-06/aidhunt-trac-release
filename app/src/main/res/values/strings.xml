@@ -1,3 +1,26 @@
 <resources>
     <string name="app_name">Trac</string>
+    <string name="change_banner">Change banner</string>
+    <string name="remove_banner">Remove banner</string>
+    <string name="cancel">Cancel</string>
+    <string name="select_image">Select image</string>
+    <string name="banner_update_failed">Banner update failed</string>
+    <string name="choose_from_gallery">Choose from Gallery</string>
+    <string name="change_workspace_banner">Change Workspace Banner</string>
+    <string name="restore_default_banner">Restore default green banner</string>
+    <string name="adjust_cash_history">Adjust available cash / history</string>
+    <string name="available_business_cash">Available Business Cash</string>
+    <string name="current_cash">Current cash</string>
+    <string name="correct_available_cash">Correct available cash</string>
+    <string name="reason_required">Reason (required)</string>
+    <string name="adjustment">Adjustment</string>
+    <string name="difference">Difference</string>
+    <string name="latest_100_adjustments">Latest 100 adjustments; the complete history is retained.</string>
+    <string name="expense_shared_badge">Shared expense</string>
+    <string name="expense_reference_title">Expense Reference</string>
+    <string name="expense_reference_id_badge">ID</string>
+    <string name="expense_tap_to_copy_id">Tap to copy full ID</string>
+    <string name="expense_id_copied">Expense ID copied</string>
+    <string name="expense_copy_full_id">Copy full ID</string>
+    <string name="expense_tractor_prefix">Tractor</string>
 </resources>

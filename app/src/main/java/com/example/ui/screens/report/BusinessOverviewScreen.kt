@@ -2,7 +2,13 @@ package com.example.ui.screens.report
 
 import android.widget.Toast
 import androidx.compose.animation.*
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,15 +30,18 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.data.entity.*
 import com.example.data.firebase.WorkspaceMember
+import kotlin.math.roundToInt
 import com.example.ui.components.formatDate
 import com.example.ui.components.formatDateTime
 import com.example.ui.components.formatInr
@@ -116,6 +125,7 @@ fun BusinessOverviewScreen(
     var selectedMemberFilter by remember(settings.workspaceId, currentUid) { mutableStateOf("All") }
     var showPersonSelectorDialog by remember(settings.workspaceId, currentUid) { mutableStateOf(false) }
     var selectedJobForDetail by remember(settings.workspaceId, currentUid) { mutableStateOf<JobEntryEntity?>(null) }
+    var swipedJobId by remember { mutableStateOf<Long?>(null) }
 
     val scope = remember(selectedMode, selectedDateMillis, selectedYear, selectedMonth, settings.workspaceId) {
         val s = FinancialScope(
@@ -179,13 +189,13 @@ fun BusinessOverviewScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(top = 10.dp, bottom = 100.dp)
         ) {
             // ─────────────────────────────────────────────────────────────
             // 1. TOP BAR DATE FILTER — matches reference: single Overall pill, no duplicate header
             // ─────────────────────────────────────────────────────────────
-            item {
+            item(key = "period_selector", contentType = "header") {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -342,12 +352,13 @@ fun BusinessOverviewScreen(
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(8.dp))
             }
 
             // ─────────────────────────────────────────────────────────────
             // 2. SIX COMPACT SUMMARY CARDS (2 Columns x 3 Rows) — ALL REAL DATA
             // ─────────────────────────────────────────────────────────────
-            item {
+            item(key = "six_summary_cards", contentType = "summary_grid") {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     // Row 1: Total Recorded & Total Collected
                     Row(
@@ -447,12 +458,13 @@ fun BusinessOverviewScreen(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(8.dp))
             }
 
             // ─────────────────────────────────────────────────────────────
             // 3. DRIVER / OPERATOR EARNINGS CHART — REAL partner breakdown data
             // ─────────────────────────────────────────────────────────────
-            item {
+            item(key = "driver_earnings_chart", contentType = "earnings_chart") {
                 Card(
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -705,184 +717,133 @@ fun BusinessOverviewScreen(
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(8.dp))
             }
 
             // ─────────────────────────────────────────────────────────────
             // 4. RECORDS SECTION — REAL job records filtered by person/scope
+            // Virtualized via LazyColumn items with stable keys for smooth 60fps scrolling
             // ─────────────────────────────────────────────────────────────
-            item {
+            item(key = "records_header", contentType = "records_header") {
                 Card(
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White),
                     border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        // Records Header Row — matches reference: list icon + title/subtitle + person pill
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.List,
-                                    contentDescription = null,
-                                    tint = Color(0xFF15803D),
-                                    modifier = Modifier.size(20.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.List,
+                                contentDescription = null,
+                                tint = Color(0xFF15803D),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = if (isTamil) "பதிவுகள்" else "Records",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0F172A)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column {
-                                    Text(
-                                        text = if (isTamil) "பதிவுகள்" else "Records",
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF0F172A)
-                                    )
-                                    Text(
-                                        text = if (isTamil) {
-                                            if (selectedMemberFilter == "All") "அனைத்து பதிவுகளையும் காட்டுகிறது"
-                                            else "$selectedMemberLabel-க்கான பதிவுகள்"
-                                        } else {
-                                            "Showing records for $selectedMemberLabel"
-                                        },
-                                        fontSize = 11.5.sp,
-                                        color = Color(0xFF64748B)
-                                    )
-                                }
-                            }
-
-                            // Person Dropdown Pill — matches reference
-                            Surface(
-                                shape = RoundedCornerShape(16.dp),
-                                color = Color(0xFFF0FDF4),
-                                border = BorderStroke(1.dp, Color(0xFF86EFAC).copy(alpha = 0.6f)),
-                                modifier = Modifier
-                                    .clickable { showPersonSelectorDialog = true }
-                                    .testTag("records_person_filter_pill")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = selectedMemberLabel,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF15803D)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Icon(
-                                        imageVector = Icons.Default.KeyboardArrowDown,
-                                        contentDescription = null,
-                                        tint = Color(0xFF15803D),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
+                                Text(
+                                    text = if (isTamil) {
+                                        if (selectedMemberFilter == "All") "அனைத்து பதிவுகளையும் காட்டுகிறது"
+                                        else "$selectedMemberLabel-க்கான பதிவுகள்"
+                                    } else {
+                                        "Showing records for $selectedMemberLabel"
+                                    },
+                                    fontSize = 11.5.sp,
+                                    color = Color(0xFF64748B)
+                                )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        // Real Records List — each record is a REAL JobEntryEntity
-                        if (displayedJobs.isEmpty()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 24.dp),
-                                contentAlignment = Alignment.Center
+                        // Person Dropdown Pill — matches reference
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color(0xFFF0FDF4),
+                            border = BorderStroke(1.dp, Color(0xFF86EFAC).copy(alpha = 0.6f)),
+                            modifier = Modifier
+                                .clickable { showPersonSelectorDialog = true }
+                                .testTag("records_person_filter_pill")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = if (isTamil) "பதிவுகள் எதுவும் இல்லை" else "No records found",
-                                    fontSize = 13.sp,
-                                    color = Color(0xFF94A3B8)
+                                    text = selectedMemberLabel,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF15803D)
                                 )
-                            }
-                        } else {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                displayedJobs.forEach { job ->
-                                    val jobTotal = if (job.totalAmount > 0) job.totalAmount else (job.amountReceived + job.pendingAmount)
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = Color(0xFFF8FAFC),
-                                        border = BorderStroke(0.8.dp, Color(0xFFE2E8F0)),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { selectedJobForDetail = job }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                // Tractor icon in light green badge — matches reference
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(38.dp)
-                                                        .clip(RoundedCornerShape(10.dp))
-                                                        .background(Color(0xFFE8F5E9)),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Agriculture,
-                                                        contentDescription = null,
-                                                        tint = Color(0xFF15803D),
-                                                        modifier = Modifier.size(22.dp)
-                                                    )
-                                                }
-
-                                                Spacer(modifier = Modifier.width(10.dp))
-
-                                                Column {
-                                                    Text(
-                                                        text = job.customerName.ifBlank { "Unknown Customer" },
-                                                        fontSize = 13.5.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Color(0xFF0F172A),
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                    val ts = if (job.startTimeMillis > 0) job.startTimeMillis else job.createdAt
-                                                    Text(
-                                                        text = formatDateTime(ts),
-                                                        fontSize = 11.sp,
-                                                        color = Color(0xFF64748B)
-                                                    )
-                                                }
-                                            }
-
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(
-                                                    text = formatInr(jobTotal, settings.currency),
-                                                    fontSize = 14.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Color(0xFF0F172A)
-                                                )
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Icon(
-                                                    imageVector = Icons.Default.ChevronRight,
-                                                    contentDescription = null,
-                                                    tint = Color(0xFF94A3B8),
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    tint = Color(0xFF15803D),
+                                    modifier = Modifier.size(16.dp)
+                                )
                             }
                         }
                     }
                 }
             }
 
+            if (displayedJobs.isEmpty()) {
+                item(key = "records_empty", contentType = "records_empty") {
+                    Card(
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (isTamil) "பதிவுகள் எதுவும் இல்லை" else "No records found",
+                                fontSize = 13.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(
+                    items = displayedJobs,
+                    key = { it.id },
+                    contentType = { "record_row" }
+                ) { job ->
+                    SwipeableRecordCard(
+                        job = job,
+                        settings = settings,
+                        currency = settings.currency,
+                        isTamil = isTamil,
+                        isSwiped = swipedJobId == job.id,
+                        onSwipe = { swipedJobId = if (swipedJobId == job.id) null else job.id },
+                        onView = { selectedJobForDetail = job },
+                        onShare = {
+                            val msg = buildJobWhatsAppMessage(job, settings.businessName, isTamil)
+                            sendWhatsAppMessage(context, job.customerPhone, msg)
+                        }
+                    )
+                }
+            }
+
             // Decorative footer spacing
-            item {
+            item(key = "footer_spacer") {
                 Spacer(modifier = Modifier.height(20.dp))
             }
         }
@@ -2401,5 +2362,224 @@ private fun DetailRow(label: String, amount: String, percentage: String, color: 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: PERSON SELECTOR MODAL WITH SEARCH — searches REAL member data
+// COMPONENT: SWIPEABLE RECORD CARD (STYLE 4 SWIPE ACTIONS: VIEW & SHARE)
 // ─────────────────────────────────────────────────────────────────────────────
+@Composable
+internal fun SwipeableRecordCard(
+    job: JobEntryEntity,
+    settings: AppSettingsEntity,
+    currency: String,
+    isTamil: Boolean,
+    isSwiped: Boolean,
+    onSwipe: () -> Unit,
+    onView: () -> Unit,
+    onShare: () -> Unit
+) {
+    val jobTotal = remember(job.totalAmount, job.amountReceived, job.pendingAmount) {
+        if (job.totalAmount > 0) job.totalAmount else (job.amountReceived + job.pendingAmount)
+    }
+    val ts = remember(job.startTimeMillis, job.createdAt) {
+        if (job.startTimeMillis > 0) job.startTimeMillis else job.createdAt
+    }
+    val formattedAmount = remember(jobTotal, currency) {
+        formatInr(jobTotal, currency)
+    }
+    val formattedDate = remember(ts) {
+        formatDateTime(ts)
+    }
+    val density = LocalDensity.current
+    val actionWidthDp = 126.dp
+    val actionWidthPx = with(density) { actionWidthDp.toPx() }
+
+    val animatedOffset by animateFloatAsState(
+        targetValue = if (isSwiped) -actionWidthPx else 0f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "swipe_offset"
+    )
+
+    var accumulatedDrag by remember { mutableFloatStateOf(0f) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .clip(RoundedCornerShape(12.dp))
+    ) {
+        // LAYER 1 (BOTTOM OF Z-ORDER): Foreground Card Surface
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFFF8FAFC),
+            border = BorderStroke(0.8.dp, Color(0xFFE2E8F0)),
+            modifier = Modifier
+                .fillMaxSize()
+                .offset { IntOffset(animatedOffset.roundToInt(), 0) }
+                .draggable(
+                    orientation = Orientation.Horizontal,
+                    state = rememberDraggableState { delta ->
+                        accumulatedDrag += delta
+                    },
+                    onDragStopped = {
+                        if (accumulatedDrag < -20f && !isSwiped) {
+                            onSwipe()
+                        } else if (accumulatedDrag > 20f && isSwiped) {
+                            onSwipe()
+                        }
+                        accumulatedDrag = 0f
+                    }
+                )
+                .clickable {
+                    if (isSwiped) {
+                        onSwipe()
+                    } else {
+                        onView()
+                    }
+                }
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    // Tractor icon in mint badge
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFFE8F5E9)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Agriculture,
+                            contentDescription = null,
+                            tint = Color(0xFF15803D),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Column {
+                        Text(
+                            text = job.customerName.ifBlank { "Unknown Customer" },
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0F172A),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = formattedDate,
+                            fontSize = 11.sp,
+                            color = Color(0xFF64748B)
+                        )
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Amount in light mint badge
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFE8F5E9))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = formattedAmount,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0F172A)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        // LAYER 2 (TOP OF Z-ORDER): Revealed Actions (View & Share)
+        // Positioned at Alignment.CenterEnd.
+        // When not swiped (animatedOffset = 0f), shifted right by actionWidthPx (outside bounds).
+        // When swiped (animatedOffset = -actionWidthPx), offset is 0f (visible at CenterEnd).
+        // Taps directly hit the View and Share buttons without foreground Surface occlusion.
+        Row(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .width(actionWidthDp)
+                .fillMaxHeight()
+                .offset { IntOffset((animatedOffset + actionWidthPx).roundToInt(), 0) }
+                .padding(vertical = 4.dp, horizontal = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // View Action Button (Green)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF02742E))
+                    .clickable { onView() },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Visibility,
+                        contentDescription = "View",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = if (isTamil) "பார்" else "View",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+
+            // Share Action Button (Orange)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFFEA9000))
+                    .clickable { onShare() },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Share",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = if (isTamil) "பகிர்" else "Share",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">Trac</string>
+    <string name="change_banner">பேனரை மாற்று</string>
+    <string name="remove_banner">பேனரை நீக்கு</string>
+    <string name="cancel">ரத்துசெய்</string>
+    <string name="select_image">படத்தைத் தேர்ந்தெடுக்கவும்</string>
+    <string name="banner_update_failed">பேனர் புதுப்பித்தல் தோல்வியடைந்தது</string>
+    <string name="choose_from_gallery">கேலரியிலிருந்து தேர்ந்தெடு</string>
+    <string name="change_workspace_banner">பணியிட பேனரை மாற்று</string>
+    <string name="restore_default_banner">இயல்புநிலை பச்சை பேனர் மீட்டமை</string>
+    <string name="adjust_cash_history">பண இருப்புத் திருத்தம் மற்றும் வரலாறு</string>
+    <string name="available_business_cash">கிடைக்கக்கூடிய வணிக ரொக்கம்</string>
+    <string name="current_cash">தற்போதைய இருப்பு</string>
+    <string name="correct_available_cash">சரியான ரொக்க இருப்பு</string>
+    <string name="reason_required">காரணம் (கட்டாயம்)</string>
+    <string name="adjustment">திருத்த வேறுபாடு</string>
+    <string name="difference">வேறுபாடு</string>
+    <string name="latest_100_adjustments">சமீபத்திய 100 திருத்தங்கள்; முழு வரலாறும் பாதுகாக்கப்படுகிறது.</string>
+    <string name="expense_shared_badge">பகிரப்பட்ட செலவு</string>
+    <string name="expense_reference_title">செலவு குறிப்பு</string>
+    <string name="expense_reference_id_badge">ID</string>
+    <string name="expense_tap_to_copy_id">முழு எண்ணையும் நகலெடுக்க தட்டவும்</string>
+    <string name="expense_id_copied">செலவு எண் நகலெடுக்கப்பட்டது</string>
+    <string name="expense_copy_full_id">முழு எண்ணையும் நகலெடு</string>
+    <string name="expense_tractor_prefix">டிராக்டர்</string>
+</resources>

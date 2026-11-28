@@ -158,7 +158,8 @@ fun ReportScreen(
     onRecordSettlementRepayment: ((Long, Double, String, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
     onConfirmSettlementRepayment: ((Long, () -> Unit, (String) -> Unit) -> Unit)? = null,
     onRejectSettlementRepayment: ((Long, String, () -> Unit, (String) -> Unit) -> Unit)? = null,
-    pendingActions: List<com.example.data.entity.PendingOperationEntity> = emptyList()
+    pendingActions: List<com.example.data.entity.PendingOperationEntity> = emptyList(),
+    onExpenseSubViewActiveChanged: (Boolean) -> Unit = {}
 ) {
     val isTamil = settings.language.equals("TA", ignoreCase = true)
     val hasLoanHistory = externalLoans.isNotEmpty() || externalLoanRepayments.isNotEmpty()
@@ -212,7 +213,8 @@ fun ReportScreen(
                     isOwner = isOwner,
                     actorName = actorName,
                     currentUid = currentUid,
-                    externalLoans = externalLoans
+                    externalLoans = externalLoans,
+                    onSubViewActiveChanged = onExpenseSubViewActiveChanged
                 )
             }
             ReportSubPage.BALANCE_SHEET -> {
