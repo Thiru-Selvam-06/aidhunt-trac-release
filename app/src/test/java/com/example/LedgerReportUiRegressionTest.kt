@@ -24,6 +24,16 @@ class LedgerUiTestApplication : android.app.Application() {
         super.onCreate()
         shadowOf(packageManager).addActivityIfNotPresent(
             android.content.ComponentName(this, androidx.activity.ComponentActivity::class.java))
+        if (com.google.firebase.FirebaseApp.getApps(this).isEmpty()) {
+            com.google.firebase.FirebaseApp.initializeApp(
+                this,
+                com.google.firebase.FirebaseOptions.Builder()
+                    .setApplicationId("1:123:android:synthetic")
+                    .setApiKey("emulator-only-key")
+                    .setProjectId("demo-aidhunt-v16")
+                    .build()
+            )
+        }
     }
 }
 

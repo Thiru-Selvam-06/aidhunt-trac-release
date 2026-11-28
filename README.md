@@ -28,7 +28,6 @@ cd aidhunt-trac-release
 # Run all test suites (Android, backend policy, Cloudflare, inventory)
 .\scripts\run-tests.ps1
 ```
-
 For complete documentation on environment variables, secrets classification, and architecture isolation, see [ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md).
 
 ### Manual Setup Steps
@@ -41,9 +40,30 @@ npm ci --prefix security-tests
 ./gradlew :app:testDebugUnitTest --init-script scripts/ci-tests.gradle
 ./gradlew -PdeviceTest=true :app:assembleDeviceTest :app:assembleDeviceTestAndroidTest
 ```
-
 Windows uses gradlew.bat. Set JAVA_HOME and ANDROID_HOME; Android Studio creates ignored local.properties. First builds download dependencies. Demo tests require no production credentials.
 
 Use the separate .devicetest package and demo emulators; never install over business data just to try the repository. Follow the [setup chapter](docs/handbook/01-setup.md) for runtime commands.
 
 One [GitHub Actions workflow](.github/workflows/android-ci.yml) runs layered checks and representative Android-emulator journeys. Explicit exclusions and manual gaps remain. No workflow deploys. Private keys, signing files, device captures and business snapshots are not portable source dependencies.
+
+## Developer Documentation & UI Handoff
+
+For comprehensive developer guides, architectural references, testing procedures, and release handoff:
+
+- **[Developer Setup Guide](docs/DEVELOPER_SETUP.md)**: Full local onboarding, required JDK 21 / Android SDK 36 toolchains, build variants (`debug`, `deviceTest`, `liveTest`), physical device testing via ADB, and troubleshooting.
+- **[Testing Guide](docs/TESTING.md)**: Unit and Jetpack Compose UI testing patterns, Robolectric execution, animation testing via Compose clock, responsive matrix coverage, and CI test partitioning.
+- **[GitHub Release Handoff](docs/GITHUB_RELEASE_HANDOFF.md)**: Production-quality handoff specification for the next developer, covering UI preservation, Git audit, and verification evidence.
+- **CI Workflow**: Configured at [`.github/workflows/android-ci.yml`](.github/workflows/android-ci.yml) for automated static analysis, partitioned regression testing, and security rule audits.
+
+### Quick Build & Test Commands
+
+```powershell
+# Build isolated development APK
+.\gradlew.bat :app:assembleDebug
+
+# Run UI Redesign & Regression Tests
+.\gradlew.bat :app:testDebugUnitTest --tests com.example.HomeDashboardRedesignTest --tests com.example.BusinessOverviewRedesignTest --tests com.example.ExpenseReportRedesignTest --tests com.example.ResponsiveLayoutUiTest --tests com.example.ExpenseRedesignUiTest
+
+# Check interaction inventory consistency
+python scripts/interaction_inventory.py --check
+```
